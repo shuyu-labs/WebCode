@@ -1,6 +1,7 @@
 # ============================================
 # WebCodeCli Docker Compose 配置
 # 支持 Claude Code CLI 和 Codex CLI
+# 一键部署：docker-compose up -d
 # ============================================
 
 version: '3.8'
@@ -19,46 +20,33 @@ services:
     
     environment:
       # ============================================
-      # Claude Code 环境变量配置
-      # ============================================
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.antsk.cn/}
-      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
-      - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-}
-      
-      # ============================================
-      # Codex 环境变量配置
-      # ============================================
-      - NEW_API_KEY=${NEW_API_KEY:-}
-      
-      # Codex 配置参数（用于生成 config.toml）
-      - CODEX_MODEL=${CODEX_MODEL:-glm-4.7}
-      - CODEX_MODEL_REASONING_EFFORT=${CODEX_MODEL_REASONING_EFFORT:-medium}
-      - CODEX_PROFILE=${CODEX_PROFILE:-ipsa}
-      - CODEX_BASE_URL=${CODEX_BASE_URL:-https://api.antsk.cn/v1}
-      - CODEX_PROVIDER_NAME=${CODEX_PROVIDER_NAME:-azure codex-mini}
-      - CODEX_APPROVAL_POLICY=${CODEX_APPROVAL_POLICY:-never}
-      - CODEX_SANDBOX_MODE=${CODEX_SANDBOX_MODE:-danger-full-access}
-      
-      # ============================================
-      # 应用配置
+      # 应用配置（必需）
       # ============================================
       - ASPNETCORE_ENVIRONMENT=Production
       - TZ=Asia/Shanghai
       
-      # 数据库配置（可选）
-      - DB_TYPE=${DB_TYPE:-Sqlite}
-      - DB_CONNECTION=${DB_CONNECTION:-Data Source=/app/data/webcodecli.db}
+      # ============================================
+      # 以下环境变量可选，首次启动时可在 Web 界面配置
+      # ============================================
+      
+      # Claude Code 环境变量配置（可选，可在界面配置）
+      # - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      # - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
+      # - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      # - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-}
+      
+      # Codex 环境变量配置（可选，可在界面配置）
+      # - NEW_API_KEY=${NEW_API_KEY:-}
+      # - CODEX_MODEL=${CODEX_MODEL:-}
+      # - CODEX_BASE_URL=${CODEX_BASE_URL:-}
       
     volumes:
-      # 数据持久化
+      # 数据持久化（必需）
       - webcodecli-data:/app/data
-      # 工作区持久化
+      # 工作区持久化（自动挂载，无需手动配置）
       - webcodecli-workspaces:/app/workspaces
       # 日志持久化
       - webcodecli-logs:/app/logs
-      # 自定义配置（可选）
-      # - ./config/appsettings.Production.json:/app/appsettings.Production.json:ro
     
     # 资源限制
     deploy:

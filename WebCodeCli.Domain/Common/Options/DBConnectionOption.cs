@@ -4,12 +4,12 @@
     {
 
         /// <summary>
-        /// sqlite连接字符串
+        /// 数据库类型（Sqlite, PostgreSQL, MySql, SqlServer）
         /// </summary>
-        public static string DbType { get; set; }
+        public static string DbType { get; set; } = "Sqlite";
         /// <summary>
-        /// pg链接字符串
+        /// 数据库连接字符串
         /// </summary>
-        public static string ConnectionStrings { get; set; }
+        public static string ConnectionStrings { get; set; } = "Data Source=WebCodeCli.db";
     }
 }
