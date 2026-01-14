@@ -1,21 +1,103 @@
-MIT License
+# **WebCodeCli 许可协议 (Licensing)**
 
-Copyright (c) 2026 WebCodeCli
+本项目采用**基于使用场景的双重许可 (Usage-Based Dual Licensing)** 模式。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+**核心原则：**
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- **默认许可:** 本项目默认在 **GNU Affero 通用公共许可证 v3.0 (AGPLv3)** 下提供。任何用户在遵守 AGPLv3 条款和下述附加限制的前提下，均可免费使用。
+- **商业许可:** 在特定商业场景下，或当您希望获得 AGPLv3 之外的权利时，**必须**获取**商业许可证 (Commercial License)**。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+---
+
+## **1. 开源许可证 (Open Source License): AGPLv3 - 适用于基础使用**
+
+- 在遵守 **AGPLv3** 条款的前提下，您可以自由地使用、修改和分发 WebCodeCli。AGPLv3 的完整文本可以访问 [https://www.gnu.org/licenses/agpl-3.0.html](https://www.gnu.org/licenses/agpl-3.0.html) 获取。
+- **核心义务:** AGPLv3 的一个关键要求是，如果您修改了 WebCodeCli 并通过网络提供服务 (SaaS)，或者分发了修改后的版本，您必须以 AGPLv3 许可证向所有用户提供相应的**完整源代码**。
+- **附加限制 (重要):** 在仅使用 AGPLv3 开源许可证的情况下，您**必须**完整保留项目代码中原有的品牌标识、LOGO 及版权声明信息。**禁止以任何形式修改、移除或遮盖**这些信息。如需移除，必须获取商业许可证。
+- 使用前请务必仔细阅读并理解 AGPLv3 的所有条款及上述附加限制。
+
+## **2. 商业许可证 (Commercial License) - 适用于高级场景及闭源需求**
+
+在以下任一情况下，您**必须**联系我们获取并签署一份商业许可证，才能合法使用 WebCodeCli：
+
+- **场景一：移除品牌和版权信息**  
+  您希望在您的产品或服务中移除 WebCodeCli 的 LOGO、UI界面中的版权声明或其他品牌标识。
+
+- **场景二：规避 AGPLv3 开源义务**  
+  您基于 WebCodeCli 进行了修改，并希望：  
+    - 通过网络提供服务（SaaS），但**不希望**向您的服务用户公开您修改后的源代码。  
+    - 分发一个集成了 WebCodeCli 的软件产品，但**不希望**以 AGPLv3 许可证发布您的产品或公开源代码。
+
+- **场景三：企业政策与集成需求**  
+    - 您所在公司的政策、客户合同或项目要求不允许使用 AGPLv3 许可的软件。  
+    - 您需要进行 OEM 集成，将 WebCodeCli 作为您闭源商业产品的一部分进行再分发。
+
+- **场景四：需要商业支持与保障**  
+    您需要 AGPLv3 未提供的商业保障，如官方技术支持等。
+
+**获取商业许可：**  
+请通过电子邮件 **antskpro@qq.com** 联系 WebCodeCli 团队洽谈商业授权事宜。
+
+## **3. 贡献 (Contributions)**
+
+- 我们欢迎社区对 WebCodeCli 的贡献。所有向本项目提交的贡献（例如通过 Pull Request）都将被视为在 **AGPLv3** 许可证下提供。
+- 通过向本项目提交贡献，即表示您同意您的代码以 AGPLv3 许可证授权给本项目及所有后续使用者（无论这些使用者最终遵循 AGPLv3 还是商业许可）。
+- 您也理解并同意，您的贡献可能会被包含在根据商业许可证分发的 WebCodeCli 版本中。
+
+## **4. 其他条款 (Other Terms)**
+
+- 关于商业许可证的具体条款、条件和价格，以双方签署的正式商业许可协议为准。
+- 项目维护者保留根据需要更新本许可政策的权利。相关更新将通过项目官方渠道（如代码仓库、官方网站）进行通知。
+
+---
+
+# **WebCodeCli Licensing**
+
+This project uses a **Usage-Based Dual Licensing** model.
+
+**Core Principles:**
+
+- **Default License:** This project is available by default under the **GNU Affero General Public License v3.0 (AGPLv3)**. Any user may use it free of charge, provided they comply with both the AGPLv3 terms and the additional restrictions listed below.
+- **Commercial License:** For specific commercial scenarios, or if you require rights beyond those granted by AGPLv3, you **must** obtain a **Commercial License**.
+
+---
+
+## **1. Open Source License: AGPLv3 – For Basic Usage**
+
+- Under the terms of the **AGPLv3**, you are free to use, modify, and distribute WebCodeCli. The complete AGPLv3 license text can be viewed at [https://www.gnu.org/licenses/agpl-3.0.html](https://www.gnu.org/licenses/agpl-3.0.html).
+- **Core Obligation:** A key AGPLv3 requirement is that if you modify WebCodeCli and provide it as a network service (SaaS), or distribute a modified version, you must make the **complete corresponding source code** available to all users under the AGPLv3 license.
+- **Additional Restriction (Important):** When using only the AGPLv3 open-source license, you **must** retain all original branding, logos, and copyright statements within the project's code. **You are strictly prohibited from modifying, removing, or concealing** any such information. If you wish to remove this, you must obtain a Commercial License.
+- Please read and ensure that you fully understand all AGPLv3 terms and the above additional restriction before use.
+
+## **2. Commercial License – For Advanced Scenarios & Closed Source Needs**
+
+You **must** contact us to obtain and sign a Commercial License in any of the following scenarios in order to legally use WebCodeCli:
+
+- **Scenario 1: Removal of Branding and Copyright**  
+  You wish to remove the WebCodeCli logo, copyright statement, or other branding elements from your product or service.
+
+- **Scenario 2: Avoidance of AGPLv3 Open Source Obligations**  
+  You have modified WebCodeCli and wish to:
+    - Offer it as a network service (SaaS) **without** disclosing your modifications' source code to your users.
+    - Distribute a software product integrated with WebCodeCli **without** releasing your product under AGPLv3 or open-sourcing the code.
+
+- **Scenario 3: Enterprise Policy & Integration Needs**  
+    - Your organization's policies, client contracts, or project requirements prohibit the use of AGPLv3-licensed software.
+    - You require OEM integration and need to redistribute WebCodeCli as part of your closed-source commercial product.
+
+- **Scenario 4: Commercial Support and Assurances**  
+    You require commercial assurances not provided by AGPLv3, such as official technical support.
+
+**Obtaining a Commercial License:**  
+Please contact the WebCodeCli team via email at **antskpro@qq.com** to discuss commercial licensing.
+
+## **3. Contributions**
+
+- We welcome community contributions to WebCodeCli. All contributions (e.g., via Pull Request) are deemed to be provided under the **AGPLv3** license.
+- By submitting a contribution, you agree that your code is licensed to this project and all downstream users under the AGPLv3 license (regardless of whether those users ultimately operate under AGPLv3 or a Commercial License).
+- You also understand and agree that your contribution may be included in versions of WebCodeCli distributed under a Commercial License.
+
+## **4. Other Terms**
+
+- The specific terms, conditions, and pricing of a Commercial License shall be determined by the formal commercial license agreement signed by both parties.
+- The project maintainers reserve the right to update this licensing policy as necessary. Updates will be announced through official channels (e.g., code repository, official website).

@@ -263,7 +263,12 @@ Issues and Pull Requests are welcome!
 
 ## 📄 License
 
-[MIT License](LICENSE)
+This project uses the **AGPLv3** open source license.
+
+- Open Source Usage: Follow the [AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) agreement
+- Commercial Licensing: For commercial licensing, please contact **antskpro@qq.com**
+
+For details, please refer to the [LICENSE](LICENSE) file.
 
 ---
 

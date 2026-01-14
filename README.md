@@ -263,7 +263,12 @@ WebCodeCli/
 
 ## 📄 许可证
 
-[MIT License](LICENSE)
+本项目采用 **AGPLv3** 开源许可证。
+
+- 开源使用：遵循 [AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) 协议
+- 商业授权：如需商业授权，请联系 **antskpro@qq.com**
+
+详细信息请查看 [LICENSE](LICENSE) 文件。
 
 ---
 
