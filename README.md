@@ -1,6 +1,10 @@
 # WebCodeCli
 
 <p align="center">
+  <a href="README.md">简体中文</a> | <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   <strong>🚀 随时随地，云端编程 | Code Anywhere, Anytime</strong>
 </p>
 
