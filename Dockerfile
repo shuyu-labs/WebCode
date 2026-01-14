@@ -107,6 +107,15 @@ COPY --from=publish /app/publish .
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# ============================================
+# 创建非 root 用户以提高安全性
+# ============================================
+RUN groupadd -r appuser && useradd -r -g appuser -u 1000 appuser \
+    && chown -R appuser:appuser /app
+
+# 切换到非 root 用户
+USER appuser
+
 # 暴露端口
 EXPOSE 5000
 

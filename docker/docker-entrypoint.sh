@@ -15,7 +15,7 @@ echo "============================================"
 # ============================================
 echo "Generating Codex configuration..."
 
-CODEX_CONFIG_DIR="/root/.codex"
+CODEX_CONFIG_DIR="$HOME/.codex"
 CODEX_CONFIG_FILE="${CODEX_CONFIG_DIR}/config.toml"
 
 # 确保配置目录存在

@@ -80,13 +80,14 @@ echo "  5) 查看日志"
 echo "  6) 查看状态"
 echo "  7) 进入容器"
 echo "  8) 完全重置 (删除数据)"
+echo "  9) 清理旧镜像并重新构建"
 echo ""
-read -p "请输入选项 [1-8]: " choice
+read -p "请输入选项 [1-9]: " choice
 
 case $choice in
     1)
         echo -e "${GREEN}正在构建并启动...${NC}"
-        docker compose build
+        docker compose build --no-cache
         docker compose up -d
         echo ""
         echo -e "${GREEN}✓ 部署完成！${NC}"
@@ -134,6 +135,16 @@ case $choice in
         else
             echo "操作已取消"
         fi
+        ;;
+    9)
+        echo -e "${GREEN}正在清理旧镜像并重新构建...${NC}"
+        docker compose down
+        docker rmi webcodecli:latest 2>/dev/null || echo "旧镜像不存在，跳过"
+        docker compose build --no-cache
+        docker compose up -d
+        echo ""
+        echo -e "${GREEN}✓ 清理并重新部署完成！${NC}"
+        echo "访问地址: http://localhost:${APP_PORT:-5000}"
         ;;
     *)
         echo -e "${RED}无效选项${NC}"
