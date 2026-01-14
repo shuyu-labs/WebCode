@@ -217,25 +217,6 @@ WebCodeCli/
 
 ## 🛠️ 高级配置
 
-### 数据库配置
-
-```json
-"DBConnection": {
-  "DbType": "Sqlite",
-  "DBConnection": "Data Source=WebCodeCli.db"
-}
-```
-
-### OpenAI/AI 配置
-
-```json
-"OpenAI": {
-  "Key": "your-api-key",
-  "EndPoint": "https://api.openai.com/",
-  "ChatModel": "gpt-4o"
-}
-```
-
 ### 工作区配置
 
 ```json
