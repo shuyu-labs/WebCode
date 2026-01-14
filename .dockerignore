@@ -1,0 +1,68 @@
+# ============================================
+# Docker 构建忽略文件
+# ============================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vs
+.vscode
+.idea
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build 输出
+**/bin/
+**/obj/
+**/out/
+**/publish/
+
+# Node 模块（会在容器中重新安装）
+**/node_modules/
+
+# 临时文件
+**/Temp/
+**/tmp/
+*.tmp
+*.temp
+*.log
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+
+# 环境变量（安全考虑）
+.env
+.env.local
+.env.*.local
+
+# 文档（非必要）
+*.md
+!README.md
+
+# 测试
+**/TestResults/
+**/*.Tests/
+
+# Docker 相关
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# 其他
+*.zip
+*.tar.gz
+*.rar
+
+# Claude Code 本地目录
+**/.claude/
+
+# 日志
+**/logs/
+*.log

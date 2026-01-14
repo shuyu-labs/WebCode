@@ -1,0 +1,31 @@
+# Codex CLI 配置模板
+# 此文件会在容器启动时被 docker-entrypoint.sh 根据环境变量动态生成
+
+model = "glm-4.7"
+model_reasoning_effort = "medium"
+
+profile = "ipsa"
+windows_wsl_setup_acknowledged = true
+
+[model_providers.ipsa]
+name = "azure codex-mini"
+base_url = "https://api.antsk.cn/v1"
+env_key = "NEW_API_KEY"
+wire_api = "chat"
+
+
+[profiles.ipsa]
+# 深度模型
+model = "glm-4.7"
+# provider id
+model_provider = "ipsa"
+# 审批策略
+approval_policy = "never"
+# 推理强度
+model_reasoning_effort = "medium"
+# 推理总结粒度
+model_reasoning_summary = "detailed"
+# 是否强制开启推理总结
+model_supports_reasoning_summaries = true
+model_reasoning_summary_format = "experimental"
+sandbox_mode = "danger-full-access"
