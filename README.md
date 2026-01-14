@@ -94,7 +94,7 @@ WebCodeCli 针对移动设备进行了全面优化：
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/WebCodeCli.git
+git clone https://github.com/xuzeyu91/WebCodeCli.git
 cd WebCodeCli
 
 # 恢复依赖
