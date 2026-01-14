@@ -110,7 +110,7 @@ RUN chmod +x /docker-entrypoint.sh
 # ============================================
 # 创建非 root 用户以提高安全性
 # ============================================
-RUN groupadd -r appuser && useradd -r -g appuser -u 1001 appuser \
+RUN groupadd -r appuser && useradd -r -g appuser -u 1001 -m appuser \
     && chown -R appuser:appuser /app
 
 # 切换到非 root 用户
