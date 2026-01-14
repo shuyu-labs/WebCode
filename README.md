@@ -223,10 +223,24 @@ WebCodeCli/
 "CliTools": {
   "TempWorkspaceRoot": "D:\\Temp\\WebCodeCli\\Workspaces",
   "WorkspaceExpirationHours": 24,
+  "NpmGlobalPath": "C:\\Users\\YourUsername\\AppData\\Roaming\\npm\\",
   "MaxConcurrentExecutions": 3,
   "DefaultTimeoutSeconds": 300
 }
 ```
+
+| 配置项 | 说明 | 示例值 |
+|--------|------|--------|
+| `TempWorkspaceRoot` | 临时工作区根目录，用于存放会话隔离的工作文件 | `D:\\Temp\\WebCodeCli\\Workspaces` |
+| `WorkspaceExpirationHours` | 工作区过期时间（小时），过期后自动清理 | `24` |
+| `NpmGlobalPath` | NPM 全局安装路径，用于查找 npm 安装的 CLI 工具（如 codex.cmd） | `C:\\Users\\YourUsername\\AppData\\Roaming\\npm\\` |
+| `MaxConcurrentExecutions` | 最大并发执行数 | `3` |
+| `DefaultTimeoutSeconds` | 默认超时时间（秒） | `300` |
+
+> 💡 **提示**：
+> - **Windows 用户**：NPM 全局路径通常为 `C:\Users\{用户名}\AppData\Roaming\npm\`
+> - **Linux/Mac 用户**：NPM 全局路径通常为 `/usr/local/bin/` 或 `~/.npm-global/bin/`
+> - 工作区目录建议使用绝对路径，确保有足够的磁盘空间
 
 ## 📦 作为 .NET 模板使用
 
