@@ -4,30 +4,48 @@
 
 @inject NavigationManager NavigationManager
 @inject IAuthenticationService AuthenticationService
+@inject ISystemSettingsService SystemSettingsService
 @inject IJSRuntime JSRuntime
 
 @code {
     protected override async Task OnInitializedAsync()
     {
-        // 如果启用了认证，检查是否已登录
-        if (AuthenticationService.IsAuthenticationEnabled())
+        try
         {
-            try
+            // 首先检查系统是否已初始化
+            var isInitialized = await SystemSettingsService.IsSystemInitializedAsync();
+            if (!isInitialized)
             {
-                var isAuthenticated = await JSRuntime.InvokeAsync<string>("sessionStorage.getItem", "isAuthenticated");
-                if (isAuthenticated != "true")
+                // 未初始化，跳转到初始化向导
+                NavigationManager.NavigateTo("/setup");
+                return;
+            }
+
+            // 如果启用了认证，检查是否已登录
+            if (AuthenticationService.IsAuthenticationEnabled())
+            {
+                try
+                {
+                    var isAuthenticated = await JSRuntime.InvokeAsync<string>("sessionStorage.getItem", "isAuthenticated");
+                    if (isAuthenticated != "true")
+                    {
+                        NavigationManager.NavigateTo("/login");
+                        return;
+                    }
+                }
+                catch
                 {
                     NavigationManager.NavigateTo("/login");
                     return;
                 }
             }
-            catch
-            {
-                NavigationManager.NavigateTo("/login");
-                return;
-            }
-        }
 
-        NavigationManager.NavigateTo("/code-assistant");
+            NavigationManager.NavigateTo("/code-assistant");
+        }
+        catch
+        {
+            // 如果检查初始化状态失败（如数据库未就绪），仍然跳转到初始化页面
+            NavigationManager.NavigateTo("/setup");
+        }
     }
 }

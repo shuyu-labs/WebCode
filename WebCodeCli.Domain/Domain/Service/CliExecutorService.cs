@@ -9,6 +9,7 @@ using WebCodeCli.Domain.Common.Extensions;
 using WebCodeCli.Domain.Common.Options;
 using WebCodeCli.Domain.Domain.Model;
 using WebCodeCli.Domain.Domain.Service.Adapters;
+using WebCodeCli.Domain.Repositories.Base.SystemSettings;
 
 namespace WebCodeCli.Domain.Domain.Service;
 
@@ -27,6 +28,10 @@ public class CliExecutorService : ICliExecutorService
     private readonly IServiceProvider _serviceProvider;
     private readonly IChatSessionService _chatSessionService;
     private readonly ICliAdapterFactory _adapterFactory;
+    
+    // 缓存的有效工作区根目录
+    private string? _effectiveWorkspaceRoot;
+    private readonly object _workspaceRootLock = new();
     
     // 存储每个会话的CLI Thread ID（适用于所有CLI工具）
     private readonly Dictionary<string, string> _cliThreadIds = new();
@@ -48,19 +53,98 @@ public class CliExecutorService : ICliExecutorService
         _chatSessionService = chatSessionService;
         _adapterFactory = adapterFactory;
         
-        // 如果配置的工作区路径为空，使用默认路径
-        if (string.IsNullOrWhiteSpace(_options.TempWorkspaceRoot))
-        {
-            _options.TempWorkspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli", "Workspaces");
-            _logger.LogWarning("TempWorkspaceRoot 配置为空，使用默认路径: {Root}", _options.TempWorkspaceRoot);
-        }
+        // 初始化工作区根目录（延迟加载，首次使用时从数据库获取）
+        InitializeWorkspaceRoot();
+    }
+    
+    /// <summary>
+    /// 初始化工作区根目录
+    /// </summary>
+    private void InitializeWorkspaceRoot()
+    {
+        var workspaceRoot = GetEffectiveWorkspaceRoot();
         
         // 确保临时工作区根目录存在
-        if (!Directory.Exists(_options.TempWorkspaceRoot))
+        if (!Directory.Exists(workspaceRoot))
         {
-            Directory.CreateDirectory(_options.TempWorkspaceRoot);
-            _logger.LogInformation("创建临时工作区根目录: {Root}", _options.TempWorkspaceRoot);
+            Directory.CreateDirectory(workspaceRoot);
+            _logger.LogInformation("创建临时工作区根目录: {Root}", workspaceRoot);
         }
+    }
+    
+    /// <summary>
+    /// 获取有效的工作区根目录（优先数据库配置，否则使用配置文件，最后使用默认值）
+    /// </summary>
+    private string GetEffectiveWorkspaceRoot()
+    {
+        lock (_workspaceRootLock)
+        {
+            if (!string.IsNullOrWhiteSpace(_effectiveWorkspaceRoot))
+            {
+                return _effectiveWorkspaceRoot;
+            }
+            
+            try
+            {
+                // 尝试从数据库获取
+                using var scope = _serviceProvider.CreateScope();
+                var repository = scope.ServiceProvider.GetService<ISystemSettingsRepository>();
+                if (repository != null)
+                {
+                    var dbValue = repository.GetAsync(SystemSettingsKeys.WorkspaceRoot).GetAwaiter().GetResult();
+                    if (!string.IsNullOrWhiteSpace(dbValue))
+                    {
+                        _effectiveWorkspaceRoot = dbValue;
+                        _logger.LogInformation("从数据库加载工作区根目录: {Root}", dbValue);
+                        return _effectiveWorkspaceRoot;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "从数据库加载工作区根目录失败，使用配置文件值");
+            }
+            
+            // 使用配置文件中的值
+            if (!string.IsNullOrWhiteSpace(_options.TempWorkspaceRoot))
+            {
+                _effectiveWorkspaceRoot = _options.TempWorkspaceRoot;
+                return _effectiveWorkspaceRoot;
+            }
+            
+            // 使用默认值
+            _effectiveWorkspaceRoot = GetDefaultWorkspaceRoot();
+            _logger.LogWarning("TempWorkspaceRoot 配置为空，使用默认路径: {Root}", _effectiveWorkspaceRoot);
+            return _effectiveWorkspaceRoot;
+        }
+    }
+    
+    /// <summary>
+    /// 获取默认工作区根目录
+    /// </summary>
+    private static string GetDefaultWorkspaceRoot()
+    {
+        // Docker 环境使用固定路径
+        if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true")
+        {
+            return "/app/workspaces";
+        }
+        
+        // 非 Docker 环境使用应用根目录下的 workspaces 文件夹
+        var appRoot = AppContext.BaseDirectory;
+        return Path.Combine(appRoot, "workspaces");
+    }
+    
+    /// <summary>
+    /// 刷新工作区根目录缓存（当数据库配置更新时调用）
+    /// </summary>
+    public void RefreshWorkspaceRootCache()
+    {
+        lock (_workspaceRootLock)
+        {
+            _effectiveWorkspaceRoot = null;
+        }
+        InitializeWorkspaceRoot();
     }
 
     #region Adapter Methods
@@ -948,7 +1032,8 @@ public class CliExecutorService : ICliExecutorService
             }
 
             // 创建新的会话工作目录
-            var workspacePath = Path.Combine(_options.TempWorkspaceRoot, sessionId);
+            var workspaceRoot = GetEffectiveWorkspaceRoot();
+            var workspacePath = Path.Combine(workspaceRoot, sessionId);
             
             try
             {
@@ -970,7 +1055,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 _logger.LogError(ex, "创建会话工作目录失败: {SessionId}", sessionId);
                 // 如果创建失败,返回临时目录根路径
-                return _options.TempWorkspaceRoot;
+                return workspaceRoot;
             }
         }
     }
@@ -1003,14 +1088,15 @@ public class CliExecutorService : ICliExecutorService
         // 注意：即使内存缓存中不存在该会话，也应该尝试清理默认路径下的目录。
         // 典型场景：服务重启后 _sessionWorkspaces 被清空，但磁盘目录仍然存在。
         var workspacePathToDelete = workspacePathFromCache;
+        var workspaceRoot = GetEffectiveWorkspaceRoot();
         if (string.IsNullOrWhiteSpace(workspacePathToDelete))
         {
-            workspacePathToDelete = Path.Combine(_options.TempWorkspaceRoot, sessionId);
+            workspacePathToDelete = Path.Combine(workspaceRoot, sessionId);
         }
 
         try
         {
-            var rootFullPath = Path.GetFullPath(_options.TempWorkspaceRoot);
+            var rootFullPath = Path.GetFullPath(workspaceRoot);
             var workspaceFullPath = Path.GetFullPath(workspacePathToDelete);
 
             // 防御：只允许删除 TempWorkspaceRoot 下的子目录，避免误删。
@@ -1240,13 +1326,14 @@ public class CliExecutorService : ICliExecutorService
     {
         try
         {
-            if (!Directory.Exists(_options.TempWorkspaceRoot))
+            var workspaceRoot = GetEffectiveWorkspaceRoot();
+            if (!Directory.Exists(workspaceRoot))
             {
                 return;
             }
 
             var expirationTime = DateTime.UtcNow.AddHours(-_options.WorkspaceExpirationHours);
-            var directories = Directory.GetDirectories(_options.TempWorkspaceRoot);
+            var directories = Directory.GetDirectories(workspaceRoot);
             
             _logger.LogInformation("开始清理过期工作区,总共 {Count} 个目录", directories.Length);
 
