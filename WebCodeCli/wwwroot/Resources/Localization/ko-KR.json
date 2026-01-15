@@ -171,6 +171,8 @@
     "refreshPreview": "미리보기 새로고침",
     "openInNewTab": "열기",
     "currentUser": "현재 사용자",
+    "currentThread": "현재 스레드",
+    "tokenUsage": "토큰 사용 현황",
     "folderNamePlaceholder": "예: src, images, documents",
     "folderNameHint": "중첩 디렉터리 지원, / 로 구분 예: src/components",
     "creating": "생성 중...",
@@ -211,8 +213,11 @@
       "event": "이벤트 ({type})"
     },
     "content": {
+        "threadId": "스레드 ID: {id}",
+        "threadCreated": "새 대화 스레드를 만들었습니다.",
+        "turnStarted": "응답을 기다리는 중...",
       "turnCompleted": "이번 턴이 완료되었습니다.",
-      "turnCompletedWithUsage": "이번 턴이 완료되었습니다. 아래 토큰 통계를 확인하세요."
+        "turnCompletedWithUsage": "이번 턴이 완료되었습니다. 아래 토큰 통계를 확인하세요."
     },
     "badge": {
       "unknown": "미인식",

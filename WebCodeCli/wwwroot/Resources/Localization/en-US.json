@@ -171,6 +171,8 @@
     "refreshPreview": "Refresh Preview",
     "openInNewTab": "Open",
     "currentUser": "Current User",
+    "currentThread": "Current Thread",
+    "tokenUsage": "Token Usage",
     "folderNamePlaceholder": "e.g., src, images, documents",
     "folderNameHint": "Supports nested directories, use / as separator, e.g., src/components",
     "creating": "Creating...",
@@ -211,6 +213,9 @@
       "event": "Event ({type})"
     },
     "content": {
+        "threadId": "Thread ID: {id}",
+        "threadCreated": "A new conversation thread has been created.",
+        "turnStarted": "Waiting for response...",
       "turnCompleted": "This turn has completed.",
       "turnCompletedWithUsage": "This turn has completed. See token usage below."
     },

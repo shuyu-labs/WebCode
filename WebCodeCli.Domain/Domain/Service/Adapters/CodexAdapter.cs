@@ -83,8 +83,8 @@ public class CodexAdapter : ICliToolAdapter
                     {
                         EventType = "thread.started",
                         SessionId = legacyId,
-                        Title = "会话已启动",
-                        Content = $"线程标识: {legacyId}"
+                        Title = null,
+                        Content = null
                     };
                 }
             }
@@ -274,24 +274,14 @@ public class CodexAdapter : ICliToolAdapter
             }
         }
 
-        var contentBuilder = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(outputEvent.SessionId))
-        {
-            contentBuilder.AppendLine($"线程标识: {outputEvent.SessionId}");
-        }
-        else
-        {
-            contentBuilder.AppendLine("已创建新的对话线程");
-        }
-
-        outputEvent.Title = "会话已启动";
-        outputEvent.Content = contentBuilder.ToString().TrimEnd();
+        outputEvent.Title = null;
+        outputEvent.Content = null;
     }
 
     private void ParseTurnStarted(CliOutputEvent outputEvent)
     {
-        outputEvent.Title = "开始新一轮交互";
-        outputEvent.Content = "等待响应...";
+        outputEvent.Title = null;
+        outputEvent.Content = null;
     }
 
     private void ParseTurnCompleted(JsonElement root, CliOutputEvent outputEvent)

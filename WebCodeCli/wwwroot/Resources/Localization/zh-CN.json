@@ -171,6 +171,8 @@
     "refreshPreview": "刷新预览",
     "openInNewTab": "打开",
     "currentUser": "当前用户",
+    "currentThread": "当前 Thread",
+    "tokenUsage": "Token 使用情况",
     "folderNamePlaceholder": "例如: src, images, documents",
     "folderNameHint": "支持多级目录，使用 / 分隔，例如: src/components",
     "creating": "创建中...",
@@ -211,6 +213,9 @@
       "event": "事件 ({type})"
     },
     "content": {
+        "threadId": "线程标识: {id}",
+        "threadCreated": "已创建新的对话线程",
+        "turnStarted": "等待响应...",
       "turnCompleted": "本轮交互已完成。",
       "turnCompletedWithUsage": "本轮交互已完成，详见下方 token 统计。"
     },

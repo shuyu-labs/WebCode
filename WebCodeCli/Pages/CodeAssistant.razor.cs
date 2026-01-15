@@ -635,17 +635,17 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         var contentBuilder = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(threadId))
         {
-            contentBuilder.AppendLine($"线程标识: {threadId}");
+            contentBuilder.AppendLine(T("cliEvent.content.threadId", ("id", threadId)));
         }
         else
         {
-            contentBuilder.AppendLine("已创建新的对话线程");
+            contentBuilder.AppendLine(T("cliEvent.content.threadCreated"));
         }
 
         _jsonlEvents.Add(new JsonlDisplayItem
         {
             Type = "thread.started",
-            Title = "会话已启动",
+            Title = T("cliEvent.title.threadStarted"),
             Content = contentBuilder.ToString().TrimEnd()
         });
 
@@ -659,8 +659,8 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         _jsonlEvents.Add(new JsonlDisplayItem
         {
             Type = "turn.started",
-            Title = "开始新一轮交互",
-            Content = "等待响应..."
+            Title = T("cliEvent.title.turnStarted"),
+            Content = T("cliEvent.content.turnStarted")
         });
 
         // 更新进度追踪器
@@ -1564,6 +1564,18 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             return outputEvent.Usage is null
                 ? T("cliEvent.content.turnCompleted")
                 : T("cliEvent.content.turnCompletedWithUsage");
+        }
+
+        if (string.Equals(outputEvent.EventType, "turn.started", StringComparison.OrdinalIgnoreCase))
+        {
+            return T("cliEvent.content.turnStarted");
+        }
+
+        if (string.Equals(outputEvent.EventType, "thread.started", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(outputEvent.SessionId)
+                ? T("cliEvent.content.threadId", ("id", outputEvent.SessionId))
+                : T("cliEvent.content.threadCreated");
         }
 
         return fallbackContent ?? string.Empty;

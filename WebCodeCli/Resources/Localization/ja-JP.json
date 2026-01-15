@@ -132,6 +132,9 @@
       "event": "イベント（{type}）"
     },
     "content": {
+        "threadId": "スレッドID: {id}",
+        "threadCreated": "新しい会話スレッドを作成しました。",
+        "turnStarted": "応答待ち...",
       "turnCompleted": "このターンは完了しました。",
       "turnCompletedWithUsage": "このターンは完了しました。下のトークン統計をご確認ください。"
     },
@@ -243,6 +246,8 @@
     "refreshPreview": "プレビューを更新",
     "openInNewTab": "開く",
     "currentUser": "現在のユーザー",
+    "currentThread": "現在のスレッド",
+    "tokenUsage": "トークン使用状況",
     "folderNamePlaceholder": "例: src, images, documents",
     "folderNameHint": "入れ子ディレクトリ対応。/ で区切ります。例: src/components",
     "creating": "作成中...",
