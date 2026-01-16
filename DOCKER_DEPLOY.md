@@ -97,11 +97,3 @@ ls -la /soft/WebCode/webcodecli-data/
 curl http://localhost:5000
 ```
 
-## 关键修改文件总结
-
-| 文件 | 修改内容 |
-|------|----------|
-| `/etc/docker/daemon.json` | 新增：国内镜像加速器配置 |
-| `docker-compose.yml` | 移除 ports，调整 CPU 限制 |
-| `docker/docker-entrypoint.sh` | chown 命令添加错误处理 |
-| 宿主机目录权限 | 修改为 1001:1001 |
