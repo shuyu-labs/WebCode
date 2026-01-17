@@ -354,25 +354,6 @@
       "removeDuplicatesDesc": "移除重复的代码片段和文件引用"
     }
   },
-  "envConfig": {
-    "title": "环境变量配置",
-    "titleWithTool": "环境变量配置 - {tool}",
-    "descTitle": "配置说明：",
-    "descSaveDb": "此处的配置将保存到数据库，优先级高于配置文件",
-    "descSecretPrefix": "环境变量值以密码形式保存，",
-    "descSecretHighlight": "仅可设置，无法查看或复制",
-    "descReset": "点击恢复默认将恢复为配置文件中的值",
-    "keyLabel": "键",
-    "keyPlaceholder": "例如: OPENAI_API_KEY",
-    "valueLabel": "值(仅可设置，无法查看)",
-    "valuePlaceholder": "输入值...",
-    "clearValueTitle": "清空值以重新设置",
-    "removeTitle": "删除此环境变量",
-    "addButton": "添加环境变量",
-    "resetButton": "恢复默认",
-    "saving": "保存中...",
-    "save": "保存"
-  },
   "fileSearch": {
     "debugLabel": "调试",
     "searchPlaceholder": "输入搜索内容...",
