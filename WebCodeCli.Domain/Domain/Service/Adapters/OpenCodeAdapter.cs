@@ -354,15 +354,19 @@ public class OpenCodeAdapter : ICliToolAdapter
                 sb.AppendLine($"费用: ${cost:F6}");
             }
             
+            // 使用 Usage 属性存储 token 信息，以卡片样式展示
             if (partElement.TryGetProperty("tokens", out var tokensElement))
             {
-                if (tokensElement.TryGetProperty("input", out var inputTokens))
+                outputEvent.Usage = new CliOutputEventUsage
                 {
-                    sb.AppendLine($"输入 tokens: {inputTokens.GetInt32()}");
-                }
-                if (tokensElement.TryGetProperty("output", out var outputTokens))
+                    InputTokens = GetLongProperty(tokensElement, "input"),
+                    OutputTokens = GetLongProperty(tokensElement, "output")
+                };
+                
+                // 尝试获取缓存 token（如果存在）
+                if (tokensElement.TryGetProperty("cache", out var cacheElement))
                 {
-                    sb.AppendLine($"输出 tokens: {outputTokens.GetInt32()}");
+                    outputEvent.Usage.CachedInputTokens = GetLongProperty(cacheElement, "read");
                 }
             }
         }
@@ -597,6 +601,15 @@ public class OpenCodeAdapter : ICliToolAdapter
             .Replace("\"", "\\\"");
 
         return escaped;
+    }
+
+    private static long GetLongProperty(JsonElement element, string propertyName)
+    {
+        if (element.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            return prop.GetInt64();
+        }
+        return 0;
     }
 
     #endregion

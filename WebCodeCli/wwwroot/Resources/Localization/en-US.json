@@ -157,7 +157,9 @@
       "system": "System",
       "input": "Input",
       "output": "Output",
-      "event": "Event"
+      "event": "Event",
+      "sessionStart": "Session start",
+      "stepStart": "Step start"
     },
     "action": {
       "start": "Started",

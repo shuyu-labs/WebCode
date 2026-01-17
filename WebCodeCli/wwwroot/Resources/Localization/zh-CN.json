@@ -157,7 +157,9 @@
       "system": "系统",
       "input": "输入",
       "output": "输出",
-      "event": "事件"
+      "event": "事件",
+      "sessionStart": "会话开始",
+      "stepStart": "步骤开始"
     },
     "action": {
       "start": "开始",
