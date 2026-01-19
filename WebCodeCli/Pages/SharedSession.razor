@@ -1,0 +1,295 @@
+@page "/share/{ShareCode}"
+@namespace WebCodeCli.Pages
+@using WebCodeCli.Domain.Domain.Model
+@using WebCodeCli.Domain.Repositories.Base.SessionShare
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+<PageTitle>共享会话 - 密码验证</PageTitle>
+
+<div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div class="w-full max-w-md">
+        <!-- Logo/标题区域 -->
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl shadow-lg mb-4">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold text-gray-800">共享会话</h1>
+            <p class="text-gray-500 mt-2">请输入密码访问此共享工作区</p>
+        </div>
+
+        <!-- 加载状态 -->
+        @if (_isLoading)
+        {
+            <div class="bg-white rounded-2xl shadow-xl p-8 text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+                <p class="mt-4 text-gray-500">正在加载分享信息...</p>
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(_loadError))
+        {
+            @* 错误状态 *@
+            <div class="bg-white rounded-2xl shadow-xl p-8">
+                <div class="text-center">
+                    <div class="inline-flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mb-4">
+                        <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                    </div>
+                    <h2 class="text-xl font-semibold text-gray-800 mb-2">无法访问分享</h2>
+                    <p class="text-gray-500 mb-6">@_loadError</p>
+                    <button @onclick="GoHome" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                        返回首页
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            @* 密码验证表单 *@
+            <div class="bg-white rounded-2xl shadow-xl p-8">
+                <!-- 分享信息 -->
+                @if (_shareInfo != null)
+                {
+                    <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                        @if (!string.IsNullOrEmpty(_shareInfo.Title))
+                        {
+                            <h3 class="font-semibold text-gray-800 mb-1">@_shareInfo.Title</h3>
+                        }
+                        <div class="text-sm text-gray-500 space-y-1">
+                            @if (!string.IsNullOrEmpty(_shareInfo.CreatedBy))
+                            {
+                                <p>分享者: @_shareInfo.CreatedBy</p>
+                            }
+                            <p>创建时间: @_shareInfo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</p>
+                            @if (_shareInfo.ExpiresAt.HasValue)
+                            {
+                                <p class="@(_shareInfo.IsExpired ? "text-red-500" : "")">
+                                    过期时间: @_shareInfo.ExpiresAt.Value.ToString("yyyy-MM-dd HH:mm")
+                                    @if (_shareInfo.IsExpired)
+                                    {
+                                        <span>(已过期)</span>
+                                    }
+                                </p>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- 密码输入 -->
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">访问密码</label>
+                        <div class="relative">
+                            <input type="@(_showPassword ? "text" : "password")"
+                                   @bind="_password"
+                                   @bind:event="oninput"
+                                   @onkeydown="HandleKeyDown"
+                                   placeholder="请输入分享密码"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+                                   disabled="@_isValidating" />
+                            <button type="button"
+                                    @onclick="TogglePasswordVisibility"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                @if (_showPassword)
+                                {
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                    </svg>
+                                }
+                                else
+                                {
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                    </svg>
+                                }
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 错误提示 -->
+                    @if (!string.IsNullOrEmpty(_validateError))
+                    {
+                        <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                            @_validateError
+                        </div>
+                    }
+
+                    <!-- 提交按钮 -->
+                    <button @onclick="ValidatePassword"
+                            disabled="@(_isValidating || string.IsNullOrWhiteSpace(_password))"
+                            class="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                        @if (_isValidating)
+                        {
+                            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                            <span>验证中...</span>
+                        }
+                        else
+                        {
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"></path>
+                            </svg>
+                            <span>进入工作区</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- 底部提示 -->
+        <div class="text-center mt-6 text-sm text-gray-500">
+            <p>此链接由他人分享，内容仅供查看</p>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string ShareCode { get; set; } = string.Empty;
+
+    private bool _isLoading = true;
+    private string _loadError = string.Empty;
+    private ShareBasicInfo? _shareInfo;
+    
+    private string _password = string.Empty;
+    private bool _showPassword = false;
+    private bool _isValidating = false;
+    private string _validateError = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadShareInfo();
+    }
+
+    private async Task LoadShareInfo()
+    {
+        try
+        {
+            _isLoading = true;
+            _loadError = string.Empty;
+            StateHasChanged();
+
+            var response = await Http.GetAsync($"/api/share/{ShareCode}/info");
+
+            if (response.IsSuccessStatusCode)
+            {
+                _shareInfo = await response.Content.ReadFromJsonAsync<ShareBasicInfo>();
+                
+                if (_shareInfo != null && !_shareInfo.IsActive)
+                {
+                    _loadError = "此分享已被停用";
+                }
+                else if (_shareInfo != null && _shareInfo.IsExpired)
+                {
+                    _loadError = "此分享已过期";
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _loadError = "分享不存在或链接无效";
+            }
+            else
+            {
+                _loadError = "加载分享信息失败，请稍后重试";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ValidatePassword()
+    {
+        if (string.IsNullOrWhiteSpace(_password))
+        {
+            _validateError = "请输入密码";
+            return;
+        }
+
+        try
+        {
+            _isValidating = true;
+            _validateError = string.Empty;
+            StateHasChanged();
+
+            var request = new { Password = _password };
+            var response = await Http.PostAsJsonAsync($"/api/share/{ShareCode}/validate", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ShareValidationResult>();
+                
+                if (result != null && result.IsValid)
+                {
+                    // 保存访问令牌到 sessionStorage
+                    await JSRuntime.InvokeVoidAsync("sessionStorage.setItem", $"share_token_{ShareCode}", result.AccessToken);
+                    
+                    // 跳转到共享工作区
+                    NavigationManager.NavigateTo($"/shared-workspace/{ShareCode}");
+                }
+                else
+                {
+                    _validateError = result?.ErrorMessage ?? "验证失败";
+                }
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                _validateError = error?.Error ?? "密码错误";
+            }
+        }
+        catch (Exception ex)
+        {
+            _validateError = $"验证失败: {ex.Message}";
+        }
+        finally
+        {
+            _isValidating = false;
+            StateHasChanged();
+        }
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        _showPassword = !_showPassword;
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_password))
+        {
+            await ValidatePassword();
+        }
+    }
+
+    private void GoHome()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    private class ShareBasicInfo
+    {
+        public string ShareCode { get; set; } = string.Empty;
+        public string? Title { get; set; }
+        public string? CreatedBy { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? ExpiresAt { get; set; }
+        public bool IsActive { get; set; }
+        public bool IsExpired { get; set; }
+    }
+
+    private class ErrorResponse
+    {
+        public string? Error { get; set; }
+    }
+}

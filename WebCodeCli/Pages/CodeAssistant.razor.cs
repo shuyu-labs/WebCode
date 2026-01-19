@@ -156,6 +156,9 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     // 环境变量配置模态框
     private EnvironmentVariableConfigModal _envConfigModal = default!;
     
+    // 会话分享模态框
+    private ShareSessionModal _shareSessionModal = default!;
+    
     // 文件上传
     private bool _isUploading = false;
     private const long MaxFileSize = 100 * 1024 * 1024; // 100MB
@@ -3849,6 +3852,17 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         {
             _isLoadingSession = false;
             StateHasChanged();
+        }
+    }
+    
+    /// <summary>
+    /// 显示分享对话框
+    /// </summary>
+    private async Task ShowShareDialog(SessionHistory session)
+    {
+        if (_shareSessionModal != null)
+        {
+            await _shareSessionModal.ShowAsync(session.SessionId);
         }
     }
     

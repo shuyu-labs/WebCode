@@ -1,0 +1,536 @@
+@page "/shared-workspace/{ShareCode}"
+@namespace WebCodeCli.Pages
+@using WebCodeCli.Domain.Domain.Model
+@using System.Text
+@using Markdig
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+<PageTitle>共享工作区</PageTitle>
+
+<div class="flex flex-col h-screen bg-gray-50">
+    <!-- 顶部导航栏 -->
+    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center w-8 h-8 bg-indigo-600 rounded-lg">
+                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                </svg>
+            </div>
+            <div>
+                <h1 class="font-semibold text-gray-800">共享工作区</h1>
+                @if (_sessionInfo != null)
+                {
+                    <p class="text-xs text-gray-500">@_sessionInfo.Title</p>
+                }
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                </svg>
+                只读模式
+            </span>
+            <button @onclick="GoBack" class="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="返回">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- 主要内容区域 -->
+    @if (_isLoading)
+    {
+        <div class="flex-1 flex items-center justify-center">
+            <div class="text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+                <p class="mt-4 text-gray-500">正在加载工作区...</p>
+            </div>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="flex-1 flex items-center justify-center">
+            <div class="text-center max-w-md">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mb-4">
+                    <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                </div>
+                <h2 class="text-xl font-semibold text-gray-800 mb-2">加载失败</h2>
+                <p class="text-gray-500 mb-6">@_error</p>
+                <button @onclick="Reload" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                    重新加载
+                </button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="flex-1 flex overflow-hidden">
+            <!-- 左侧：文件树 + 聊天记录 -->
+            <div class="w-80 border-r border-gray-200 bg-white flex flex-col">
+                <!-- Tab 切换 -->
+                <div class="border-b border-gray-200">
+                    <div class="flex">
+                        <button @onclick='() => _activeTab = "files"'
+                                class="flex-1 px-4 py-3 text-sm font-medium @(_activeTab == "files" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-gray-500 hover:text-gray-700")">
+                            <span class="flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                工作区文件
+                            </span>
+                        </button>
+                        <button @onclick='() => _activeTab = "chat"'
+                                class="flex-1 px-4 py-3 text-sm font-medium @(_activeTab == "chat" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-gray-500 hover:text-gray-700")">
+                            <span class="flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                                </svg>
+                                聊天记录
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tab 内容 -->
+                <div class="flex-1 overflow-auto">
+                    @if (_activeTab == "files")
+                    {
+                        <!-- 文件树 -->
+                        @if (_workspaceFiles.Any())
+                        {
+                            <div class="p-2">
+                                @foreach (var node in _workspaceFiles)
+                                {
+                                    @RenderFileNode(node, 0)
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="p-4 text-center text-gray-500">
+                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
+                                </svg>
+                                <p>工作区暂无文件</p>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <!-- 聊天记录 -->
+                        @if (_sessionInfo?.Messages?.Any() == true)
+                        {
+                            <div class="p-3 space-y-3">
+                                @foreach (var message in _sessionInfo.Messages)
+                                {
+                                    <div class="@(message.Role == "user" ? "bg-blue-50" : "bg-gray-50") rounded-lg p-3">
+                                        <div class="flex items-center gap-2 mb-2">
+                                            @if (message.Role == "user")
+                                            {
+                                                <span class="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs">U</span>
+                                                <span class="text-sm font-medium text-gray-700">用户</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="w-6 h-6 rounded-full bg-green-500 text-white flex items-center justify-center text-xs">A</span>
+                                                <span class="text-sm font-medium text-gray-700">助手</span>
+                                            }
+                                            <span class="text-xs text-gray-400">@message.CreatedAt.ToString("HH:mm")</span>
+                                        </div>
+                                        <div class="text-sm text-gray-600 prose prose-sm max-w-none">
+                                            @((MarkupString)RenderMarkdown(message.Content))
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="p-4 text-center text-gray-500">
+                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                                </svg>
+                                <p>暂无聊天记录</p>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            <!-- 右侧：文件预览 -->
+            <div class="flex-1 flex flex-col bg-white">
+                @if (!string.IsNullOrEmpty(_selectedFilePath))
+                {
+                    <!-- 文件路径 -->
+                    <div class="border-b border-gray-200 px-4 py-2 flex items-center gap-2 bg-gray-50">
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <span class="text-sm text-gray-600 font-mono">@_selectedFilePath</span>
+                    </div>
+
+                    <!-- 文件内容 -->
+                    <div class="flex-1 overflow-auto">
+                        @if (_isLoadingFile)
+                        {
+                            <div class="flex items-center justify-center h-full">
+                                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                            </div>
+                        }
+                        else if (_isImageFile)
+                        {
+                            <div class="p-4 flex items-center justify-center h-full bg-gray-100">
+                                <img src="@_imagePreviewUrl" alt="@_selectedFilePath" class="max-w-full max-h-full object-contain shadow-lg rounded" />
+                            </div>
+                        }
+                        else if (_isHtmlFile)
+                        {
+                            <iframe src="@_htmlPreviewUrl" class="w-full h-full border-0"></iframe>
+                        }
+                        else
+                        {
+                            <pre class="p-4 text-sm font-mono text-gray-800 whitespace-pre-wrap break-all">@_fileContent</pre>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <!-- 空状态 -->
+                    <div class="flex-1 flex items-center justify-center">
+                        <div class="text-center text-gray-400">
+                            <svg class="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <p class="text-lg">选择文件以查看内容</p>
+                            <p class="text-sm mt-1">从左侧文件树中选择一个文件</p>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string ShareCode { get; set; } = string.Empty;
+
+    private string _accessToken = string.Empty;
+    private bool _isLoading = true;
+    private string _error = string.Empty;
+    private string _activeTab = "files";
+
+    private SharedSessionInfo? _sessionInfo;
+    private List<FileNode> _workspaceFiles = new();
+    private HashSet<string> _expandedFolders = new();
+
+    private string _selectedFilePath = string.Empty;
+    private string _fileContent = string.Empty;
+    private bool _isLoadingFile = false;
+    private bool _isImageFile = false;
+    private bool _isHtmlFile = false;
+    private string _imagePreviewUrl = string.Empty;
+    private string _htmlPreviewUrl = string.Empty;
+
+    private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()
+        .Build();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAccessToken();
+        
+        if (string.IsNullOrEmpty(_accessToken))
+        {
+            // 未验证，跳转到验证页面
+            NavigationManager.NavigateTo($"/share/{ShareCode}");
+            return;
+        }
+
+        await LoadWorkspace();
+    }
+
+    private async Task LoadAccessToken()
+    {
+        try
+        {
+            _accessToken = await JSRuntime.InvokeAsync<string>("sessionStorage.getItem", $"share_token_{ShareCode}") ?? string.Empty;
+        }
+        catch
+        {
+            _accessToken = string.Empty;
+        }
+    }
+
+    private async Task LoadWorkspace()
+    {
+        try
+        {
+            _isLoading = true;
+            _error = string.Empty;
+            StateHasChanged();
+
+            // 并行加载会话信息和文件列表
+            var sessionTask = LoadSessionInfo();
+            var filesTask = LoadFiles();
+
+            await Task.WhenAll(sessionTask, filesTask);
+        }
+        catch (Exception ex)
+        {
+            _error = $"加载失败: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadSessionInfo()
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"/api/share/{ShareCode}/session");
+            request.Headers.Add("X-Share-Token", _accessToken);
+
+            var response = await Http.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _sessionInfo = await response.Content.ReadFromJsonAsync<SharedSessionInfo>();
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // 令牌无效，清除并跳转
+                await JSRuntime.InvokeVoidAsync("sessionStorage.removeItem", $"share_token_{ShareCode}");
+                NavigationManager.NavigateTo($"/share/{ShareCode}");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                _error = $"加载会话失败: {error}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"加载会话失败: {ex.Message}";
+        }
+    }
+
+    private async Task LoadFiles()
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"/api/share/{ShareCode}/workspace/files");
+            request.Headers.Add("X-Share-Token", _accessToken);
+
+            var response = await Http.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _workspaceFiles = await response.Content.ReadFromJsonAsync<List<FileNode>>() ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载文件列表失败: {ex.Message}");
+        }
+    }
+
+    private async Task SelectFile(FileNode node)
+    {
+        if (node.Type == "folder")
+        {
+            ToggleFolder(node.Path);
+            return;
+        }
+
+        _selectedFilePath = node.Path;
+        _isLoadingFile = true;
+        _fileContent = string.Empty;
+        _isImageFile = false;
+        _isHtmlFile = false;
+        StateHasChanged();
+
+        try
+        {
+            var ext = node.Extension?.ToLower() ?? "";
+            
+            // 检查是否为图片
+            if (new[] { ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp" }.Contains(ext))
+            {
+                _isImageFile = true;
+                _imagePreviewUrl = $"/api/share/{ShareCode}/workspace/file/{Uri.EscapeDataString(node.Path)}?token={Uri.EscapeDataString(_accessToken)}";
+            }
+            // 检查是否为 HTML
+            else if (new[] { ".html", ".htm" }.Contains(ext))
+            {
+                _isHtmlFile = true;
+                _htmlPreviewUrl = $"/api/share/{ShareCode}/workspace/file/{Uri.EscapeDataString(node.Path)}?token={Uri.EscapeDataString(_accessToken)}";
+            }
+            else
+            {
+                // 文本文件，获取内容
+                var request = new HttpRequestMessage(HttpMethod.Get, $"/api/share/{ShareCode}/workspace/file/{Uri.EscapeDataString(node.Path)}");
+                request.Headers.Add("X-Share-Token", _accessToken);
+
+                var response = await Http.SendAsync(request);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _fileContent = await response.Content.ReadAsStringAsync();
+                }
+                else
+                {
+                    _fileContent = "无法加载文件内容";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _fileContent = $"加载失败: {ex.Message}";
+        }
+        finally
+        {
+            _isLoadingFile = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleFolder(string path)
+    {
+        if (_expandedFolders.Contains(path))
+        {
+            _expandedFolders.Remove(path);
+        }
+        else
+        {
+            _expandedFolders.Add(path);
+        }
+    }
+
+    private RenderFragment RenderFileNode(FileNode node, int level) => __builder =>
+    {
+        var paddingLeft = level * 16 + 8;
+        var isExpanded = _expandedFolders.Contains(node.Path);
+        var isSelected = _selectedFilePath == node.Path;
+
+        <div class="@(isSelected ? "bg-indigo-50" : "hover:bg-gray-50") rounded cursor-pointer transition-colors"
+             style="padding-left: @(paddingLeft)px"
+             @onclick="() => SelectFile(node)">
+            <div class="flex items-center gap-2 py-1.5 pr-2">
+                @if (node.Type == "folder")
+                {
+                    <svg class="w-4 h-4 text-gray-400 transition-transform @(isExpanded ? "rotate-90" : "")" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                    <svg class="w-4 h-4 text-yellow-500" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                    </svg>
+                }
+                else
+                {
+                    <span class="w-4"></span>
+                    <svg class="w-4 h-4 @GetFileIconColor(node.Extension)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                }
+                <span class="text-sm text-gray-700 truncate flex-1">@node.Name</span>
+                @if (node.Type == "file" && node.Size > 0)
+                {
+                    <span class="text-xs text-gray-400">@FormatFileSize(node.Size)</span>
+                }
+            </div>
+        </div>
+
+        @if (node.Type == "folder" && isExpanded && node.Children != null)
+        {
+            @foreach (var child in node.Children)
+            {
+                @RenderFileNode(child, level + 1)
+            }
+        }
+    };
+
+    private string GetFileIconColor(string? extension)
+    {
+        return extension?.ToLower() switch
+        {
+            ".js" or ".ts" or ".jsx" or ".tsx" => "text-yellow-500",
+            ".html" or ".htm" => "text-orange-500",
+            ".css" or ".scss" or ".sass" => "text-blue-500",
+            ".json" => "text-green-500",
+            ".md" => "text-gray-600",
+            ".py" => "text-blue-600",
+            ".cs" => "text-purple-500",
+            ".razor" => "text-purple-600",
+            _ => "text-gray-400"
+        };
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+
+    private string RenderMarkdown(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Markdown.ToHtml(content, _markdownPipeline);
+        }
+        catch
+        {
+            return System.Net.WebUtility.HtmlEncode(content);
+        }
+    }
+
+    private async Task Reload()
+    {
+        await LoadWorkspace();
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    private class SharedSessionInfo
+    {
+        public string SessionId { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string? ToolId { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        public List<ChatMessage>? Messages { get; set; }
+        public string? WorkspacePath { get; set; }
+        public bool IsWorkspaceValid { get; set; }
+    }
+
+    private class FileNode
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Path { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public string? Extension { get; set; }
+        public bool IsHtml { get; set; }
+        public List<FileNode>? Children { get; set; }
+    }
+}

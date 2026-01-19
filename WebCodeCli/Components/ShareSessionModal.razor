@@ -1,0 +1,462 @@
+@namespace WebCodeCli.Components
+@using WebCodeCli.Domain.Domain.Model
+@using WebCodeCli.Domain.Repositories.Base.SessionShare
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+
+<!-- 分享会话模态框 -->
+@if (_isVisible)
+{
+    <div class="fixed inset-0 z-50 overflow-y-auto">
+        <!-- 背景遮罩 -->
+        <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity" @onclick="Close"></div>
+
+        <!-- 模态框内容 -->
+        <div class="flex min-h-full items-center justify-center p-4">
+            <div class="relative bg-white rounded-2xl shadow-xl w-full max-w-lg transform transition-all" @onclick:stopPropagation="true">
+                <!-- 头部 -->
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                        </svg>
+                        分享会话
+                    </h3>
+                    <button @onclick="Close" class="p-1 hover:bg-gray-100 rounded-lg transition-colors">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- 内容 -->
+                <div class="p-6">
+                    <!-- Tab 切换 -->
+                    <div class="flex border-b border-gray-200 mb-4">
+                        <button @onclick='() => _activeTab = "create"'
+                                class="px-4 py-2 text-sm font-medium @(_activeTab == "create" ? "text-indigo-600 border-b-2 border-indigo-600 -mb-px" : "text-gray-500 hover:text-gray-700")">
+                            创建分享
+                        </button>
+                        <button @onclick='() => _activeTab = "manage"'
+                                class="px-4 py-2 text-sm font-medium @(_activeTab == "manage" ? "text-indigo-600 border-b-2 border-indigo-600 -mb-px" : "text-gray-500 hover:text-gray-700")">
+                            管理分享 (@_existingShares.Count)
+                        </button>
+                    </div>
+
+                    @if (_activeTab == "create")
+                    {
+                        <!-- 创建分享表单 -->
+                        @if (_createdShare != null)
+                        {
+                            <!-- 分享创建成功 -->
+                            <div class="text-center py-4">
+                                <div class="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+                                    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                    </svg>
+                                </div>
+                                <h4 class="text-lg font-semibold text-gray-800 mb-2">分享创建成功！</h4>
+                                <p class="text-sm text-gray-500 mb-4">复制下方链接分享给他人</p>
+
+                                <!-- 分享链接 -->
+                                <div class="bg-gray-50 rounded-lg p-3 mb-4">
+                                    <div class="flex items-center gap-2">
+                                        <input type="text" 
+                                               value="@_createdShare.ShareUrl" 
+                                               readonly 
+                                               class="flex-1 bg-transparent text-sm text-gray-700 font-mono outline-none" />
+                                        <button @onclick="CopyShareUrl" 
+                                                class="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+                                                title="复制链接">
+                                            @if (_copied)
+                                            {
+                                                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                                </svg>
+                                            }
+                                            else
+                                            {
+                                                <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                                </svg>
+                                            }
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- 分享信息 -->
+                                <div class="text-left bg-blue-50 rounded-lg p-3 text-sm">
+                                    <p class="text-blue-700">
+                                        <strong>访问密码：</strong>@_inputPassword
+                                    </p>
+                                    @if (_createdShare.ExpiresAt.HasValue)
+                                    {
+                                        <p class="text-blue-700 mt-1">
+                                            <strong>过期时间：</strong>@_createdShare.ExpiresAt.Value.ToString("yyyy-MM-dd HH:mm")
+                                        </p>
+                                    }
+                                </div>
+
+                                <button @onclick="ResetForm" class="mt-4 px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
+                                    创建新分享
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <!-- 创建表单 -->
+                            <div class="space-y-4">
+                                <!-- 分享标题 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">分享标题（可选）</label>
+                                    <input type="text"
+                                           @bind="_inputTitle"
+                                           placeholder="给分享起个名字..."
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                           disabled="@_isCreating" />
+                                </div>
+
+                                <!-- 分享密码 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        访问密码 <span class="text-red-500">*</span>
+                                    </label>
+                                    <div class="relative">
+                                        <input type="@(_showPassword ? "text" : "password")"
+                                               @bind="_inputPassword"
+                                               placeholder="设置4位以上密码"
+                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 pr-10"
+                                               disabled="@_isCreating" />
+                                        <button type="button"
+                                                @onclick="TogglePasswordVisibility"
+                                                class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                            @if (_showPassword)
+                                            {
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                                </svg>
+                                            }
+                                            else
+                                            {
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                                </svg>
+                                            }
+                                        </button>
+                                    </div>
+                                    <p class="mt-1 text-xs text-gray-500">密码将用于保护分享内容，请妥善保管</p>
+                                </div>
+
+                                <!-- 过期时间 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">过期时间（可选）</label>
+                                    <select @bind="_expirationOption"
+                                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                            disabled="@_isCreating">
+                                        <option value="never">永不过期</option>
+                                        <option value="1h">1小时后</option>
+                                        <option value="24h">24小时后</option>
+                                        <option value="7d">7天后</option>
+                                        <option value="30d">30天后</option>
+                                    </select>
+                                </div>
+
+                                <!-- 错误提示 -->
+                                @if (!string.IsNullOrEmpty(_error))
+                                {
+                                    <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                                        @_error
+                                    </div>
+                                }
+
+                                <!-- 提交按钮 -->
+                                <button @onclick="CreateShare"
+                                        disabled="@(_isCreating || string.IsNullOrWhiteSpace(_inputPassword) || _inputPassword.Length < 4)"
+                                        class="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                                    @if (_isCreating)
+                                    {
+                                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                        <span>创建中...</span>
+                                    }
+                                    else
+                                    {
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                                        </svg>
+                                        <span>创建分享链接</span>
+                                    }
+                                </button>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <!-- 管理已有分享 -->
+                        @if (_isLoadingShares)
+                        {
+                            <div class="py-8 text-center">
+                                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+                                <p class="mt-2 text-gray-500">加载中...</p>
+                            </div>
+                        }
+                        else if (_existingShares.Count == 0)
+                        {
+                            <div class="py-8 text-center text-gray-500">
+                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                                </svg>
+                                <p>暂无分享记录</p>
+                                <button @onclick='() => _activeTab = "create"' class="mt-2 text-indigo-600 hover:underline text-sm">
+                                    创建第一个分享
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="space-y-3 max-h-80 overflow-y-auto">
+                                @foreach (var share in _existingShares)
+                                {
+                                    <div class="border border-gray-200 rounded-lg p-3 @(share.IsActive && !share.IsExpired ? "" : "opacity-60")">
+                                        <div class="flex items-start justify-between">
+                                            <div class="flex-1 min-w-0">
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    @if (!share.IsActive)
+                                                    {
+                                                        <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">已停用</span>
+                                                    }
+                                                    else if (share.IsExpired)
+                                                    {
+                                                        <span class="px-2 py-0.5 bg-red-100 text-red-600 text-xs rounded">已过期</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="px-2 py-0.5 bg-green-100 text-green-600 text-xs rounded">有效</span>
+                                                    }
+                                                    <span class="text-sm font-medium text-gray-800 truncate">
+                                                        @(string.IsNullOrEmpty(share.Title) ? share.ShareCode : share.Title)
+                                                    </span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 space-y-0.5">
+                                                    <p>创建时间: @share.CreatedAt.ToString("MM-dd HH:mm")</p>
+                                                    @if (share.ExpiresAt.HasValue)
+                                                    {
+                                                        <p>过期时间: @share.ExpiresAt.Value.ToString("MM-dd HH:mm")</p>
+                                                    }
+                                                    <p>访问次数: @share.ViewCount</p>
+                                                </div>
+                                            </div>
+                                            <div class="flex items-center gap-1 ml-2">
+                                                @if (share.IsActive && !share.IsExpired)
+                                                {
+                                                    <button @onclick="() => CopyShareUrlByCode(share.ShareUrl)"
+                                                            class="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                                                            title="复制链接">
+                                                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                                        </svg>
+                                                    </button>
+                                                }
+                                                <button @onclick="() => DeleteShare(share.ShareCode)"
+                                                        class="p-1.5 hover:bg-red-100 rounded transition-colors"
+                                                        title="删除">
+                                                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string SessionId { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback OnShareCreated { get; set; }
+
+    private bool _isVisible = false;
+    private string _activeTab = "create";
+    
+    // 创建分享
+    private string _inputTitle = string.Empty;
+    private string _inputPassword = string.Empty;
+    private bool _showPassword = false;
+    private string _expirationOption = "never";
+    private bool _isCreating = false;
+    private string _error = string.Empty;
+    private ShareInfoResponse? _createdShare = null;
+    private bool _copied = false;
+
+    // 管理分享
+    private List<ShareInfoResponse> _existingShares = new();
+    private bool _isLoadingShares = false;
+
+    public async Task ShowAsync(string sessionId)
+    {
+        SessionId = sessionId;
+        _isVisible = true;
+        _activeTab = "create";
+        ResetForm();
+        StateHasChanged();
+        
+        await LoadExistingShares();
+    }
+
+    public void Close()
+    {
+        _isVisible = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadExistingShares()
+    {
+        try
+        {
+            _isLoadingShares = true;
+            StateHasChanged();
+
+            var response = await Http.GetAsync($"/api/share/session/{SessionId}");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                _existingShares = await response.Content.ReadFromJsonAsync<List<ShareInfoResponse>>() ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载分享列表失败: {ex.Message}");
+        }
+        finally
+        {
+            _isLoadingShares = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreateShare()
+    {
+        if (string.IsNullOrWhiteSpace(_inputPassword) || _inputPassword.Length < 4)
+        {
+            _error = "密码长度不能少于4位";
+            return;
+        }
+
+        try
+        {
+            _isCreating = true;
+            _error = string.Empty;
+            StateHasChanged();
+
+            var expiresAt = GetExpirationDate();
+
+            var request = new
+            {
+                SessionId = SessionId,
+                Password = _inputPassword,
+                Title = string.IsNullOrWhiteSpace(_inputTitle) ? null : _inputTitle,
+                ExpiresAt = expiresAt
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/share", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _createdShare = await response.Content.ReadFromJsonAsync<ShareInfoResponse>();
+                await LoadExistingShares();
+                await OnShareCreated.InvokeAsync();
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                _error = error?.Error ?? "创建分享失败";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"创建失败: {ex.Message}";
+        }
+        finally
+        {
+            _isCreating = false;
+            StateHasChanged();
+        }
+    }
+
+    private DateTime? GetExpirationDate()
+    {
+        return _expirationOption switch
+        {
+            "1h" => DateTime.Now.AddHours(1),
+            "24h" => DateTime.Now.AddHours(24),
+            "7d" => DateTime.Now.AddDays(7),
+            "30d" => DateTime.Now.AddDays(30),
+            _ => null
+        };
+    }
+
+    private async Task CopyShareUrl()
+    {
+        if (_createdShare != null)
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", _createdShare.ShareUrl);
+            _copied = true;
+            StateHasChanged();
+
+            await Task.Delay(2000);
+            _copied = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CopyShareUrlByCode(string url)
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", url);
+    }
+
+    private async Task DeleteShare(string shareCode)
+    {
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/share/{shareCode}");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadExistingShares();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"删除分享失败: {ex.Message}");
+        }
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        _showPassword = !_showPassword;
+    }
+
+    private void ResetForm()
+    {
+        _inputTitle = string.Empty;
+        _inputPassword = string.Empty;
+        _expirationOption = "never";
+        _error = string.Empty;
+        _createdShare = null;
+        _copied = false;
+    }
+
+    private class ErrorResponse
+    {
+        public string? Error { get; set; }
+    }
+}

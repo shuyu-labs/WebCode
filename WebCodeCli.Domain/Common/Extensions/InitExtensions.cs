@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using SqlSugar;
 using System;
@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using WebCodeCli.Domain.Repositories.Base.SessionShare;
 using WebCodeCli.Repositories.Demo;
 
 namespace WebCodeCli.Domain.Common.Extensions
@@ -64,6 +65,18 @@ namespace WebCodeCli.Domain.Common.Extensions
                 catch (Exception ex)
                 {
                     Console.WriteLine($"初始化CLI工具表失败: {ex.Message}");
+                }
+                
+                // 确保会话分享表已创建
+                try
+                {
+                    Console.WriteLine("开始初始化会话分享表...");
+                    _repository.GetDB().CodeFirst.InitTables<SessionShare>();
+                    Console.WriteLine("会话分享表初始化成功");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"初始化会话分享表失败: {ex.Message}");
                 }
             }
         }
