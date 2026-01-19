@@ -127,25 +127,37 @@
                         <!-- 聊天记录 -->
                         @if (_sessionInfo?.Messages?.Any() == true)
                         {
-                            <div class="p-3 space-y-3">
+                            <div class="p-2 sm:p-3 space-y-2 sm:space-y-3">
                                 @foreach (var message in _sessionInfo.Messages)
                                 {
-                                    <div class="@(message.Role == "user" ? "bg-gray-100" : "bg-gray-50") rounded-lg p-3">
-                                        <div class="flex items-center gap-2 mb-2">
-                                            @if (message.Role == "user")
-                                            {
-                                                <span class="w-6 h-6 rounded-full bg-gray-700 text-white flex items-center justify-center text-xs">U</span>
-                                                <span class="text-sm font-medium text-gray-700">用户</span>
-                                            }
-                                            else
-                                            {
-                                                <span class="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs">A</span>
-                                                <span class="text-sm font-medium text-gray-700">助手</span>
-                                            }
-                                            <span class="text-xs text-gray-400">@message.CreatedAt.ToString("HH:mm")</span>
+                                    <div class="@(message.Role == "user" ? "bg-white border-l-4 border-gray-300 shadow-sm" : "bg-gray-50 border-l-4 border-blue-500 shadow-sm") rounded-lg sm:rounded-xl p-3 sm:p-4 hover:shadow-md transition-all border border-gray-100 overflow-hidden">
+                                        <div class="flex justify-between items-center mb-2 sm:mb-3">
+                                            <div class="flex items-center gap-1.5 sm:gap-2">
+                                                @if (message.Role == "user")
+                                                {
+                                                    <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-gray-600 to-gray-700 rounded-full flex items-center justify-center shadow-sm">
+                                                        <svg class="w-4 h-4 sm:w-4.5 sm:h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                                        </svg>
+                                                    </div>
+                                                    <span class="font-bold text-sm sm:text-base text-gray-700">用户</span>
+                                                }
+                                                else
+                                                {
+                                                    <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-md">
+                                                        <svg class="w-4 h-4 sm:w-4.5 sm:h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                                                        </svg>
+                                                    </div>
+                                                    <span class="font-bold text-sm sm:text-base text-blue-700">助手</span>
+                                                }
+                                            </div>
+                                            <span class="text-[10px] sm:text-xs text-gray-500 font-medium">@message.CreatedAt.ToString("HH:mm:ss")</span>
                                         </div>
-                                        <div class="text-sm text-gray-600 prose prose-sm max-w-none">
-                                            @((MarkupString)RenderMarkdown(message.Content))
+                                        <div class="text-xs sm:text-sm">
+                                            <div class="max-h-60 sm:max-h-96 overflow-y-auto overflow-x-hidden text-gray-700 leading-relaxed break-words prose prose-sm max-w-none">
+                                                @((MarkupString)RenderMarkdown(message.Content))
+                                            </div>
                                         </div>
                                     </div>
                                 }
@@ -153,11 +165,14 @@
                         }
                         else
                         {
-                            <div class="p-4 text-center text-gray-500">
-                                <svg class="w-12 h-12 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
-                                </svg>
-                                <p>暂无聊天记录</p>
+                            <div class="p-8 text-center text-gray-400">
+                                <div class="w-20 h-20 bg-gray-100 border border-gray-200 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
+                                    <svg class="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                                    </svg>
+                                </div>
+                                <p class="text-base font-semibold text-gray-600">暂无聊天记录</p>
+                                <p class="text-sm mt-2 text-gray-500">会话还没有任何对话消息</p>
                             </div>
                         }
                     }
