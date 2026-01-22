@@ -1,0 +1,945 @@
+@page "/m/code-assistant"
+@page "/mobile/code-assistant"
+@namespace WebCodeCli.Pages
+@using WebCodeCli.Domain.Domain.Model
+@using System.Text
+@using WebCodeCli.Pages
+@using WebCodeCli.Components
+@using WebCodeCli.Helpers
+@inject IJSRuntime JSRuntime
+
+<PageTitle>@T("codeAssistant.title")</PageTitle>
+
+<div class="flex flex-col h-screen bg-gray-50 overflow-hidden select-none" style="height: 100dvh;">
+    <!-- 顶部Header -->
+    <header class="flex-shrink-0 h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-3 shadow-sm safe-area-top">
+        <!-- 菜单按钮 -->
+        <button @onclick="ToggleSessionDrawer" 
+                class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors"
+                title="@T("codeAssistant.sessionHistory")">
+            <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+            </svg>
+        </button>
+        
+        <!-- 会话标题 -->
+        <div class="flex-1 min-w-0">
+            <h1 class="text-base font-bold text-gray-800 truncate">
+                @(_currentSession?.Title ?? T("codeAssistant.newSession"))
+            </h1>
+            <p class="text-xs text-gray-500 truncate">
+                @GetCurrentToolName()
+            </p>
+        </div>
+        
+        <!-- 新建会话按钮 -->
+        <button @onclick="CreateNewSession" 
+                class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors"
+                title="@T("codeAssistant.newSession")">
+            <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+        </button>
+    </header>
+    
+    <!-- 主内容区 -->
+    <main class="flex-1 overflow-hidden relative">
+        @switch(_activeTab)
+        {
+            case "chat":
+                @RenderChatView()
+                break;
+            case "output":
+                @RenderOutputView()
+                break;
+            case "files":
+                @RenderFilesView()
+                break;
+            case "preview":
+                @RenderPreviewView()
+                break;
+            case "settings":
+                @RenderSettingsView()
+                break;
+        }
+    </main>
+    
+    <!-- FAB浮动按钮 -->
+    @if (_activeTab == "chat" && !_isLoading)
+    {
+        <button @onclick="FocusInputAndScroll"
+                class="fixed right-4 z-40 w-14 h-14 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center active:scale-95"
+                style="bottom: calc(4rem + 80px + env(safe-area-inset-bottom, 0px));">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+            </svg>
+        </button>
+    }
+    
+    <!-- 底部Tab栏 -->
+    <nav class="flex-shrink-0 bg-white border-t border-gray-200 safe-area-bottom">
+        <div class="flex items-center justify-around h-16">
+            @foreach (var tab in _tabs)
+            {
+                <button @onclick="() => SwitchTab(tab.Key)"
+                        class="flex-1 flex flex-col items-center justify-center h-full gap-1 transition-colors @(tab.Key == _activeTab ? "text-blue-600" : "text-gray-500 active:text-gray-700")">
+                    <div class="relative">
+                        @((MarkupString)tab.Icon)
+                        @if (tab.Key == "output" && _isLoading)
+                        {
+                            <span class="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                        }
+                    </div>
+                    <span class="text-xs font-medium">@tab.Label</span>
+                </button>
+            }
+        </div>
+    </nav>
+</div>
+
+<!-- 会话抽屉 -->
+@if (_showSessionDrawer)
+{
+    <div class="fixed inset-0 z-50" @onclick="CloseSessionDrawer">
+        <!-- 遮罩 -->
+        <div class="absolute inset-0 bg-black/50 transition-opacity"></div>
+        <!-- 抽屉内容 -->
+        <div class="absolute left-0 top-0 bottom-0 w-4/5 max-w-sm bg-white shadow-2xl transform transition-transform duration-300 ease-out flex flex-col"
+             @onclick:stopPropagation="true">
+            <!-- 抽屉头部 -->
+            <div class="flex-shrink-0 h-14 flex items-center justify-between px-4 border-b border-gray-200 bg-gray-50 safe-area-top">
+                <h2 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    @T("codeAssistant.sessionHistory")
+                </h2>
+                <button @onclick="CloseSessionDrawer" 
+                        class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-200 active:bg-gray-300 transition-colors">
+                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- 新建会话按钮 -->
+            <div class="flex-shrink-0 p-4 border-b border-gray-200">
+                <button @onclick="CreateNewSessionFromDrawer" 
+                        class="w-full btn-primary flex items-center justify-center gap-2 py-3 rounded-xl shadow-md active:scale-[0.98] transition-transform">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    @T("codeAssistant.newSession")
+                </button>
+            </div>
+            
+            <!-- 会话列表 -->
+            <div class="flex-1 overflow-y-auto">
+                @if (_isLoadingSessions)
+                {
+                    <div class="flex items-center justify-center py-12">
+                        <div class="animate-spin rounded-full h-8 w-8 border-3 border-gray-300 border-t-blue-600"></div>
+                    </div>
+                }
+                else if (_sessions.Any())
+                {
+                    <div class="divide-y divide-gray-100">
+                        @foreach (var session in _sessions)
+                        {
+                            <div class="flex items-center px-4 py-3 hover:bg-gray-50 active:bg-gray-100 transition-colors @(_currentSession?.SessionId == session.SessionId ? "bg-blue-50 border-l-4 border-blue-500" : "")"
+                                 @onclick="async () => await LoadSessionFromDrawer(session.SessionId)">
+                                <div class="flex-1 min-w-0">
+                                    <h3 class="font-semibold text-sm text-gray-800 truncate">@session.Title</h3>
+                                    <p class="text-xs text-gray-500 mt-0.5">@FormatDateTime(session.UpdatedAt)</p>
+                                </div>
+                                <div class="flex items-center gap-1 flex-shrink-0 ml-2">
+                                    <button @onclick:stopPropagation="true" 
+                                            @onclick="() => ShowDeleteSessionConfirm(session)"
+                                            class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-100 active:bg-red-200 transition-colors">
+                                        <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                        <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                        </svg>
+                        <p class="text-sm font-medium">@T("codeAssistant.noSessions")</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<!-- 删除会话确认对话框 -->
+@if (_showDeleteSessionDialog && _sessionToDelete != null)
+{
+    <div class="fixed inset-0 z-[60] flex items-end justify-center" @onclick="CloseDeleteSessionDialog">
+        <div class="absolute inset-0 bg-black/50"></div>
+        <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl p-6 pb-8 safe-area-bottom transform transition-transform"
+             @onclick:stopPropagation="true">
+            <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
+            <h3 class="text-lg font-bold text-gray-800 mb-2">@T("codeAssistant.confirmDelete")</h3>
+            <p class="text-sm text-gray-600 mb-4">@T("codeAssistant.deleteSessionWarning")</p>
+            <div class="bg-gray-50 rounded-xl p-3 mb-6">
+                <p class="font-medium text-gray-800 truncate">@_sessionToDelete.Title</p>
+                <p class="text-xs text-gray-500 mt-1">@_sessionToDelete.Messages.Count @T("codeAssistant.messagesCount")</p>
+            </div>
+            <div class="flex gap-3">
+                <button @onclick="CloseDeleteSessionDialog"
+                        class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                    @T("common.cancel")
+                </button>
+                <button @onclick="DeleteSessionConfirmed"
+                        disabled="@_isDeletingSession"
+                        class="flex-1 py-3 px-4 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                    @if (_isDeletingSession)
+                    {
+                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
+                    }
+                    @T("common.delete")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- 代码预览模态框 -->
+<CodePreviewModal @ref="_codePreviewModal" />
+
+<!-- 环境变量配置模态框 -->
+<EnvironmentVariableConfigModal @ref="_envConfigModal" />
+
+<!-- 文件操作菜单 -->
+@if (_showFileActionSheet && _selectedFileNode != null)
+{
+    <div class="fixed inset-0 z-50 flex items-end justify-center" @onclick="CloseFileActionSheet">
+        <div class="absolute inset-0 bg-black/50"></div>
+        <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl safe-area-bottom transform transition-transform"
+             @onclick:stopPropagation="true">
+            <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-2"></div>
+            <div class="px-4 py-3 border-b border-gray-100">
+                <p class="font-semibold text-gray-800 truncate">@_selectedFileNode.Name</p>
+                <p class="text-xs text-gray-500 truncate">@_selectedFileNode.Path</p>
+            </div>
+            <div class="py-2">
+                @if (_selectedFileNode.Type == "file")
+                {
+                    <button @onclick="PreviewSelectedFile"
+                            class="w-full flex items-center gap-4 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                        <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                        </svg>
+                        <span class="font-medium text-gray-800">@T("codeAssistant.previewCode")</span>
+                    </button>
+                    <button @onclick="DownloadSelectedFile"
+                            class="w-full flex items-center gap-4 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                        <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                        </svg>
+                        <span class="font-medium text-gray-800">@T("codeAssistant.downloadFile")</span>
+                    </button>
+                    @if (_selectedFileNode.IsHtml)
+                    {
+                        <button @onclick="PreviewHtmlFile"
+                                class="w-full flex items-center gap-4 px-4 py-3 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                            </svg>
+                            <span class="font-medium text-gray-800">@T("codeAssistant.previewHtml")</span>
+                        </button>
+                    }
+                }
+                <button @onclick="DeleteSelectedFileNode"
+                        class="w-full flex items-center gap-4 px-4 py-3 hover:bg-red-50 active:bg-red-100 transition-colors">
+                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    <span class="font-medium text-red-600">@T("common.delete")</span>
+                </button>
+            </div>
+            <div class="px-4 pb-4">
+                <button @onclick="CloseFileActionSheet"
+                        class="w-full py-3 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-xl font-medium text-gray-700 transition-colors">
+                    @T("common.cancel")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* 聊天视图 *@
+@{
+    RenderFragment RenderChatView() => __builder =>
+    {
+        <div class="flex flex-col h-full">
+            <!-- 消息列表 -->
+            <div id="mobile-chat-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3" style="padding-bottom: 100px;">
+                @if (!_messages.Any() && !_isLoading)
+                {
+                    <!-- 空状态 -->
+                    <div class="flex flex-col items-center justify-center h-full text-gray-400 py-12">
+                        <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                            <svg class="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                            </svg>
+                        </div>
+                        <p class="text-base font-medium text-gray-600">@T("codeAssistant.startConversation")</p>
+                        <p class="text-sm text-gray-400 mt-1">@T("codeAssistant.inputPlaceholder")</p>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var message in _messages)
+                    {
+                        <div class="@(message.Role == "user" ? "flex justify-end" : "flex justify-start")">
+                            <div class="@(message.Role == "user" 
+                                          ? "bg-blue-600 text-white rounded-2xl rounded-br-md max-w-[85%]" 
+                                          : "bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-bl-md max-w-[85%] shadow-sm") px-4 py-3">
+                                @if (message.HasError)
+                                {
+                                    <div class="text-red-500 text-sm">@message.ErrorMessage</div>
+                                }
+                                else
+                                {
+                                    <div class="text-sm leading-relaxed break-words whitespace-pre-wrap">
+                                        @if (message.Role == "user")
+                                        {
+                                            @message.Content
+                                        }
+                                        else
+                                        {
+                                            @RenderMarkdown(message.Content)
+                                        }
+                                    </div>
+                                }
+                                <div class="@(message.Role == "user" ? "text-blue-200" : "text-gray-400") text-xs mt-1 text-right">
+                                    @message.CreatedAt.ToString("HH:mm")
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    
+                    @if (_isLoading)
+                    {
+                        <div class="flex justify-start">
+                            <div class="bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-bl-md max-w-[85%] shadow-sm px-4 py-3">
+                                @if (!string.IsNullOrEmpty(_currentAssistantMessage))
+                                {
+                                    <div class="text-sm leading-relaxed break-words">@RenderMarkdown(_currentAssistantMessage)</div>
+                                }
+                                else
+                                {
+                                    <div class="flex items-center gap-2">
+                                        <div class="flex gap-1">
+                                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms;"></div>
+                                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms;"></div>
+                                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms;"></div>
+                                        </div>
+                                        <span class="text-sm text-gray-500">@T("codeAssistant.thinking")</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+            
+            <!-- 固定底部输入区 -->
+            <div class="fixed bottom-16 left-0 right-0 bg-white border-t border-gray-200 p-3 safe-area-bottom z-30">
+                <!-- 快捷操作按钮 -->
+                <div class="flex items-center gap-2 mb-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+                    <button @onclick="ToggleQuickActions"
+                            class="flex-shrink-0 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-full text-xs font-medium text-gray-700 flex items-center gap-1 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                        @T("codeAssistant.quickActions")
+                    </button>
+                    <label class="flex-shrink-0 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-full text-xs font-medium text-gray-700 flex items-center gap-1 transition-colors cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                        </svg>
+                        @T("codeAssistant.uploadFile")
+                        <InputFile OnChange="HandleFileUpload" disabled="@_isUploading" class="hidden" />
+                    </label>
+                </div>
+                
+                <!-- 快捷操作面板 -->
+                @if (_showQuickActions)
+                {
+                    <div class="mb-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
+                        <div class="grid grid-cols-4 gap-2">
+                            @foreach (var action in _quickActionItems.Take(8))
+                            {
+                                <button @onclick="() => OnQuickActionClick(action)"
+                                        class="flex flex-col items-center justify-center p-2 rounded-lg hover:bg-white active:bg-gray-100 transition-colors">
+                                    <span class="text-lg">@action.Icon</span>
+                                    <span class="text-[10px] text-gray-600 mt-1 line-clamp-1">@action.Title</span>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+                
+                <!-- 输入框 -->
+                <div class="flex items-end gap-2">
+                    <div class="flex-1 relative">
+                        <textarea @bind="_inputMessage"
+                                  @bind:event="oninput"
+                                  @onkeydown="HandleMobileKeyDown"
+                                  id="mobile-input-message"
+                                  placeholder="@T("codeAssistant.inputPlaceholder")"
+                                  rows="1"
+                                  maxlength="5000"
+                                  disabled="@_isLoading"
+                                  class="w-full px-4 py-3 bg-gray-100 border-0 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm min-h-[48px] max-h-32"></textarea>
+                    </div>
+                    <button @onclick="SendMessage"
+                            disabled="@(_isLoading || string.IsNullOrWhiteSpace(_inputMessage))"
+                            class="w-12 h-12 flex-shrink-0 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-gray-300 text-white rounded-full flex items-center justify-center transition-colors active:scale-95">
+                        @if (_isLoading)
+                        {
+                            <div class="animate-spin h-5 w-5 border-2 border-white rounded-full border-t-transparent"></div>
+                        }
+                        else
+                        {
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                            </svg>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    };
+}
+
+@* 输出结果视图 *@
+@{
+    RenderFragment RenderOutputView() => __builder =>
+    {
+        <div class="h-full flex flex-col">
+            <!-- 进度追踪器 -->
+            <div class="flex-shrink-0 px-4 py-2">
+                <ProgressTracker @ref="_progressTracker" CanCancel="true" OnCancel="CancelExecution" />
+            </div>
+            
+            <!-- 输出内容 -->
+            <div class="flex-1 overflow-hidden">
+                <OutputResultPanel 
+                    ContainerId="mobile-output-container"
+                    HasOutputEvents="@(_isJsonlOutputActive && _jsonlEvents.Any())"
+                    TotalEventCount="@_jsonlEvents.Count"
+                    DisplayedEventCount="@Math.Min(_displayedEventCount, _jsonlEvents.Count)"
+                    InitialDisplayCount="@InitialDisplayCount"
+                    ActiveThreadId="@_activeThreadId"
+                    HasMoreEvents="@_hasMoreEvents"
+                    IsLoading="@_isLoading"
+                    EventGroups="@ConvertToOutputEventGroups(GetPagedJsonlEventGroups())"
+                    RawOutput="@_rawOutput"
+                    OnLoadMore="LoadMoreEvents"
+                    OnToggleGroupCallback="HandleToggleGroupCallback"
+                    IsGroupOpenFunc="@(g => IsOutputGroupOpen(g))" />
+            </div>
+        </div>
+    };
+}
+
+@* 文件视图 *@
+@{
+    RenderFragment RenderFilesView() => __builder =>
+    {
+        <div class="h-full flex flex-col bg-white">
+            <!-- 面包屑导航 -->
+            <div class="flex-shrink-0 flex items-center gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 overflow-x-auto scrollbar-hide">
+                <button @onclick="NavigateToRoot"
+                        class="flex-shrink-0 px-2 py-1 text-sm text-blue-600 font-medium hover:bg-blue-50 active:bg-blue-100 rounded transition-colors">
+                    @T("codeAssistant.rootFolder")
+                </button>
+                @foreach (var crumb in _breadcrumbs)
+                {
+                    <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                    </svg>
+                    <button @onclick="() => NavigateToCrumb(crumb)"
+                            class="flex-shrink-0 px-2 py-1 text-sm text-blue-600 font-medium hover:bg-blue-50 active:bg-blue-100 rounded transition-colors truncate max-w-[120px]">
+                        @crumb.Name
+                    </button>
+                }
+            </div>
+            
+            <!-- 工具栏 -->
+            <div class="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+                <button @onclick="ShowCreateFolderDialog"
+                        class="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg flex items-center gap-1.5 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path>
+                    </svg>
+                    @T("codeAssistant.createFolder")
+                </button>
+                <label class="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer">
+                    @if (_isUploading)
+                    {
+                        <div class="animate-spin h-4 w-4 border-2 border-gray-600 rounded-full border-t-transparent"></div>
+                    }
+                    else
+                    {
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                    }
+                    @T("common.upload")
+                    <InputFile OnChange="HandleFileUpload" disabled="@_isUploading" class="hidden" />
+                </label>
+                <div class="flex-1"></div>
+                <button @onclick="RefreshWorkspaceFiles"
+                        class="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-100 active:bg-gray-200 rounded-lg transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- 文件列表 -->
+            <div class="flex-1 overflow-y-auto">
+                @if (!_currentFolderItems.Any())
+                {
+                    <div class="flex flex-col items-center justify-center h-full text-gray-400 py-12">
+                        <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                        <p class="text-sm font-medium">@T("codeAssistant.emptyFolder")</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="divide-y divide-gray-100">
+                        @foreach (var item in _currentFolderItems)
+                        {
+                            <div class="flex items-center px-4 h-14 hover:bg-gray-50 active:bg-gray-100 transition-colors"
+                                 @onclick="() => OnFileItemClick(item)">
+                                <div class="w-10 flex items-center justify-center flex-shrink-0">
+                                    @if (item.Type == "folder")
+                                    {
+                                        <svg class="w-6 h-6 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                                            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path>
+                                        </svg>
+                                    }
+                                    else
+                                    {
+                                        @((MarkupString)FileIconHelper.GetFileIcon(item.Extension))
+                                    }
+                                </div>
+                                <div class="flex-1 min-w-0 ml-2">
+                                    <p class="text-sm font-medium text-gray-800 truncate">@item.Name</p>
+                                    @if (item.Type == "file")
+                                    {
+                                        <p class="text-xs text-gray-500">@FormatFileSize(item.Size)</p>
+                                    }
+                                </div>
+                                @if (item.IsHtml)
+                                {
+                                    <span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded-full mr-2">HTML</span>
+                                }
+                                <button @onclick:stopPropagation="true"
+                                        @onclick="() => ShowFileActionSheet(item)"
+                                        class="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    };
+}
+
+@* HTML预览视图 *@
+@{
+    RenderFragment RenderPreviewView() => __builder =>
+    {
+        <div class="h-full flex flex-col bg-white">
+            @if (string.IsNullOrEmpty(_selectedHtmlFile))
+            {
+                <div class="flex flex-col items-center justify-center h-full text-gray-400 px-6">
+                    <svg class="w-20 h-20 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                    </svg>
+                    <p class="text-base font-medium text-gray-600 text-center">@T("codeAssistant.selectHtmlFromWorkspaceHint")</p>
+                    <button @onclick='() => SwitchTab("files")'
+                            class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 transition-colors">
+                        @T("codeAssistant.goToFiles")
+                    </button>
+                </div>
+            }
+            else
+            {
+                <!-- 预览头部 -->
+                <div class="flex-shrink-0 flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <code class="flex-1 text-xs bg-gray-100 text-gray-700 px-3 py-2 rounded-lg font-mono truncate">@_selectedHtmlFile</code>
+                    <button @onclick="RefreshHtmlPreview"
+                            class="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                    </button>
+                    <button @onclick="OpenHtmlInNewWindow"
+                            class="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- iframe预览 -->
+                <div class="flex-1 overflow-auto">
+                    <iframe id="mobile-html-preview-frame"
+                            src="@_htmlPreviewUrl"
+                            class="w-full h-full border-0"
+                            sandbox="allow-scripts allow-same-origin"></iframe>
+                </div>
+            }
+        </div>
+    };
+}
+
+@* 设置视图 *@
+@{
+    RenderFragment RenderSettingsView() => __builder =>
+    {
+        <div class="h-full overflow-y-auto bg-gray-50">
+            <div class="max-w-lg mx-auto py-4 space-y-4">
+                <!-- 用户信息卡片 -->
+                @if (_showUserInfo)
+                {
+                    <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                        <div class="flex items-center gap-4 p-4">
+                            <div class="w-14 h-14 bg-gray-700 rounded-full flex items-center justify-center">
+                                <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                </svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-lg font-bold text-gray-800 truncate">@_currentUsername</p>
+                                <p class="text-sm text-gray-500">@T("codeAssistant.currentUser")</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+                
+                <!-- 工具选择 -->
+                <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-100">
+                        <h3 class="text-sm font-bold text-gray-800">@T("codeAssistant.selectTool")</h3>
+                    </div>
+                    <div class="p-4">
+                        <select @bind="_selectedToolId" 
+                                @bind:after="OnToolChanged"
+                                class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            @foreach (var tool in _availableTools)
+                            {
+                                <option value="@tool.Id">@tool.Name - @tool.Description</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- 语言设置 -->
+                <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-100">
+                        <h3 class="text-sm font-bold text-gray-800">@T("codeAssistant.language")</h3>
+                    </div>
+                    <div class="p-4">
+                        <LanguageSwitcher OnLanguageChanged="OnLanguageChanged" />
+                    </div>
+                </div>
+                
+                <!-- 功能入口 -->
+                <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <button @onclick="OpenEnvConfig"
+                            class="w-full flex items-center gap-4 px-4 py-4 hover:bg-gray-50 active:bg-gray-100 transition-colors border-b border-gray-100">
+                        <div class="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center">
+                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1 text-left">
+                            <p class="font-medium text-gray-800">@T("codeAssistant.envConfig")</p>
+                            <p class="text-xs text-gray-500">@T("codeAssistant.envConfigDesc")</p>
+                        </div>
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                        </svg>
+                    </button>
+                    
+                    <button @onclick="DownloadAllFiles"
+                            class="w-full flex items-center gap-4 px-4 py-4 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                        <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1 text-left">
+                            <p class="font-medium text-gray-800">@T("codeAssistant.downloadAll")</p>
+                            <p class="text-xs text-gray-500">@T("codeAssistant.downloadAllDesc")</p>
+                        </div>
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- GitHub链接 -->
+                <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <a href="https://github.com/xuzeyu91/WebCode" 
+                       target="_blank" 
+                       rel="noopener noreferrer"
+                       class="flex items-center gap-4 px-4 py-4 hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                        <div class="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <p class="font-medium text-gray-800">GitHub</p>
+                            <p class="text-xs text-gray-500">@T("codeAssistant.visitGitHub")</p>
+                        </div>
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                        </svg>
+                    </a>
+                </div>
+                
+                <!-- 退出登录 -->
+                @if (_showUserInfo)
+                {
+                    <div class="mx-4 bg-white rounded-2xl shadow-sm overflow-hidden">
+                        <button @onclick="HandleLogout"
+                                class="w-full flex items-center justify-center gap-2 px-4 py-4 text-red-600 font-medium hover:bg-red-50 active:bg-red-100 transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                            </svg>
+                            @T("codeAssistant.logout")
+                        </button>
+                    </div>
+                }
+                
+                <!-- 版本信息 -->
+                <div class="text-center py-4 text-xs text-gray-400">
+                    <p>WebCode Mobile v1.0</p>
+                </div>
+            </div>
+        </div>
+    };
+}
+
+<!-- 创建文件夹对话框 -->
+@if (_showCreateFolderDialog)
+{
+    <div class="fixed inset-0 z-50 flex items-end justify-center" @onclick="CloseCreateFolderDialog">
+        <div class="absolute inset-0 bg-black/50"></div>
+        <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl p-6 pb-8 safe-area-bottom transform transition-transform"
+             @onclick:stopPropagation="true">
+            <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
+            <h3 class="text-lg font-bold text-gray-800 mb-4">@T("codeAssistant.createFolder")</h3>
+            <input @bind="_newFolderName"
+                   @bind:event="oninput"
+                   type="text"
+                   placeholder="@T("codeAssistant.folderNamePlaceholder")"
+                   class="w-full px-4 py-3 bg-gray-100 border-0 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4" />
+            <div class="flex gap-3">
+                <button @onclick="CloseCreateFolderDialog"
+                        class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                    @T("common.cancel")
+                </button>
+                <button @onclick="CreateFolder"
+                        disabled="@(string.IsNullOrWhiteSpace(_newFolderName) || _isCreatingFolder)"
+                        class="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                    @if (_isCreatingFolder)
+                    {
+                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
+                    }
+                    @T("codeAssistant.create")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    /* 安全区域适配 */
+    .safe-area-top {
+        padding-top: env(safe-area-inset-top, 0);
+    }
+    
+    .safe-area-bottom {
+        padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    
+    /* 隐藏滚动条 */
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+    
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+    
+    /* 触控优化 */
+    * {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+    }
+    
+    /* 按钮和可点击元素的触控反馈 */
+    button:active:not(:disabled),
+    .touchable:active {
+        transform: scale(0.98);
+        transition: transform 0.1s ease-out;
+    }
+    
+    /* 列表项触控反馈 */
+    .touch-item:active {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+    
+    /* 平滑滚动 */
+    .smooth-scroll {
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+    }
+    
+    /* 禁止文本选择（适用于UI元素） */
+    .no-select {
+        -webkit-user-select: none;
+        user-select: none;
+    }
+    
+    /* 文本截断 */
+    .line-clamp-1 {
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    
+    .line-clamp-2 {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    
+    /* 动画 */
+    @@keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+    }
+    
+    .animate-bounce {
+        animation: bounce 0.6s ease-in-out infinite;
+    }
+    
+    @@keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    .animate-fadeIn {
+        animation: fadeIn 0.2s ease-out;
+    }
+    
+    @@keyframes slideUp {
+        from { 
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to { 
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .animate-slideUp {
+        animation: slideUp 0.3s ease-out;
+    }
+    
+    @@keyframes slideIn {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(0); }
+    }
+    
+    .animate-slideIn {
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    /* 输入框聚焦时的样式 */
+    textarea:focus,
+    input:focus {
+        outline: none;
+    }
+    
+    /* 消息气泡样式 */
+    .message-bubble {
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    
+    /* 底部固定元素的阴影 */
+    .bottom-fixed {
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* 抽屉动画 */
+    .drawer-content {
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    /* 模态框动画 */
+    .modal-content {
+        animation: slideUp 0.3s ease-out;
+    }
+    
+    /* 加载动画优化 */
+    .loading-spinner {
+        animation: spin 0.8s linear infinite;
+    }
+    
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    
+    /* 按钮禁用状态 */
+    button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    /* 链接样式 */
+    a {
+        text-decoration: none;
+        color: inherit;
+    }
+    
+    /* 图片防止拖拽 */
+    img {
+        -webkit-user-drag: none;
+        user-drag: none;
+    }
+</style>
