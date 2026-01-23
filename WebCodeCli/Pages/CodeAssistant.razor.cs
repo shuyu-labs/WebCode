@@ -389,6 +389,9 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 
                 // 设置iframe自动调整高度
                 await JSRuntime.InvokeVoidAsync("setupIframeAutoResize");
+
+                // 绑定输入框 Tab 技能选择（仅在需要时拦截 Tab）
+                await JSRuntime.InvokeVoidAsync("setupSkillTabSelect", "input-message");
             }
             catch (Exception ex)
             {
@@ -2226,6 +2229,15 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         if (_outputStateSaveTimer != null)
         {
             await _outputStateSaveTimer.DisposeAsync();
+        }
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("disposeSkillTabSelect", "input-message");
+        }
+        catch
+        {
+            // 忽略释放阶段的 JS 错误
         }
         
         // 停止当前会话的所有开发服务器
@@ -4872,6 +4884,12 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     /// </summary>
     private async Task ShowAutoComplete()
     {
+        if (_showSkillPicker)
+        {
+            _autoCompleteDropdown?.Hide();
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_inputMessage) || _inputMessage.Length < 2)
         {
             _autoCompleteDropdown?.Hide();
@@ -5377,6 +5395,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         }
         
         CloseSkillPicker();
+        _autoCompleteDropdown?.Hide();
         
         // 聚焦到输入框
         _ = Task.Run(async () =>

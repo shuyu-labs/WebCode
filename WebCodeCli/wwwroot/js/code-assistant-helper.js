@@ -237,3 +237,56 @@ window.clearShareCookie = function(name) {
     document.cookie = `${safeName}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 };
 
+// 输入框技能选择：Tab 选中第一个技能（不阻止其他按键）
+window.setupSkillTabSelect = function(elementId) {
+    const input = document.getElementById(elementId);
+    if (!input) {
+        return;
+    }
+
+    if (!window._skillTabSelectHandlers) {
+        window._skillTabSelectHandlers = {};
+    }
+
+    // 防止重复绑定
+    if (window._skillTabSelectHandlers[elementId]) {
+        return;
+    }
+
+    const handler = (e) => {
+        if (e.key !== 'Tab') {
+            return;
+        }
+
+        const picker = document.querySelector('[data-skill-picker="true"]');
+        if (!picker) {
+            return;
+        }
+
+        const firstItem = picker.querySelector('[data-skill-item="true"]');
+        if (!firstItem) {
+            return;
+        }
+
+        e.preventDefault();
+        firstItem.click();
+    };
+
+    input.addEventListener('keydown', handler);
+    window._skillTabSelectHandlers[elementId] = handler;
+};
+
+window.disposeSkillTabSelect = function(elementId) {
+    if (!window._skillTabSelectHandlers) {
+        return;
+    }
+
+    const input = document.getElementById(elementId);
+    const handler = window._skillTabSelectHandlers[elementId];
+    if (input && handler) {
+        input.removeEventListener('keydown', handler);
+    }
+
+    delete window._skillTabSelectHandlers[elementId];
+};
+

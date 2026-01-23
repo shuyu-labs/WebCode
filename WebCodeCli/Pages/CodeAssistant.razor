@@ -1081,6 +1081,7 @@
                               @bind:after="HandleInput"
                               @onkeydown="HandleKeyDown"
                               @onkeydown:preventDefault="@(_isKeyDownEnterWithoutShift)"
+                              data-skill-tab-enabled="@(_showSkillPicker && GetFilteredSkills().Any())"
                               id="input-message"
                               placeholder="@T("codeAssistant.inputPlaceholder")"
                               rows="3"
@@ -1094,7 +1095,7 @@
                     <!-- 技能选择器 -->
                     @if (_showSkillPicker)
                     {
-                        <div class="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 max-h-80 overflow-hidden">
+                        <div class="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 max-h-80 overflow-hidden" data-skill-picker="true">
                              <div class="px-3 py-2 border-b border-gray-200 bg-gray-50">
                                  <div class="flex items-center gap-2">
                                      <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1116,6 +1117,7 @@
                                     {
                                         <div @onclick="() => SelectSkill(skill)"
                                              title="@skill.Description"
+                                             data-skill-item="true"
                                              class="px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0 transition-colors">
                                             <div class="flex items-start gap-2">
                                                 <div class="flex-shrink-0 mt-0.5">
