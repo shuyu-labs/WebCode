@@ -1956,35 +1956,6 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private async Task<bool> IsIndexedDbReadyAsync()
-    {
-        try
-        {
-            // 快速路径
-            if (await JSRuntime.InvokeAsync<bool>("webCliIndexedDB.isReady"))
-            {
-                return true;
-            }
-
-            // 页面刚加载时，IndexedDB autoInit 可能还没完成，最多等待 3 秒
-            var retries = 30;
-            while (retries-- > 0)
-            {
-                await Task.Delay(100);
-                if (await JSRuntime.InvokeAsync<bool>("webCliIndexedDB.isReady"))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private void QueueSaveOutputState(bool forceImmediate = false)
     {
         if (_disposed)

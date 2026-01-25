@@ -1206,33 +1206,6 @@ public partial class CodeAssistantMobile : ComponentBase, IAsyncDisposable
         QueueSaveOutputState();
     }
 
-    private async Task<bool> IsIndexedDbReadyAsync()
-    {
-        try
-        {
-            if (await JSRuntime.InvokeAsync<bool>("webCliIndexedDB.isReady"))
-            {
-                return true;
-            }
-
-            var retries = 30;
-            while (retries-- > 0)
-            {
-                await Task.Delay(100);
-                if (await JSRuntime.InvokeAsync<bool>("webCliIndexedDB.isReady"))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private void QueueSaveOutputState(bool forceImmediate = false)
     {
         if (_disposed)

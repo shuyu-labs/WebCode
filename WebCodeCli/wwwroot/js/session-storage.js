@@ -177,7 +177,7 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
 
 
 /**
- * 性能监控工具 - 使用 IndexedDB 存储
+ * 性能监控工具 - 仅使用控制台日志（不再依赖 IndexedDB）
  */
 window.sessionPerformance = {
     /**
@@ -239,80 +239,34 @@ window.sessionPerformance = {
     },
     
     /**
-     * 记录会话操作性能 - 使用 IndexedDB
+     * 记录会话操作性能 - 仅输出到控制台
      * @param {string} operation - 操作类型（load, save, delete等）
      * @param {number} sessionCount - 会话数量
      * @param {number} duration - 耗时（毫秒）
      */
     recordSessionOperation: async function(operation, sessionCount, duration) {
-        try {
-            // 使用 IndexedDB 存储
-            if (window.webCliIndexedDB && window.webCliIndexedDB.isReady()) {
-                await window.webCliIndexedDB.recordPerformanceMetric(operation, sessionCount, duration);
-            }
-        } catch (e) {
-            console.error('记录性能指标失败:', e);
+        // 仅在开发环境输出到控制台
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.log(`[会话操作] ${operation}: 会话数=${sessionCount}, 耗时=${duration.toFixed(2)}ms`);
         }
     },
     
     /**
-     * 获取性能统计 - 使用 IndexedDB
+     * 获取性能统计 - 返回空（不再使用 IndexedDB 存储）
      * @returns {Promise<Object|null>} - 性能统计信息
      */
     getPerformanceStats: async function() {
-        try {
-            // 使用 IndexedDB 获取
-            if (window.webCliIndexedDB && window.webCliIndexedDB.isReady()) {
-                return await window.webCliIndexedDB.getPerformanceStats();
-            }
-            return null;
-        } catch (e) {
-            console.error('读取性能指标失败:', e);
-            return null;
-        }
+        // 性能统计已移除，返回空
+        return null;
     },
     
     /**
-     * 清除性能指标 - 使用 IndexedDB
+     * 清除性能指标 - 空操作
      */
     clearPerformanceMetrics: async function() {
-        try {
-            if (window.webCliIndexedDB && window.webCliIndexedDB.isReady()) {
-                await window.webCliIndexedDB.clearPerformanceMetrics();
-                console.log('性能指标已清除');
-            }
-        } catch (e) {
-            console.error('清除性能指标失败:', e);
-        }
+        console.log('性能指标存储已禁用');
     }
 };
-
-// 在开发环境下，定期输出性能统计
-if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    // 每 5 分钟输出一次性能统计
-    setInterval(async function() {
-        const stats = await window.sessionPerformance.getPerformanceStats();
-        if (stats) {
-            console.group('📊 会话操作性能统计');
-            Object.keys(stats).forEach(operation => {
-                const stat = stats[operation];
-                console.log(`${operation}:`, {
-                    '操作次数': stat.count,
-                    '平均耗时': `${stat.avgDuration.toFixed(2)}ms`,
-                    '最小耗时': `${stat.minDuration.toFixed(2)}ms`,
-                    '最大耗时': `${stat.maxDuration.toFixed(2)}ms`
-                });
-            });
-            console.groupEnd();
-            
-            // 输出内存使用情况
-            const memory = window.sessionPerformance.getMemoryUsage();
-            if (memory) {
-                console.log('💾 内存使用:', memory);
-            }
-        }
-    }, 5 * 60 * 1000);
-}
 
 
 // 加载完成日志
