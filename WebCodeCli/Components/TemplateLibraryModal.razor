@@ -95,7 +95,7 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         @foreach (var template in _filteredTemplates)
                         {
-                            <div class="template-card group bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 hover:border-gray-400 rounded-xl p-4 transition-all duration-200 shadow-sm hover:shadow-lg">
+                            <div class="template-card group relative bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 hover:border-gray-400 rounded-xl p-4 transition-all duration-200 shadow-sm hover:shadow-lg">
                                 <!-- 头部 -->
                                 <div class="flex items-start justify-between mb-3">
                                     <div class="flex items-center gap-2 flex-1 min-w-0">
@@ -122,6 +122,14 @@
 
                                 <!-- 内容预览 -->
                                 <p class="text-sm text-gray-600 mb-3 line-clamp-3 min-h-[60px]">@template.Content</p>
+
+                                <!-- 悬停完整内容 -->
+                                <div class="pointer-events-none absolute left-3 right-3 top-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                    <div class="bg-white border border-gray-200 shadow-xl rounded-lg p-3 text-sm text-gray-700">
+                                        <div class="font-semibold text-gray-800 mb-2">@template.Title</div>
+                                        <div class="whitespace-pre-wrap max-h-48 overflow-auto">@template.Content</div>
+                                    </div>
+                                </div>
 
                                 <!-- 标签 -->
                                 <div class="flex items-center gap-2 mb-3 flex-wrap">

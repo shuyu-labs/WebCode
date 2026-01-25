@@ -315,6 +315,7 @@ window.initCodeAssistantSplit = function(options) {
     const maxChatWidth = Number(cfg.maxChatWidth || 900);
     const minPreviewWidth = Number(cfg.minPreviewWidth || 420);
     const dotNetRef = cfg.dotNetRef || null;
+    const storageKey = cfg.storageKey || `codeAssistant.chatWidth.${cfg.containerId || 'default'}`;
 
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -345,7 +346,20 @@ window.initCodeAssistantSplit = function(options) {
         }
     };
 
-    if (cfg.initialChatWidth) {
+    let storedWidth = null;
+    try {
+        const saved = window.localStorage ? window.localStorage.getItem(storageKey) : null;
+        if (saved) {
+            const parsed = Number(saved);
+            if (Number.isFinite(parsed)) {
+                storedWidth = parsed;
+            }
+        }
+    } catch {}
+
+    if (storedWidth) {
+        applyWidth(storedWidth, false);
+    } else if (cfg.initialChatWidth) {
         applyWidth(Number(cfg.initialChatWidth), false);
     }
 
@@ -382,6 +396,11 @@ window.initCodeAssistantSplit = function(options) {
         const current = parseFloat(chat.style.width || '0');
         if (current > 0) {
             applyWidth(current, true);
+            try {
+                if (window.localStorage) {
+                    window.localStorage.setItem(storageKey, String(Math.round(current)));
+                }
+            } catch {}
         }
     };
 
