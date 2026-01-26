@@ -412,7 +412,8 @@
                     EmptyDescription="@T("codeAssistant.executeCode")"
                     OnLoadMore="LoadMoreEvents"
                     OnToggleGroupCallback="HandleToggleGroup"
-                    IsGroupOpenFunc="@(g => IsJsonlGroupOpen(ConvertToJsonlGroup(g)))" />
+                    IsGroupOpenFunc="@(g => IsJsonlGroupOpen(ConvertToJsonlGroup(g)))"
+                    OnAnswerQuestion="HandleAnswerQuestion" />
             }
             else if (_activeTabKey == "2")
             {

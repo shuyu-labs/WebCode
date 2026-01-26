@@ -62,6 +62,11 @@ public class CliOutputEvent
     public List<CliTodoItem>? TodoItems { get; set; }
 
     /// <summary>
+    /// 用户问题（用于 AskUserQuestion 工具）
+    /// </summary>
+    public CliUserQuestion? UserQuestion { get; set; }
+
+    /// <summary>
     /// 额外的元数据
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
@@ -101,6 +106,64 @@ public class CliTodoItem
     public string? Id { get; set; }
     public string? Title { get; set; }
     public string? Status { get; set; }
+}
+
+/// <summary>
+/// 用户问题（用于 AskUserQuestion 工具）
+/// </summary>
+public class CliUserQuestion
+{
+    /// <summary>
+    /// 工具调用 ID（用于发送响应）
+    /// </summary>
+    public string? ToolUseId { get; set; }
+    
+    /// <summary>
+    /// 问题列表
+    /// </summary>
+    public List<CliQuestionItem> Questions { get; set; } = new();
+}
+
+/// <summary>
+/// 单个问题项
+/// </summary>
+public class CliQuestionItem
+{
+    /// <summary>
+    /// 问题标题/头部
+    /// </summary>
+    public string? Header { get; set; }
+    
+    /// <summary>
+    /// 问题内容
+    /// </summary>
+    public string? Question { get; set; }
+    
+    /// <summary>
+    /// 是否允许多选
+    /// </summary>
+    public bool MultiSelect { get; set; }
+    
+    /// <summary>
+    /// 选项列表
+    /// </summary>
+    public List<CliQuestionOption> Options { get; set; } = new();
+}
+
+/// <summary>
+/// 问题选项
+/// </summary>
+public class CliQuestionOption
+{
+    /// <summary>
+    /// 选项标签
+    /// </summary>
+    public string? Label { get; set; }
+    
+    /// <summary>
+    /// 选项描述
+    /// </summary>
+    public string? Description { get; set; }
 }
 
 /// <summary>

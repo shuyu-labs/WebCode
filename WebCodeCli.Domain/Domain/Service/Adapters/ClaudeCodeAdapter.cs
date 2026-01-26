@@ -479,6 +479,7 @@ public class ClaudeCodeAdapter : ICliToolAdapter
         outputEvent.ItemType = "command_execution";
 
         var toolName = GetStringProperty(item, "name") ?? GetStringProperty(item, "tool");
+        var toolUseId = GetStringProperty(item, "id");
         var contentBuilder = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(toolName))
         {
@@ -501,6 +502,18 @@ public class ClaudeCodeAdapter : ICliToolAdapter
                 return;
             }
 
+            // Claude Code 的 AskUserQuestion 工具：展示问题让用户选择
+            if (!string.IsNullOrWhiteSpace(toolName) &&
+                string.Equals(toolName, "AskUserQuestion", StringComparison.OrdinalIgnoreCase))
+            {
+                outputEvent.ItemType = "user_question";
+                outputEvent.Title = "请回答问题";
+                outputEvent.Content = FormatAskUserQuestionInput(inputEl, outputEvent, toolUseId);
+                outputEvent.CommandExecution = null;
+                outputEvent.IsUnknown = false;
+                return;
+            }
+
             var command = GetStringProperty(inputEl, "command");
             if (!string.IsNullOrWhiteSpace(command))
             {
@@ -516,6 +529,91 @@ public class ClaudeCodeAdapter : ICliToolAdapter
 
         outputEvent.Content = contentBuilder.Length > 0 ? contentBuilder.ToString().TrimEnd() : "工具调用中...";
         outputEvent.IsUnknown = false;
+    }
+
+    private static string FormatAskUserQuestionInput(JsonElement inputEl, CliOutputEvent outputEvent, string? toolUseId)
+    {
+        outputEvent.UserQuestion = new CliUserQuestion
+        {
+            ToolUseId = toolUseId,
+            Questions = new List<CliQuestionItem>()
+        };
+        var sb = new StringBuilder();
+
+        // AskUserQuestion 结构：{ questions: [ { header, question, multiSelect, options: [ { label, description } ] } ] }
+        if (inputEl.TryGetProperty("questions", out var questionsEl) && questionsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var question in questionsEl.EnumerateArray())
+            {
+                if (question.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var questionItem = new CliQuestionItem
+                {
+                    Header = GetStringProperty(question, "header"),
+                    Question = GetStringProperty(question, "question"),
+                    MultiSelect = false,
+                    Options = new List<CliQuestionOption>()
+                };
+
+                // 解析 multiSelect
+                if (question.TryGetProperty("multiSelect", out var multiSelectEl) && 
+                    multiSelectEl.ValueKind == JsonValueKind.True)
+                {
+                    questionItem.MultiSelect = true;
+                }
+
+                // 解析选项
+                if (question.TryGetProperty("options", out var optionsEl) && optionsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var option in optionsEl.EnumerateArray())
+                    {
+                        if (option.ValueKind != JsonValueKind.Object)
+                        {
+                            continue;
+                        }
+
+                        questionItem.Options.Add(new CliQuestionOption
+                        {
+                            Label = GetStringProperty(option, "label"),
+                            Description = GetStringProperty(option, "description")
+                        });
+                    }
+                }
+
+                outputEvent.UserQuestion.Questions.Add(questionItem);
+
+                // 构建显示文本
+                if (!string.IsNullOrWhiteSpace(questionItem.Header))
+                {
+                    sb.AppendLine($"**{questionItem.Header}**");
+                }
+                if (!string.IsNullOrWhiteSpace(questionItem.Question))
+                {
+                    sb.AppendLine(questionItem.Question);
+                }
+                if (questionItem.Options.Count > 0)
+                {
+                    sb.AppendLine();
+                    foreach (var opt in questionItem.Options)
+                    {
+                        var optText = $"- {opt.Label}";
+                        if (!string.IsNullOrWhiteSpace(opt.Description))
+                        {
+                            optText += $": {opt.Description}";
+                        }
+                        sb.AppendLine(optText);
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            return sb.Length > 0 ? sb.ToString().TrimEnd() : "请选择一个选项";
+        }
+
+        return inputEl.GetRawText();
     }
 
     private static string FormatTodoToolInput(JsonElement inputEl, CliOutputEvent outputEvent)

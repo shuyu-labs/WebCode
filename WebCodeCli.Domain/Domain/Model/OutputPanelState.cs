@@ -81,6 +81,79 @@ public class OutputEvent
     public string? Name { get; set; }
     public string? ItemType { get; set; }
     public TokenUsage? Usage { get; set; }
+    
+    /// <summary>
+    /// 用户问题（用于 AskUserQuestion 工具）
+    /// </summary>
+    public UserQuestion? UserQuestion { get; set; }
+}
+
+/// <summary>
+/// 用户问题（用于 AskUserQuestion 工具）
+/// </summary>
+public class UserQuestion
+{
+    /// <summary>
+    /// 工具调用 ID（用于发送响应）
+    /// </summary>
+    public string? ToolUseId { get; set; }
+    
+    /// <summary>
+    /// 问题列表
+    /// </summary>
+    public List<QuestionItem> Questions { get; set; } = new();
+    
+    /// <summary>
+    /// 是否已回答
+    /// </summary>
+    public bool IsAnswered { get; set; }
+}
+
+/// <summary>
+/// 单个问题项
+/// </summary>
+public class QuestionItem
+{
+    /// <summary>
+    /// 问题标题/头部
+    /// </summary>
+    public string? Header { get; set; }
+    
+    /// <summary>
+    /// 问题内容
+    /// </summary>
+    public string? Question { get; set; }
+    
+    /// <summary>
+    /// 是否允许多选
+    /// </summary>
+    public bool MultiSelect { get; set; }
+    
+    /// <summary>
+    /// 选项列表
+    /// </summary>
+    public List<QuestionOption> Options { get; set; } = new();
+    
+    /// <summary>
+    /// 已选择的选项索引
+    /// </summary>
+    public List<int> SelectedIndexes { get; set; } = new();
+}
+
+/// <summary>
+/// 问题选项
+/// </summary>
+public class QuestionOption
+{
+    /// <summary>
+    /// 选项标签
+    /// </summary>
+    public string? Label { get; set; }
+    
+    /// <summary>
+    /// 选项描述
+    /// </summary>
+    public string? Description { get; set; }
 }
 
 /// <summary>

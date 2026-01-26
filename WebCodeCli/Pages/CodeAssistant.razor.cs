@@ -717,6 +717,12 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                     OutputTokens = outputEvent.Usage.OutputTokens
                 };
             }
+            
+            // 转换用户问题
+            if (outputEvent.UserQuestion != null)
+            {
+                displayItem.UserQuestion = ConvertToUserQuestion(outputEvent.UserQuestion);
+            }
 
             _jsonlEvents.Add(displayItem);
 
@@ -3334,6 +3340,11 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         public string? ItemType { get; set; }
         public JsonlUsageDetail? Usage { get; set; }
         public bool IsUnknown { get; set; }
+        
+        /// <summary>
+        /// 用户问题（用于 AskUserQuestion 工具）
+        /// </summary>
+        public UserQuestion? UserQuestion { get; set; }
     }
 
     private sealed class JsonlEventGroup
@@ -5779,7 +5790,8 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                     CachedInputTokens = (int?)i.Usage.CachedInputTokens,
                     OutputTokens = (int?)i.Usage.OutputTokens,
                     TotalTokens = (int?)i.Usage.TotalTokens
-                } : null
+                } : null,
+                UserQuestion = i.UserQuestion
             }).ToList()
         }).ToList();
     }
@@ -5805,6 +5817,68 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     private void HandleToggleGroup((string groupId, bool defaultOpen) args)
     {
         ToggleJsonlGroup(args.groupId, args.defaultOpen);
+    }
+
+    /// <summary>
+    /// 将 CliUserQuestion 转换为 UserQuestion
+    /// </summary>
+    private static UserQuestion ConvertToUserQuestion(CliUserQuestion cliQuestion)
+    {
+        return new UserQuestion
+        {
+            ToolUseId = cliQuestion.ToolUseId,
+            IsAnswered = false,
+            Questions = cliQuestion.Questions.Select(q => new QuestionItem
+            {
+                Header = q.Header,
+                Question = q.Question,
+                MultiSelect = q.MultiSelect,
+                Options = q.Options.Select(o => new QuestionOption
+                {
+                    Label = o.Label,
+                    Description = o.Description
+                }).ToList(),
+                SelectedIndexes = new List<int>()
+            }).ToList()
+        };
+    }
+
+    /// <summary>
+    /// 处理用户回答问题
+    /// </summary>
+    private async Task HandleAnswerQuestion((string toolUseId, string answer) args)
+    {
+        var (toolUseId, answer) = args;
+        
+        if (string.IsNullOrEmpty(toolUseId) || string.IsNullOrEmpty(answer))
+        {
+            return;
+        }
+
+        // 更新状态显示
+        Console.WriteLine($"[HandleAnswerQuestion] toolUseId={toolUseId}, answer={answer}");
+        
+        // 将用户回答作为新消息发送
+        // 这里我们直接将回答作为用户输入发送到当前会话
+        await SendUserAnswerToSession(answer);
+    }
+
+    /// <summary>
+    /// 将用户回答发送到会话
+    /// </summary>
+    private async Task SendUserAnswerToSession(string answer)
+    {
+        if (_isLoading)
+        {
+            Console.WriteLine("[SendUserAnswerToSession] 当前正在加载中，跳过发送");
+            return;
+        }
+
+        // 设置输入框内容为用户的回答
+        _inputMessage = answer;
+        
+        // 触发发送
+        await SendMessage();
     }
 
     #endregion
