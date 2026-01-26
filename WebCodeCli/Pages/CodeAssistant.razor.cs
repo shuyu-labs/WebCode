@@ -3423,6 +3423,12 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         {
             return false;
         }
+        
+        // user_question 需要用户交互，不能折叠隐藏
+        if (string.Equals(evt.ItemType, "user_question", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
 
         return evt.Type == "tool_use" || evt.Type == "tool_result";
     }
