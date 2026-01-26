@@ -2,9 +2,10 @@
 window.textareaResizeManager = {
     // Configuration
     config: {
-        minHeight: 72,  // 3行文本的最小高度 (约24px per row)
-        maxHeight: 400, // 最大高度限制
-        storageKey: 'textarea-heights'
+        minHeight: 72,  // Minimum height: 3 rows of text (approximately 24px per row)
+        maxHeight: 400, // Maximum height limit
+        storageKey: 'textarea-heights',
+        heightTolerance: 1 // Pixel tolerance for height comparison to avoid floating point issues
     },
 
     // Initialize textarea resize functionality
@@ -82,7 +83,7 @@ window.textareaResizeManager = {
                 const constrainedHeight = this.constrainHeight(newHeight);
                 
                 // Only update if height changed and needs constraining
-                if (Math.abs(newHeight - constrainedHeight) > 1) {
+                if (Math.abs(newHeight - constrainedHeight) > this.config.heightTolerance) {
                     target.style.height = constrainedHeight + 'px';
                 }
                 
@@ -100,12 +101,13 @@ window.textareaResizeManager = {
     // Debounced save function
     debouncedSave: (function() {
         let timeouts = {};
+        const manager = this;
         return function(textareaId, height) {
             if (timeouts[textareaId]) {
                 clearTimeout(timeouts[textareaId]);
             }
             timeouts[textareaId] = setTimeout(() => {
-                this.saveHeight(textareaId, height);
+                window.textareaResizeManager.saveHeight(textareaId, height);
             }, 500); // Save 500ms after resize stops
         };
     })(),
