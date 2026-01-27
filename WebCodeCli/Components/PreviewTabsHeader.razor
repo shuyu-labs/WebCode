@@ -1,0 +1,46 @@
+<div class="mb-5 border-b-2 border-gray-200 flex-shrink-0 bg-white/80 rounded-t-xl -mx-6 px-6 overflow-x-auto overflow-y-hidden">
+    <nav class="-mb-0.5 flex space-x-1 min-w-max">
+        <button @onclick="@(() => ActiveTabKeyChanged.InvokeAsync("1"))"
+            class="@(GetTabClass("1")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                <span>@OutputText</span>
+            </div>
+        </button>
+        <button @onclick="@(() => ActiveTabKeyChanged.InvokeAsync("2"))"
+            class="@(GetTabClass("2")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                </svg>
+                <span>@WorkspaceText</span>
+            </div>
+        </button>
+        <button @onclick="@(() => ActiveTabKeyChanged.InvokeAsync("3"))"
+            class="@(GetTabClass("3")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                </svg>
+                <span>@HtmlText</span>
+            </div>
+        </button>
+    </nav>
+</div>
+
+@code {
+    [Parameter] public string ActiveTabKey { get; set; } = "1";
+    [Parameter] public EventCallback<string> ActiveTabKeyChanged { get; set; }
+    [Parameter] public string ActiveTabClass { get; set; } = string.Empty;
+    [Parameter] public string InactiveTabClass { get; set; } = string.Empty;
+    [Parameter] public string OutputText { get; set; } = string.Empty;
+    [Parameter] public string WorkspaceText { get; set; } = string.Empty;
+    [Parameter] public string HtmlText { get; set; } = string.Empty;
+
+    private string GetTabClass(string tabKey)
+    {
+        return ActiveTabKey == tabKey ? ActiveTabClass : InactiveTabClass;
+    }
+}

@@ -10,200 +10,49 @@
 <PageTitle>@T("codeAssistant.title")</PageTitle>
 
 <div id="code-assistant-split-container" class="flex flex-row h-screen bg-gray-50 overflow-hidden" @key="_currentLanguage">
-    <!-- 会话列表侧边栏（桌面端） -->
-    @if (_showSessionList)
-    {
-        <div class="block fixed inset-y-0 left-0 w-80 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out">
-            <!-- 头部 -->
-            <div class="p-4 border-b-2 border-gray-200 flex items-center justify-between bg-gray-50">
-                <h2 class="text-lg font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    @T("codeAssistant.sessionHistory")
-                </h2>
-                <button @onclick="ToggleSessionList" class="p-2 hover:bg-gray-200 rounded-lg transition-colors" title="@T("common.close")">
-                    <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-            
-            <!-- 新建会话按钮和多选模式切换 -->
-            <div class="p-4 border-b border-gray-200">
-                @if (_isSessionMultiSelectMode)
-                {
-                    <!-- 多选模式工具栏 -->
-                    <div class="flex items-center gap-2">
-                        <button @onclick="ToggleSelectAllSessions" 
-                                class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-                                title="@(_selectedSessionIds.Count == _sessions.Count ? T("codeAssistant.deselectAll") : T("common.selectAll"))">
-                            @if (_selectedSessionIds.Count == _sessions.Count && _sessions.Count > 0)
-                            {
-                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span>@T("codeAssistant.deselectAll")</span>
-                            }
-                            else
-                            {
-                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span>@T("common.selectAll")</span>
-                            }
-                        </button>
-                        <button @onclick="ShowBatchSessionDeleteDialog" 
-                                disabled="@(_selectedSessionIds.Count == 0)"
-                                class="px-3 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                                title="@T("codeAssistant.batchDelete")">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                            </svg>
-                            <span>@T("codeAssistant.batchDelete") (@_selectedSessionIds.Count)</span>
-                        </button>
-                        <button @onclick="ToggleSessionMultiSelectMode" 
-                                class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                                title="@T("common.cancel")">
-                            @T("common.cancel")
-                        </button>
-                    </div>
-                }
-                else
-                {
-                    <!-- 普通模式按钮 -->
-                    <div class="flex items-center gap-2">
-                        <button @onclick="CreateNewSession" class="flex-1 btn-primary flex items-center justify-center gap-2 py-3 shadow-md hover:shadow-lg transition-all">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-                            </svg>
-                            @T("codeAssistant.newSession")
-                        </button>
-                        @if (_sessions.Count > 0)
-                        {
-                            <button @onclick="ToggleSessionMultiSelectMode" 
-                                    class="p-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                                    title="@T("codeAssistant.multiSelect")">
-                                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
-                                </svg>
-                            </button>
-                        }
-                    </div>
-                }
-            </div>
-            
-            <!-- 会话列表滚动区域 -->
-            <div class="flex-1 overflow-y-auto" style="height: calc(100vh - 180px);">
-                @if (_isLoadingSessions)
-                {
-                    <!-- 加载动画 -->
-                    <div class="p-8 text-center">
-                        <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-300 border-t-gray-700 mb-4"></div>
-                        <p class="text-sm text-gray-500">@T("common.loading")</p>
-                    </div>
-                }
-                else if (_sessions.Any())
-                {
-                    <div class="p-2 space-y-1">
-                        @foreach (var session in _sessions)
-                        {
-                            <div class="@GetSessionItemClass(session) @(_isLoadingSession && _currentSession?.SessionId == session.SessionId ? "opacity-50 pointer-events-none" : "")" 
-                                 @onclick="@(async () => { if (_isSessionMultiSelectMode) ToggleSessionSelection(session.SessionId); else await LoadSession(session.SessionId); })"
-                                 style="transition: all 0.2s ease-in-out;">
-                                @if (_isSessionMultiSelectMode)
-                                {
-                                    <!-- 多选模式下显示复选框 -->
-                                    <div class="flex items-center mr-2" @onclick:stopPropagation="true">
-                                        <input type="checkbox" 
-                                               checked="@_selectedSessionIds.Contains(session.SessionId)"
-                                               @onchange="@(() => ToggleSessionSelection(session.SessionId))"
-                                               class="w-4 h-4 text-gray-800 border-gray-300 rounded focus:ring-gray-500 cursor-pointer" />
-                                    </div>
-                                }
-                                <div class="flex-1 min-w-0">
-                                    <h3 class="font-semibold truncate text-sm">@session.Title</h3>
-                                    <p class="text-xs text-gray-500 mt-1">@FormatDateTime(session.UpdatedAt)</p>
-                                </div>
-                                <div class="flex items-center gap-1 flex-shrink-0">
-                                    @if (_isLoadingSession && _currentSession?.SessionId == session.SessionId)
-                                    {
-                                        <!-- 加载中指示器 -->
-                                        <div class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-700"></div>
-                                    }
-                                    else if (!_isSessionMultiSelectMode)
-                                    {
-                                        <button @onclick:stopPropagation="true" @onclick="() => ShowShareDialog(session)" class="p-1.5 hover:bg-indigo-100 rounded-lg transition-colors" title="分享会话">
-                                            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                                            </svg>
-                                        </button>
-                                        <button @onclick:stopPropagation="true" @onclick="() => ShowRenameDialog(session)" class="p-1.5 hover:bg-gray-100 rounded-lg transition-colors" title="@T("codeAssistant.renameSession")">
-                                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                                            </svg>
-                                        </button>
-                                        <button @onclick:stopPropagation="true" @onclick="() => ShowDeleteDialog(session)" class="p-1.5 hover:bg-red-100 rounded-lg transition-colors" title="@T("common.delete")">
-                                            <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                            </svg>
-                                        </button>
-                                    }
-                                </div>
-                            </div>
-                        }
-                    </div>
-                }
-                else
-                {
-                    <div class="p-8 text-center text-gray-400">
-                        <div class="w-20 h-20 bg-gray-100 border border-gray-200 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
-                            <svg class="w-10 h-10 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                            </svg>
-                        </div>
-                        <p class="text-base font-semibold text-gray-600">@T("codeAssistant.noSessions")</p>
-                        <p class="text-sm mt-2 text-gray-500">@T("codeAssistant.createSessionHint")</p>
-                    </div>
-                }
-            </div>
-        </div>
-    }
+    <SessionListPanel Show="@_showSessionList"
+                      Sessions="@_sessions"
+                      SelectedSessionIds="@_selectedSessionIds"
+                      IsMultiSelectMode="@_isSessionMultiSelectMode"
+                      IsLoadingSessions="@_isLoadingSessions"
+                      IsLoadingSession="@_isLoadingSession"
+                      CurrentSessionId="@(_currentSession?.SessionId ?? string.Empty)"
+                      TitleText="@T("codeAssistant.sessionHistory")"
+                      CloseText="@T("common.close")"
+                      DeselectAllText="@T("codeAssistant.deselectAll")"
+                      SelectAllText="@T("common.selectAll")"
+                      BatchDeleteText="@T("codeAssistant.batchDelete")"
+                      CancelText="@T("common.cancel")"
+                      NewSessionText="@T("codeAssistant.newSession")"
+                      MultiSelectText="@T("codeAssistant.multiSelect")"
+                      LoadingText="@T("common.loading")"
+                      RenameText="@T("codeAssistant.renameSession")"
+                      DeleteText="@T("common.delete")"
+                      ShareSessionText="分享会话"
+                      NoSessionsText="@T("codeAssistant.noSessions")"
+                      CreateSessionHintText="@T("codeAssistant.createSessionHint")"
+                      OnClose="ToggleSessionList"
+                      OnCreateNewSession="CreateNewSession"
+                      OnToggleMultiSelect="ToggleSessionMultiSelectMode"
+                      OnToggleSelectAll="ToggleSelectAllSessions"
+                      OnShowBatchDelete="ShowBatchSessionDeleteDialog"
+                      OnSessionSelected="LoadSession"
+                      OnToggleSessionSelection="ToggleSessionSelection"
+                      OnShareSession="ShowShareDialog"
+                      OnRenameSession="ShowRenameDialog"
+                      OnDeleteSession="ShowDeleteDialog"
+                      GetSessionItemClass="GetSessionItemClass"
+                      FormatDateTime="FormatDateTime" />
     
     <!-- 右侧预览区 -->
     <div id="code-assistant-preview-panel" class="flex flex-1 bg-white/60 backdrop-blur-sm p-6 flex-col overflow-hidden min-w-[420px] transition-all duration-300 relative">
-        <!-- Tabs -->
-        <div class="mb-5 border-b-2 border-gray-200 flex-shrink-0 bg-white/80 rounded-t-xl -mx-6 px-6 overflow-x-auto overflow-y-hidden">
-            <nav class="-mb-0.5 flex space-x-1 min-w-max">
-                <button @onclick='() => _activeTabKey = "1"'
-                        class="@(GetTabClass("1")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        <span>@T("codeAssistant.outputResult")</span>
-                    </div>
-                </button>
-                <button @onclick='() => _activeTabKey = "2"'
-                        class="@(GetTabClass("2")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                        </svg>
-                        <span>@T("codeAssistant.workspaceFiles")</span>
-                    </div>
-                </button>
-                <button @onclick='() => _activeTabKey = "3"'
-                        class="@(GetTabClass("3")) whitespace-nowrap py-3 px-4 border-b-2 font-semibold text-sm transition-all rounded-t-lg flex-shrink-0">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-                        </svg>
-                        <span>@T("codeAssistant.htmlPreview")</span>
-                    </div>
-                </button>
-            </nav>
-        </div>
+        <PreviewTabsHeader ActiveTabKey="@_activeTabKey"
+                           ActiveTabKeyChanged="@((string key) => _activeTabKey = key)"
+                           ActiveTabClass="border-blue-500 text-blue-700 bg-blue-50/50 shadow-sm"
+                           InactiveTabClass="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                           OutputText="@T("codeAssistant.outputResult")"
+                           WorkspaceText="@T("codeAssistant.workspaceFiles")"
+                           HtmlText="@T("codeAssistant.htmlPreview")" />
 
         <!-- 进度追踪器（全局显示，不受标签页影响，移动端隐藏） -->
         <div class="mb-3">
@@ -1243,7 +1092,7 @@
                           IncludesCurrentNote="@T("codeAssistant.currentSessionDeleteNote")"
                           IncludesCurrentSession="@GetSelectedSessions().Any(s => _currentSession?.SessionId == s.SessionId)"
                           IsDeleting="@_isDeletingBatchSessions"
-                          SessionMetaTextFactory="@(session => $"{session.Messages.Count} {T("codeAssistant.messagesCount")} • {FormatDateTime(session.UpdatedAt)}")"
+                          SessionMetaTextFactory="@((SessionHistory session) => string.Format("{0} {1} • {2}", session.Messages.Count, T("codeAssistant.messagesCount"), FormatDateTime(session.UpdatedAt)))"
                           OnClose="CloseBatchSessionDeleteDialog"
                           OnConfirm="DeleteSelectedSessions" />
 
