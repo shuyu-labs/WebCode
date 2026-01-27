@@ -1,0 +1,104 @@
+@if (Show && !string.IsNullOrEmpty(ItemPath))
+{
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="OnClose">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    @Title
+                </h3>
+                <button @onclick="OnClose" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(ErrorMessage))
+            {
+                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
+                    <div class="flex items-start gap-2">
+                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span class="block text-sm">@ErrorMessage</span>
+                    </div>
+                </div>
+            }
+
+            <div class="mb-6">
+                <p class="text-gray-700 text-sm mb-4">
+                    @WarningText
+                </p>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        @if (IsFolder)
+                        {
+                            <svg class="w-5 h-5 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path>
+                            </svg>
+                        }
+                        else
+                        {
+                            <svg class="w-5 h-5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                            </svg>
+                        }
+                        <span class="font-mono text-sm text-gray-800 break-all">@ItemPath</span>
+                    </div>
+                </div>
+                @if (IsFolder)
+                {
+                    <p class="mt-3 text-xs text-red-600 font-medium">
+                        ⚠️ @FolderDeleteWarningText
+                    </p>
+                }
+                else
+                {
+                    <p class="mt-3 text-xs text-gray-500">
+                        @CannotUndoText
+                    </p>
+                }
+            </div>
+
+            <div class="flex gap-3">
+                <button @onclick="OnClose"
+                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
+                    @CancelText
+                </button>
+                <button @onclick="OnConfirm"
+                        disabled="@IsDeleting"
+                        class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
+                    @if (IsDeleting)
+                    {
+                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
+                        <span>@DeletingText</span>
+                    }
+                    else
+                    {
+                        <span>@ConfirmText</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Show { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string WarningText { get; set; } = string.Empty;
+    [Parameter] public string FolderDeleteWarningText { get; set; } = string.Empty;
+    [Parameter] public string CannotUndoText { get; set; } = string.Empty;
+    [Parameter] public string CancelText { get; set; } = string.Empty;
+    [Parameter] public string ConfirmText { get; set; } = string.Empty;
+    [Parameter] public string DeletingText { get; set; } = string.Empty;
+    [Parameter] public string ErrorMessage { get; set; } = string.Empty;
+    [Parameter] public string ItemPath { get; set; } = string.Empty;
+    [Parameter] public bool IsFolder { get; set; }
+    [Parameter] public bool IsDeleting { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+}

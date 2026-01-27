@@ -1,0 +1,87 @@
+@using WebCodeCli.Domain.Domain.Model
+
+@if (Show && Template != null)
+{
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="OnClose">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden transform transition-all" @onclick:stopPropagation="true">
+            <div class="flex items-center justify-between p-6 border-b-2 border-gray-200 bg-gradient-to-r from-purple-50 to-white">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <span class="text-2xl">@Template.Icon</span>
+                    <span>@Title</span>
+                </h3>
+                <button @onclick="OnClose" class="p-2 hover:bg-gray-200 rounded-lg transition-colors">
+                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="px-6 pt-4 pb-2 bg-gray-50 border-b border-gray-200">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-sm font-semibold text-gray-700">@TemplateLabel</span>
+                    <span class="text-sm text-gray-800">@Template.Title</span>
+                </div>
+                <div class="text-xs text-gray-500 bg-white rounded-lg p-3 border border-gray-200 max-h-24 overflow-y-auto">
+                    <pre class="whitespace-pre-wrap font-mono">@Template.Content</pre>
+                </div>
+            </div>
+
+            <div class="p-6 overflow-y-auto space-y-4" style="max-height: calc(90vh - 300px);">
+                <div class="flex items-center gap-2 mb-2">
+                    <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
+                    </svg>
+                    <span class="text-sm font-semibold text-gray-700">@VariableCountText</span>
+                </div>
+
+                @foreach (var variable in Template.Variables)
+                {
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+                            <span class="w-6 h-6 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center text-xs font-bold">
+                                @(Template.Variables.IndexOf(variable) + 1)
+                            </span>
+                            <code class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-mono text-xs">{{@variable}}</code>
+                        </label>
+                        <textarea @bind="Values[variable]"
+                                  @bind:event="oninput"
+                                  rows="3"
+                                  id="@($"template-var-{Template.Variables.IndexOf(variable)}")"
+                                  placeholder="@string.Format(ValuePlaceholderFormat, variable)"
+                                  style="min-height: 72px; max-height: 300px;"
+                                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-vertical bg-white"></textarea>
+                    </div>
+                }
+            </div>
+
+            <div class="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+                <button @onclick="OnClose" class="btn-default px-6 py-2.5">
+                    @CancelText
+                </button>
+                <button @onclick="OnConfirm"
+                        disabled="@DisableConfirm"
+                        class="btn-primary px-6 py-2.5 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    @ConfirmText
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Show { get; set; }
+    [Parameter] public PromptTemplate? Template { get; set; }
+    [Parameter] public Dictionary<string, string> Values { get; set; } = new();
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string TemplateLabel { get; set; } = string.Empty;
+    [Parameter] public string VariableCountText { get; set; } = string.Empty;
+    [Parameter] public string ValuePlaceholderFormat { get; set; } = "";
+    [Parameter] public string CancelText { get; set; } = string.Empty;
+    [Parameter] public string ConfirmText { get; set; } = string.Empty;
+    [Parameter] public bool DisableConfirm { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+}

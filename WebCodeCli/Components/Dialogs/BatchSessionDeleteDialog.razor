@@ -1,0 +1,129 @@
+@using WebCodeCli.Domain.Domain.Model
+
+@if (Show && SelectedSessions.Any())
+{
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="OnClose">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 transform transition-all max-h-[90vh] overflow-y-auto" @onclick:stopPropagation="true">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    @Title
+                </h3>
+                <button @onclick="OnClose" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(ErrorMessage))
+            {
+                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
+                    <div class="flex items-start gap-2">
+                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span class="block text-sm">@ErrorMessage</span>
+                    </div>
+                </div>
+            }
+
+            <div class="mb-6">
+                <p class="text-gray-700 text-sm mb-4">
+                    @MessageText
+                </p>
+
+                <div class="bg-gray-50 border-2 border-gray-300 rounded-xl p-3 max-h-60 overflow-y-auto space-y-2">
+                    @foreach (var session in SelectedSessions)
+                    {
+                        <div class="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                            <div class="w-8 h-8 bg-gray-800 rounded-full flex items-center justify-center flex-shrink-0">
+                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                                </svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-semibold text-gray-800 text-sm truncate">@session.Title</h4>
+                                <p class="text-xs text-gray-500">@GetSessionMetaText(session)</p>
+                            </div>
+                            @if (CurrentSessionId == session.SessionId)
+                            {
+                                <span class="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full flex-shrink-0">@CurrentSessionBadgeText</span>
+                            }
+                        </div>
+                    }
+                </div>
+
+                @if (IncludesCurrentSession)
+                {
+                    <div class="mt-4 bg-amber-50 border-l-4 border-amber-500 px-4 py-3 rounded-lg">
+                        <div class="flex items-start gap-2">
+                            <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                            </svg>
+                            <div class="text-xs text-amber-800">
+                                <p class="font-semibold mb-1">@IncludesCurrentTitle</p>
+                                <p>@IncludesCurrentNote</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                <p class="mt-4 text-xs text-red-600 font-medium flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                    </svg>
+                    @WarningText
+                </p>
+            </div>
+
+            <div class="flex gap-3">
+                <button @onclick="OnClose"
+                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
+                    @CancelText
+                </button>
+                <button @onclick="OnConfirm"
+                        disabled="@IsDeleting"
+                        class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
+                    @if (IsDeleting)
+                    {
+                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
+                        <span>@DeletingText</span>
+                    }
+                    else
+                    {
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                        <span>@ConfirmText</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Show { get; set; }
+    [Parameter] public IReadOnlyList<SessionHistory> SelectedSessions { get; set; } = Array.Empty<SessionHistory>();
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string MessageText { get; set; } = string.Empty;
+    [Parameter] public string WarningText { get; set; } = string.Empty;
+    [Parameter] public string CancelText { get; set; } = string.Empty;
+    [Parameter] public string ConfirmText { get; set; } = string.Empty;
+    [Parameter] public string DeletingText { get; set; } = string.Empty;
+    [Parameter] public string ErrorMessage { get; set; } = string.Empty;
+    [Parameter] public string CurrentSessionId { get; set; } = string.Empty;
+    [Parameter] public string CurrentSessionBadgeText { get; set; } = string.Empty;
+    [Parameter] public string IncludesCurrentTitle { get; set; } = string.Empty;
+    [Parameter] public string IncludesCurrentNote { get; set; } = string.Empty;
+    [Parameter] public bool IncludesCurrentSession { get; set; }
+    [Parameter] public bool IsDeleting { get; set; }
+    [Parameter] public Func<SessionHistory, string> SessionMetaTextFactory { get; set; } = _ => string.Empty;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+
+    private string GetSessionMetaText(SessionHistory session) => SessionMetaTextFactory(session);
+}

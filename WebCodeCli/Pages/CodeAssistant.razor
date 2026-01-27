@@ -1029,164 +1029,36 @@
 <!-- 上下文预览面板 -->
 <ContextPreviewPanel @ref="_contextPreviewPanel" SessionId="@_sessionId" OnContextChanged="OnContextChanged" />
 
-<!-- 创建文件夹对话框 -->
-@if (_showCreateFolderDialog)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseCreateFolderDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path>
-                    </svg>
-                    @T("codeAssistant.createFolder")
-                </h3>
-                <button @onclick="CloseCreateFolderDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
+<CreateFolderDialog Show="@_showCreateFolderDialog"
+                    Title="@T("codeAssistant.createFolder")"
+                    FolderNameLabel="@T("codeAssistant.folderName")"
+                    FolderNamePlaceholder="@T("codeAssistant.folderNamePlaceholder")"
+                    FolderNameHint="@T("codeAssistant.folderNameHint")"
+                    CancelText="@T("common.cancel")"
+                    CreateText="@T("codeAssistant.create")"
+                    CreatingText="@T("codeAssistant.creating")"
+                    ErrorMessage="@_createFolderError"
+                    FolderName="@_newFolderName"
+                    FolderNameChanged="@((string value) => _newFolderName = value)"
+                    IsCreating="@_isCreatingFolder"
+                    OnClose="CloseCreateFolderDialog"
+                    OnCreate="CreateFolder"
+                    OnKeyDown="HandleCreateFolderKeyDown" />
 
-            @if (!string.IsNullOrEmpty(_createFolderError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_createFolderError</span>
-                    </div>
-                </div>
-            }
-
-            <div class="mb-6">
-                <label class="block text-sm font-medium text-gray-700 mb-2">@T("codeAssistant.folderName")</label>
-                <input @bind="_newFolderName"
-                       @bind:event="oninput"
-                       @onkeydown="HandleCreateFolderKeyDown"
-                       type="text"
-                       placeholder="@T("codeAssistant.folderNamePlaceholder")"
-                       class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500 text-sm bg-white shadow-sm"
-                       autofocus />
-                <p class="mt-2 text-xs text-gray-500">
-                    @T("codeAssistant.folderNameHint")
-                </p>
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseCreateFolderDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    @T("common.cancel")
-                </button>
-                <button @onclick="CreateFolder"
-                        disabled="@(string.IsNullOrWhiteSpace(_newFolderName) || _isCreatingFolder)"
-                        class="flex-1 px-4 py-3 bg-gray-800 hover:bg-black text-white rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isCreatingFolder)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>@T("codeAssistant.creating")</span>
-                    }
-                    else
-                    {
-                        <span>@T("codeAssistant.create")</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-<!-- 删除确认对话框 -->
-@if (_showDeleteConfirmDialog && _nodeToDelete != null)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseDeleteConfirmDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                    </svg>
-                    @T("codeAssistant.confirmDelete")
-                </h3>
-                <button @onclick="CloseDeleteConfirmDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(_deleteError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_deleteError</span>
-                    </div>
-                </div>
-            }
-
-            <div class="mb-6">
-                <p class="text-gray-700 text-sm mb-4">
-                    @T("codeAssistant.deleteWarning", ("type", _nodeToDelete.Type == "folder" ? T("codeAssistant.folder") : T("codeAssistant.file")))
-                </p>
-                <div class="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
-                    <div class="flex items-center gap-2">
-                        @if (_nodeToDelete.Type == "folder")
-                        {
-                            <svg class="w-5 h-5 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path>
-                            </svg>
-                        }
-                        else
-                        {
-                            <svg class="w-5 h-5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-                            </svg>
-                        }
-                        <span class="font-mono text-sm text-gray-800 break-all">@_nodeToDelete.Path</span>
-                    </div>
-                </div>
-                @if (_nodeToDelete.Type == "folder")
-                {
-                    <p class="mt-3 text-xs text-red-600 font-medium">
-                        ⚠️ @T("codeAssistant.folderDeleteWarning")
-                    </p>
-                }
-                else
-                {
-                    <p class="mt-3 text-xs text-gray-500">
-                        @T("codeAssistant.cannotUndo")
-                    </p>
-                }
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseDeleteConfirmDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    @T("common.cancel")
-                </button>
-                <button @onclick="DeleteWorkspaceItem"
-                        disabled="@_isDeleting"
-                        class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isDeleting)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>@T("codeAssistant.deleting")</span>
-                    }
-                    else
-                    {
-                        <span>@T("codeAssistant.confirmDelete")</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
+<DeleteWorkspaceItemDialog Show="@_showDeleteConfirmDialog"
+                           Title="@T("codeAssistant.confirmDelete")"
+                           WarningText="@(_nodeToDelete == null ? string.Empty : T("codeAssistant.deleteWarning", ("type", _nodeToDelete.Type == "folder" ? T("codeAssistant.folder") : T("codeAssistant.file"))))"
+                           FolderDeleteWarningText="@T("codeAssistant.folderDeleteWarning")"
+                           CannotUndoText="@T("codeAssistant.cannotUndo")"
+                           CancelText="@T("common.cancel")"
+                           ConfirmText="@T("codeAssistant.confirmDelete")"
+                           DeletingText="@T("codeAssistant.deleting")"
+                           ErrorMessage="@_deleteError"
+                           ItemPath="@(_nodeToDelete?.Path ?? string.Empty)"
+                           IsFolder="@(_nodeToDelete?.Type == "folder")"
+                           IsDeleting="@_isDeleting"
+                           OnClose="CloseDeleteConfirmDialog"
+                           OnConfirm="DeleteWorkspaceItem" />
 
 @code {
     private RenderFragment RenderFileNode(WorkspaceFileNode node, int depth) => __builder =>
@@ -1337,378 +1209,61 @@
 
 
 
-<!-- 会话删除确认对话框 -->
-@if (_showSessionDeleteDialog && _sessionToDelete != null)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseSessionDeleteDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                    </svg>
-                    确认删除会话
-                </h3>
-                <button @onclick="CloseSessionDeleteDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
+<SessionDeleteDialog Show="@_showSessionDeleteDialog"
+                     Session="@_sessionToDelete"
+                     Title="确认删除会话"
+                     ConfirmMessage="您确定要删除以下会话吗？"
+                     MessageCountText="@(_sessionToDelete == null ? string.Empty : $"消息数量: {_sessionToDelete.Messages.Count} 条")"
+                     CreatedAtText="@(_sessionToDelete == null ? string.Empty : $"创建时间: {_sessionToDelete.CreatedAt:yyyy-MM-dd HH:mm}")"
+                     UpdatedAtText="@(_sessionToDelete == null ? string.Empty : $"最后更新: {FormatDateTime(_sessionToDelete.UpdatedAt)}")"
+                     WarningText="警告：此操作将永久删除会话及其所有消息，且无法恢复！"
+                     CurrentSessionTitle="这是当前激活的会话"
+                     CurrentSessionNote="删除后将自动创建一个新的空白会话。"
+                     CancelText="取消"
+                     ConfirmText="确认删除"
+                     DeletingText="删除中..."
+                     ErrorMessage="@_sessionDeleteError"
+                     IsDeleting="@_isDeletingSession"
+                     IsCurrentSession="@(_currentSession?.SessionId == _sessionToDelete?.SessionId)"
+                     OnClose="CloseSessionDeleteDialog"
+                     OnConfirm="DeleteSession" />
 
-            @if (!string.IsNullOrEmpty(_sessionDeleteError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_sessionDeleteError</span>
-                    </div>
-                </div>
-            }
+<BatchSessionDeleteDialog Show="@_showBatchSessionDeleteDialog"
+                          SelectedSessions="@GetSelectedSessions()"
+                          Title="@T("codeAssistant.batchDeleteConfirm")"
+                          MessageText="@T("codeAssistant.batchDeleteMessage", ("count", _selectedSessionIds.Count.ToString()))"
+                          WarningText="@T("codeAssistant.batchDeleteWarning")"
+                          CancelText="@T("common.cancel")"
+                          ConfirmText="@T("codeAssistant.confirmBatchDelete", ("count", _selectedSessionIds.Count.ToString()))"
+                          DeletingText="@T("codeAssistant.deleting")"
+                          ErrorMessage="@_batchSessionDeleteError"
+                          CurrentSessionId="@(_currentSession?.SessionId ?? string.Empty)"
+                          CurrentSessionBadgeText="@T("codeAssistant.currentSession")"
+                          IncludesCurrentTitle="@T("codeAssistant.includesCurrentSession")"
+                          IncludesCurrentNote="@T("codeAssistant.currentSessionDeleteNote")"
+                          IncludesCurrentSession="@GetSelectedSessions().Any(s => _currentSession?.SessionId == s.SessionId)"
+                          IsDeleting="@_isDeletingBatchSessions"
+                          SessionMetaTextFactory="@(session => $"{session.Messages.Count} {T("codeAssistant.messagesCount")} • {FormatDateTime(session.UpdatedAt)}")"
+                          OnClose="CloseBatchSessionDeleteDialog"
+                          OnConfirm="DeleteSelectedSessions" />
 
-            <div class="mb-6">
-                <p class="text-gray-700 text-sm mb-4">
-                    您确定要删除以下会话吗？
-                </p>
-                <div class="bg-gradient-to-r bg-gray-50 border-2 border-gray-300 rounded-xl px-4 py-4 shadow-sm">
-                    <div class="flex items-start gap-3">
-                        <div class="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
-                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                            </svg>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <h4 class="font-bold text-gray-800 text-base mb-1 break-words">@_sessionToDelete.Title</h4>
-                            <div class="space-y-1 text-xs text-gray-600">
-                                <div class="flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                                    </svg>
-                                    <span>消息数量: @_sessionToDelete.Messages.Count 条</span>
-                                </div>
-                                <div class="flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                    <span>创建时间: @_sessionToDelete.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span>
-                                </div>
-                                <div class="flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                    </svg>
-                                    <span>最后更新: @FormatDateTime(_sessionToDelete.UpdatedAt)</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                @if (_currentSession?.SessionId == _sessionToDelete.SessionId)
-                {
-                    <div class="mt-4 bg-amber-50 border-l-4 border-amber-500 px-4 py-3 rounded-lg">
-                        <div class="flex items-start gap-2">
-                            <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                            </svg>
-                            <div class="text-xs text-amber-800">
-                                <p class="font-semibold mb-1">这是当前激活的会话</p>
-                                <p>删除后将自动创建一个新的空白会话。</p>
-                            </div>
-                        </div>
-                    </div>
-                }
-                
-                <p class="mt-4 text-xs text-red-600 font-medium flex items-center gap-1.5">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                    </svg>
-                    警告：此操作将永久删除会话及其所有消息，且无法恢复！
-                </p>
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseSessionDeleteDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    取消
-                </button>
-                <button @onclick="DeleteSession"
-                        disabled="@_isDeletingSession"
-                        class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isDeletingSession)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>删除中...</span>
-                    }
-                    else
-                    {
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                        </svg>
-                        <span>确认删除</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-<!-- 批量删除会话确认对话框 -->
-@if (_showBatchSessionDeleteDialog && _selectedSessionIds.Count > 0)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseBatchSessionDeleteDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 transform transition-all max-h-[90vh] overflow-y-auto" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                    </svg>
-                    @T("codeAssistant.batchDeleteConfirm")
-                </h3>
-                <button @onclick="CloseBatchSessionDeleteDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(_batchSessionDeleteError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_batchSessionDeleteError</span>
-                    </div>
-                </div>
-            }
-
-            <div class="mb-6">
-                <p class="text-gray-700 text-sm mb-4">
-                    @T("codeAssistant.batchDeleteMessage", ("count", _selectedSessionIds.Count.ToString()))
-                </p>
-                
-                <!-- 选中的会话列表 -->
-                <div class="bg-gray-50 border-2 border-gray-300 rounded-xl p-3 max-h-60 overflow-y-auto space-y-2">
-                    @foreach (var session in GetSelectedSessions())
-                    {
-                        <div class="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-gray-200">
-                            <div class="w-8 h-8 bg-gray-800 rounded-full flex items-center justify-center flex-shrink-0">
-                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                                </svg>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-semibold text-gray-800 text-sm truncate">@session.Title</h4>
-                                <p class="text-xs text-gray-500">@session.Messages.Count @T("codeAssistant.messagesCount") • @FormatDateTime(session.UpdatedAt)</p>
-                            </div>
-                            @if (_currentSession?.SessionId == session.SessionId)
-                            {
-                                <span class="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full flex-shrink-0">@T("codeAssistant.currentSession")</span>
-                            }
-                        </div>
-                    }
-                </div>
-                
-                @if (GetSelectedSessions().Any(s => _currentSession?.SessionId == s.SessionId))
-                {
-                    <div class="mt-4 bg-amber-50 border-l-4 border-amber-500 px-4 py-3 rounded-lg">
-                        <div class="flex items-start gap-2">
-                            <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                            </svg>
-                            <div class="text-xs text-amber-800">
-                                <p class="font-semibold mb-1">@T("codeAssistant.includesCurrentSession")</p>
-                                <p>@T("codeAssistant.currentSessionDeleteNote")</p>
-                            </div>
-                        </div>
-                    </div>
-                }
-                
-                <p class="mt-4 text-xs text-red-600 font-medium flex items-center gap-1.5">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                    </svg>
-                    @T("codeAssistant.batchDeleteWarning")
-                </p>
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseBatchSessionDeleteDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    @T("common.cancel")
-                </button>
-                <button @onclick="DeleteSelectedSessions"
-                        disabled="@_isDeletingBatchSessions"
-                        class="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isDeletingBatchSessions)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>@T("codeAssistant.deleting")</span>
-                    }
-                    else
-                    {
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                        </svg>
-                        <span>@T("codeAssistant.confirmBatchDelete", ("count", _selectedSessionIds.Count.ToString()))</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-<!-- 会话重命名对话框 -->
-@if (_showRenameDialog && _sessionToRename != null)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseRenameDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                    </svg>
-                    重命名会话
-                </h3>
-                <button @onclick="CloseRenameDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(_renameError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_renameError</span>
-                    </div>
-                </div>
-            }
-
-            <div class="mb-6">
-                <label class="block text-sm font-semibold text-gray-700 mb-2">
-                    会话标题
-                </label>
-                <input type="text" 
-                       @bind="_newSessionTitle" 
-                       @bind:event="oninput"
-                       @onkeydown="HandleRenameKeyDown"
-                       maxlength="100"
-                       placeholder="请输入会话标题（最多100个字符）"
-                       class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-gray-600 focus:ring-2 focus:ring-gray-300 transition-all outline-none text-sm"
-                       disabled="@_isRenamingSession" />
-                <div class="mt-2 flex items-center justify-between text-xs text-gray-500">
-                    <span>按 Enter 保存，Esc 取消</span>
-                    <span>@(_newSessionTitle?.Length ?? 0) / 100</span>
-                </div>
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseRenameDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    取消
-                </button>
-                <button @onclick="RenameSession"
-                        disabled="@(_isRenamingSession || string.IsNullOrWhiteSpace(_newSessionTitle))"
-                        class="flex-1 px-4 py-3 bg-gray-800 hover:bg-black text-white rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isRenamingSession)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>保存中...</span>
-                    }
-                    else
-                    {
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                        </svg>
-                        <span>保存</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-
-<!-- 会话重命名对话框 -->
-@if (_showRenameDialog && _sessionToRename != null)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseRenameDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all" @onclick:stopPropagation="true">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                    </svg>
-                    重命名会话
-                </h3>
-                <button @onclick="CloseRenameDialog" 
-                        class="text-gray-400 hover:text-gray-600 transition-colors">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(_renameError))
-            {
-                <div class="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded-lg" role="alert">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span class="block text-sm">@_renameError</span>
-                    </div>
-                </div>
-            }
-
-            <div class="mb-6">
-                <label class="block text-sm font-medium text-gray-700 mb-2">会话标题</label>
-                <input @bind="_newSessionTitle"
-                       @bind:event="oninput"
-                       @onkeydown="HandleRenameKeyDown"
-                       type="text"
-                       placeholder="输入新的会话标题"
-                       maxlength="100"
-                       class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500 text-sm bg-white shadow-sm"
-                       autofocus />
-                <p class="mt-2 text-xs text-gray-500">
-                    @(_newSessionTitle?.Length ?? 0) / 100 字符
-                </p>
-            </div>
-
-            <div class="flex gap-3">
-                <button @onclick="CloseRenameDialog"
-                        class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors shadow-sm">
-                    取消
-                </button>
-                <button @onclick="RenameSession"
-                        disabled="@(string.IsNullOrWhiteSpace(_newSessionTitle) || _isRenamingSession)"
-                        class="flex-1 px-4 py-3 bg-gray-800 hover:bg-black text-white rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2">
-                    @if (_isRenamingSession)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                        <span>保存中...</span>
-                    }
-                    else
-                    {
-                        <span>保存</span>
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-}
+<RenameSessionDialog Show="@(_showRenameDialog && _sessionToRename != null)"
+                    Title="重命名会话"
+                    LabelText="会话标题"
+                    Placeholder="请输入会话标题（最多100个字符）"
+                    HintText="按 Enter 保存，Esc 取消"
+                    CurrentLengthText="@($"{_newSessionTitle?.Length ?? 0} / 100")"
+                    CancelText="取消"
+                    SaveText="保存"
+                    SavingText="保存中..."
+                    ErrorMessage="@_renameError"
+                    SessionTitle="@_newSessionTitle"
+                    SessionTitleChanged="@((string value) => _newSessionTitle = value)"
+                    IsSaving="@_isRenamingSession"
+                    InputClass="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-gray-600 focus:ring-2 focus:ring-gray-300 transition-all outline-none text-sm"
+                    OnClose="CloseRenameDialog"
+                    OnConfirm="RenameSession"
+                    OnKeyDown="HandleRenameKeyDown" />
 
 <!-- 批量操作对话框 -->
 <BatchOperationDialog Show="@_showBatchOperationDialog"
@@ -1720,81 +1275,18 @@
                       OnClose="CloseBatchOperationDialog"
                       OnConfirm="ExecuteBatchOperation" />
 
-<!-- 模板变量输入对话框 -->
-@if (_showVariableInputDialog && _templateWithVariables != null)
-{
-    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @onclick="CloseVariableInputDialog">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden transform transition-all" @onclick:stopPropagation="true">
-            <!-- 头部 -->
-            <div class="flex items-center justify-between p-6 border-b-2 border-gray-200 bg-gradient-to-r from-purple-50 to-white">
-                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <span class="text-2xl">@_templateWithVariables.Icon</span>
-                    <span>填写模板变量</span>
-                </h3>
-                <button @onclick="CloseVariableInputDialog" class="p-2 hover:bg-gray-200 rounded-lg transition-colors">
-                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-
-            <!-- 模板信息 -->
-            <div class="px-6 pt-4 pb-2 bg-gray-50 border-b border-gray-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <span class="text-sm font-semibold text-gray-700">模板：</span>
-                    <span class="text-sm text-gray-800">@_templateWithVariables.Title</span>
-                </div>
-                <div class="text-xs text-gray-500 bg-white rounded-lg p-3 border border-gray-200 max-h-24 overflow-y-auto">
-                    <pre class="whitespace-pre-wrap font-mono">@_templateWithVariables.Content</pre>
-                </div>
-            </div>
-
-            <!-- 变量输入区域 -->
-            <div class="p-6 overflow-y-auto space-y-4" style="max-height: calc(90vh - 300px);">
-                <div class="flex items-center gap-2 mb-2">
-                    <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
-                    </svg>
-                    <span class="text-sm font-semibold text-gray-700">请填写以下 @_templateWithVariables.Variables.Count 个变量：</span>
-                </div>
-
-                @foreach (var variable in _templateWithVariables.Variables)
-                {
-                    <div class="space-y-2">
-                        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
-                            <span class="w-6 h-6 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center text-xs font-bold">
-                                @(_templateWithVariables.Variables.IndexOf(variable) + 1)
-                            </span>
-                            <code class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-mono text-xs">{{@variable}}</code>
-                        </label>
-                        <textarea @bind="_variableValues[variable]"
-                                  @bind:event="oninput"
-                                  rows="3"
-                                  id="@($"template-var-{_templateWithVariables.Variables.IndexOf(variable)}")"
-                                  placeholder="@($"请输入 {variable} 的值...")"
-                                  style="min-height: 72px; max-height: 300px;"
-                                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-vertical bg-white"></textarea>
-                    </div>
-                }
-            </div>
-
-            <!-- 底部按钮 -->
-            <div class="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
-                <button @onclick="CloseVariableInputDialog" class="btn-default px-6 py-2.5">
-                    取消
-                </button>
-                <button @onclick="ApplyTemplateWithVariables" 
-                        disabled="@(_variableValues.Any(v => string.IsNullOrWhiteSpace(v.Value)))"
-                        class="btn-primary px-6 py-2.5 flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                    </svg>
-                    应用模板
-                </button>
-            </div>
-        </div>
-    </div>
-}
+<TemplateVariableInputDialog Show="@_showVariableInputDialog"
+                             Template="@_templateWithVariables"
+                             Values="@_variableValues"
+                             Title="填写模板变量"
+                             TemplateLabel="模板："
+                             VariableCountText="@(_templateWithVariables == null ? string.Empty : $"请填写以下 {_templateWithVariables.Variables.Count} 个变量：")"
+                             ValuePlaceholderFormat="请输入 {0} 的值..."
+                             CancelText="取消"
+                             ConfirmText="应用模板"
+                             DisableConfirm="@_variableValues.Any(v => string.IsNullOrWhiteSpace(v.Value))"
+                             OnClose="CloseVariableInputDialog"
+                             OnConfirm="ApplyTemplateWithVariables" />
 
 <!-- 会话分享模态框 -->
 <ShareSessionModal @ref="_shareSessionModal" SessionId="@_sessionId" />
