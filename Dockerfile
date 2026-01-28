@@ -122,7 +122,8 @@ COPY --from=publish /app/publish .
 
 # 复制 Docker 启动脚本（以 root 权限运行，用于修复挂载卷权限）
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.sh \
+    && chmod +x /docker-entrypoint.sh
 
 # 复制 Claude Code Skills 到容器
 COPY skills/ /app/skills/
