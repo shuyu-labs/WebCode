@@ -115,7 +115,8 @@
     "githubReleases": "GitHub Releases"
   },
   "settings": {
-    "envConfig": "Environment Configuration"
+    "envConfig": "Environment Configuration",
+    "visitWebsite": "Visit Website"
   },
   "cliEvent": {
     "title": {

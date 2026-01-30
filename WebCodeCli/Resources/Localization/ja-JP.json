@@ -164,7 +164,8 @@
     "githubReleases": "GitHub リリース"
   },
   "settings": {
-    "envConfig": "環境変数の設定"
+    "envConfig": "環境変数の設定",
+    "visitWebsite": "ウェブサイトにアクセス"
   },
   "cliEvent": {
     "title": {

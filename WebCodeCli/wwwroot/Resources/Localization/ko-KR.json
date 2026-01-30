@@ -164,7 +164,8 @@
     "githubReleases": "GitHub 릴리스"
   },
   "settings": {
-    "envConfig": "환경 변수 설정"
+    "envConfig": "환경 변수 설정",
+    "visitWebsite": "웹사이트 방문"
   },
   "cliEvent": {
     "title": {

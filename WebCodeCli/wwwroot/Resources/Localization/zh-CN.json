@@ -115,7 +115,8 @@
     "githubReleases": "GitHub 发布页"
   },
   "settings": {
-    "envConfig": "环境变量配置"
+    "envConfig": "环境变量配置",
+    "visitWebsite": "访问官网"
   },
   "cliEvent": {
     "title": {
