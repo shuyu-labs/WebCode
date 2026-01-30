@@ -548,6 +548,40 @@ public class GitService : IGitService
             {
                 _logger?.LogInformation("获取远程分支列表: {GitUrl}", gitUrl);
                 
+                if (credentials?.AuthType == "https" && !string.IsNullOrEmpty(credentials.HttpsToken))
+                {
+                    var authUrl = BuildHttpsUrlWithToken(gitUrl, credentials.HttpsUsername, credentials.HttpsToken);
+                    var result = ExecuteGitCommand(
+                        Directory.GetCurrentDirectory(),
+                        $"ls-remote --heads \"{authUrl}\"",
+                        null,
+                        null);
+
+                    if (result.ExitCode != 0)
+                    {
+                        var errorMessage = $"获取分支列表失败: {result.StdErr}";
+                        _logger?.LogError("获取远程分支列表失败(HTTPS CLI): {GitUrl}, {Error}", gitUrl, result.StdErr);
+                        return (branches, errorMessage);
+                    }
+
+                    var lines = result.StdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        var parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2)
+                        {
+                            var refName = parts[^1];
+                            if (refName.StartsWith("refs/heads/"))
+                            {
+                                branches.Add(refName.Replace("refs/heads/", ""));
+                            }
+                        }
+                    }
+
+                    _logger?.LogInformation("获取到 {Count} 个分支(HTTPS CLI)", branches.Count);
+                    return (branches, null);
+                }
+
                 if (credentials?.AuthType == "ssh" && !string.IsNullOrEmpty(credentials.SshPrivateKey))
                 {
                     tempSshKeyPath = CreateTempSshKeyFile(credentials.SshPrivateKey);
@@ -603,7 +637,9 @@ public class GitService : IGitService
                         {
                             return new UsernamePasswordCredentials
                             {
-                                Username = credentials.HttpsUsername ?? "git",
+                                Username = string.IsNullOrWhiteSpace(credentials.HttpsUsername)
+                                    ? "x-access-token"
+                                    : credentials.HttpsUsername,
                                 Password = credentials.HttpsToken
                             };
                         }
@@ -702,7 +738,9 @@ public class GitService : IGitService
             {
                 return new UsernamePasswordCredentials
                 {
-                    Username = credentials.HttpsUsername ?? "git",
+                    Username = string.IsNullOrWhiteSpace(credentials.HttpsUsername)
+                        ? "x-access-token"
+                        : credentials.HttpsUsername,
                     Password = credentials.HttpsToken
                 };
             }
@@ -744,6 +782,10 @@ public class GitService : IGitService
                 startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
                 startInfo.Environment["GIT_SSH_VARIANT"] = "ssh";
             }
+            else
+            {
+                startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            }
             
             if (!string.IsNullOrEmpty(sshAskPassPath))
             {
@@ -767,6 +809,29 @@ public class GitService : IGitService
         catch (Exception ex)
         {
             return (-1, string.Empty, ex.Message);
+        }
+    }
+
+    private string BuildHttpsUrlWithToken(string gitUrl, string? username, string token)
+    {
+        try
+        {
+            var uri = new Uri(gitUrl);
+            var user = string.IsNullOrWhiteSpace(username) ? "x-access-token" : username;
+            var escapedUser = Uri.EscapeDataString(user);
+            var escapedToken = Uri.EscapeDataString(token);
+            var builder = new UriBuilder(uri)
+            {
+                UserName = escapedUser,
+                Password = escapedToken
+            };
+            return builder.Uri.ToString();
+        }
+        catch
+        {
+            // 回退：简单拼接（避免异常阻断）
+            var safeUser = string.IsNullOrWhiteSpace(username) ? "x-access-token" : username;
+            return gitUrl.Replace("https://", $"https://{safeUser}:{token}@");
         }
     }
 
