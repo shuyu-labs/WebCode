@@ -229,6 +229,7 @@
                     RawOutput="@_rawOutput"
                     EmptyTitle="@T("codeAssistant.noOutput")"
                     EmptyDescription="@T("codeAssistant.executeCode")"
+                    CopyLabel="@T("common.copy")"
                     OnLoadMore="LoadMoreEvents"
                     OnToggleGroupCallback="HandleToggleGroup"
                     IsGroupOpenFunc="@(g => IsJsonlGroupOpen(ConvertToJsonlGroup(g)))"
@@ -381,6 +382,10 @@
                               UserLabel="@T("codeAssistant.user")"
                               AssistantLabel="@T("codeAssistant.assistant")"
                               ThinkingText="@T("codeAssistant.thinking")"
+                              CopyMessageLabel="@T("common.copyMessage")"
+                              CopiedLabel="@T("common.copied")"
+                              FullscreenLabel="@T("common.fullscreen")"
+                              ExitFullscreenLabel="@T("common.exitFullscreen")"
                               IsJsonlContent="IsJsonlContent"
                               RenderJsonlContent="RenderJsonlContent"
                               RenderMarkdown="RenderMarkdown" />
