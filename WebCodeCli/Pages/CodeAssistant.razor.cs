@@ -3596,7 +3596,36 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                 continue;
             }
 
-            // 4) 其他事件：保持现状（单条卡片）
+            // 4) raw 类型事件合并：将连续的 raw 事件合并为一个组
+            //    这用于处理 CLI 返回非 JSONL 输出的情况（如输入了子命令关键字 mcp/config 等）
+            if (evt.Type == "raw")
+            {
+                // 检查最后一个组是否也是 raw_group，如果是则追加
+                var lastGroup = groups.LastOrDefault();
+                if (lastGroup != null && lastGroup.Kind == "raw_group")
+                {
+                    lastGroup.Items.Add(evt);
+                    // 更新标题以反映合并后的内容
+                    lastGroup.Title = BuildRawGroupTitle(lastGroup);
+                    continue;
+                }
+                
+                // 创建新的 raw 组
+                var rawGroup = new JsonlEventGroup
+                {
+                    Id = $"raw-{i}",
+                    Kind = "raw_group",
+                    IsCollapsible = true,
+                    IsCompleted = true,
+                    Title = "输出"
+                };
+                rawGroup.Items.Add(evt);
+                rawGroup.Title = BuildRawGroupTitle(rawGroup);
+                groups.Add(rawGroup);
+                continue;
+            }
+
+            // 5) 其他事件：保持现状（单条卡片）
             groups.Add(new JsonlEventGroup
             {
                 Id = $"evt-{i}",
@@ -3700,6 +3729,80 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         return group.Items.FirstOrDefault() is { } firstItem
             ? GetEventDisplayTitle(firstItem)
             : T("cliEvent.badge.event");
+    }
+
+    /// <summary>
+    /// 构建 raw 事件组的标题
+    /// 检测是否为帮助文本输出，并生成合适的标题
+    /// </summary>
+    private string BuildRawGroupTitle(JsonlEventGroup group)
+    {
+        if (group.Items.Count == 0)
+            return T("cliEvent.title.raw");
+
+        // 合并所有 raw 内容用于检测
+        var allContent = string.Join("\n", group.Items.Select(e => e.Content ?? ""));
+        
+        // 检测是否为帮助文本模式
+        if (IsHelpTextOutput(allContent))
+        {
+            // 尝试提取命令名称
+            var commandMatch = System.Text.RegularExpressions.Regex.Match(
+                allContent, 
+                @"Usage:\s*(claude\s+\w+|codex\s+\w+|\w+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            
+            if (commandMatch.Success)
+            {
+                var command = commandMatch.Groups[1].Value.Trim();
+                return $"帮助信息: {command}";
+            }
+            
+            return "CLI 帮助信息";
+        }
+        
+        // 检测是否为错误输出
+        var hasError = group.Items.Any(e => 
+            e.Content?.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) == true ||
+            e.Content?.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase) == true);
+        
+        if (hasError)
+        {
+            return T("cliEvent.badge.error");
+        }
+        
+        // 默认标题
+        return group.Items.Count > 1 
+            ? $"{T("cliEvent.title.raw")} ({group.Items.Count} 行)"
+            : T("cliEvent.title.raw");
+    }
+    
+    /// <summary>
+    /// 检测输出是否为帮助文本格式
+    /// </summary>
+    private static bool IsHelpTextOutput(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return false;
+            
+        // 帮助文本的常见特征
+        var helpPatterns = new[]
+        {
+            "Usage:",
+            "Options:",
+            "Commands:",
+            "-h, --help",
+            "--help",
+            "Display help",
+            "show help",
+            "Examples:"
+        };
+        
+        var matchCount = helpPatterns.Count(pattern => 
+            content.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+        
+        // 如果匹配了2个或更多特征，认为是帮助文本
+        return matchCount >= 2;
     }
 
     // 会话历史管理方法

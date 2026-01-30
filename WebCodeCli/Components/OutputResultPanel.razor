@@ -137,6 +137,7 @@
                         var statusClass = group.IsCompleted ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700";
                         
                         var isCommand = group.Kind == "command_execution";
+                        var isRawGroup = group.Kind == "raw_group";
                         
                         // Unified container style
                         var containerClass = "border border-gray-200 rounded-xl shadow-sm hover:shadow overflow-hidden bg-white my-3 transition-all";
@@ -159,6 +160,14 @@
                                                 </svg>
                                             </div>
                                         }
+                                        else if (isRawGroup)
+                                        {
+                                            <div class="w-8 h-8 rounded bg-amber-100 flex items-center justify-center text-amber-600 group-hover:bg-amber-200 transition-colors">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                                </svg>
+                                            </div>
+                                        }
                                         else
                                         {
                                             <div class="w-8 h-8 rounded bg-blue-100 flex items-center justify-center text-blue-600 group-hover:bg-blue-200 transition-colors">
@@ -172,7 +181,7 @@
 
                                     <div class="flex flex-col min-w-0 flex-1">
                                         <div class="flex items-center gap-2">
-                                            <span class="@($"text-sm font-semibold truncate {(isCommand ? "font-mono text-gray-700" : "text-gray-800")}")">@group.Title</span>
+                                            <span class="@($"text-sm font-semibold truncate {(isCommand || isRawGroup ? "font-mono text-gray-700" : "text-gray-800")}")">@group.Title</span>
                                         </div>
                                         <div class="flex items-center gap-2 mt-0.5">
                                             <span class="@($"text-[10px] px-1.5 py-px rounded border {statusClass}")">@statusText</span>
@@ -200,17 +209,28 @@
 
                             @if (isOpen)
                             {
-                                <div class="p-3 space-y-2 bg-white overflow-hidden">
-                                    @{
-                                        int eventIndex = 0;
-                                    }
-                                    @foreach (var evt in group.Items)
-                                    {
-                                        var badgeClass = GetEventBadgeClass(evt);
-                                        var badgeLabel = GetEventBadgeLabel(evt);
-                                        var containerAccent = GetEventContainerAccent(evt);
-                                        var eventKey = $"{group.Id}-{eventIndex}";
-                                        eventIndex++;
+                                @* raw_group 特殊处理：将所有行合并为一个代码块显示 *@
+                                @if (group.Kind == "raw_group")
+                                {
+                                    <div class="p-3 bg-white overflow-hidden">
+                                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 font-mono text-sm text-gray-700 overflow-x-auto">
+                                            <pre class="whitespace-pre-wrap break-words m-0">@string.Join("\n", group.Items.Select(e => e.Content ?? ""))</pre>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="p-3 space-y-2 bg-white overflow-hidden">
+                                        @{
+                                            int eventIndex = 0;
+                                        }
+                                        @foreach (var evt in group.Items)
+                                        {
+                                            var badgeClass = GetEventBadgeClass(evt);
+                                            var badgeLabel = GetEventBadgeLabel(evt);
+                                            var containerAccent = GetEventContainerAccent(evt);
+                                            var eventKey = $"{group.Id}-{eventIndex}";
+                                            eventIndex++;
 
                                         <div class="@($"border border-gray-200 rounded-xl p-3 sm:p-4 shadow-sm hover:shadow-md transition-all overflow-hidden min-w-0 {containerAccent}")">
                                             <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
@@ -268,7 +288,8 @@
                                             }
                                         </div>
                                     }
-                                </div>
+                                    </div>
+                                }
                             }
                         </div>
                     }
