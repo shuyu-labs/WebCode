@@ -1,0 +1,92 @@
+@* MobileSelectOption - 移动端选择组件的选项 *@
+@namespace WebCodeCli.Components
+@typeparam TValue
+
+<button type="button"
+        @onclick="HandleClick"
+        disabled="@Disabled"
+        class="w-full px-4 py-3 text-left text-sm hover:bg-gray-50 active:bg-gray-100 transition-colors flex items-center gap-3 border-b border-gray-100 last:border-b-0 disabled:opacity-50 disabled:cursor-not-allowed @(IsSelected ? "bg-gray-50" : "")">
+    <!-- 选中图标 -->
+    <div class="w-5 h-5 flex items-center justify-center flex-shrink-0">
+        @if (IsSelected)
+        {
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        }
+    </div>
+    
+    <!-- 内容区域 -->
+    <div class="flex-1 min-w-0">
+        @if (ChildContent != null)
+        {
+            @ChildContent
+        }
+        else
+        {
+            <span class="@(IsSelected ? "font-medium text-gray-900" : "text-gray-700")">@Text</span>
+            @if (!string.IsNullOrEmpty(Description))
+            {
+                <p class="text-xs text-gray-500 mt-0.5 truncate">@Description</p>
+            }
+        }
+    </div>
+    
+    <!-- 右侧图标（可选） -->
+    @if (IconContent != null)
+    {
+        <div class="flex-shrink-0">
+            @IconContent
+        </div>
+    }
+</button>
+
+@code {
+    /// <summary>
+    /// 选项值
+    /// </summary>
+    [Parameter] public TValue? Value { get; set; }
+    
+    /// <summary>
+    /// 显示文本
+    /// </summary>
+    [Parameter] public string? Text { get; set; }
+    
+    /// <summary>
+    /// 描述文本
+    /// </summary>
+    [Parameter] public string? Description { get; set; }
+    
+    /// <summary>
+    /// 是否选中
+    /// </summary>
+    [Parameter] public bool IsSelected { get; set; }
+    
+    /// <summary>
+    /// 是否禁用
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+    
+    /// <summary>
+    /// 点击回调
+    /// </summary>
+    [Parameter] public EventCallback<TValue> OnSelect { get; set; }
+    
+    /// <summary>
+    /// 自定义内容
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    
+    /// <summary>
+    /// 右侧图标内容
+    /// </summary>
+    [Parameter] public RenderFragment? IconContent { get; set; }
+    
+    private async Task HandleClick()
+    {
+        if (!Disabled)
+        {
+            await OnSelect.InvokeAsync(Value);
+        }
+    }
+}

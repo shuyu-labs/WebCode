@@ -55,8 +55,8 @@
             case "files":
                 @RenderFilesView()
                 break;
-            case "preview":
-                @RenderPreviewView()
+            case "tasks":
+                @RenderTasksView()
                 break;
             case "settings":
                 @RenderSettingsView()
@@ -624,6 +624,95 @@
                     </div>
                 }
             </div>
+        </div>
+    };
+}
+
+@* 定时任务视图 *@
+@{
+    RenderFragment RenderTasksView() => __builder =>
+    {
+        <div class="h-full flex flex-col bg-gray-50">
+            <!-- ScheduledTaskPanel 组件 -->
+            <ScheduledTaskPanel 
+                CreateTaskText="@T("scheduledTask.create")"
+                LoadingText="@T("common.loading")"
+                NoTasksText="@T("scheduledTask.noTasks")"
+                NoTasksHintText="@T("scheduledTask.noTasksHint")"
+                EnabledText="@T("scheduledTask.enabled")"
+                DisabledText="@T("scheduledTask.disabled")"
+                RunNowText="@T("scheduledTask.runNow")"
+                EditText="@T("common.edit")"
+                HistoryText="@T("scheduledTask.history")"
+                DeleteText="@T("common.delete")"
+                NextRunText="@T("scheduledTask.nextRun")"
+                LastStatusText="@T("scheduledTask.lastStatus")"
+                SuccessText="@T("scheduledTask.status.success")"
+                FailedText="@T("scheduledTask.status.failed")"
+                RunningText="@T("scheduledTask.status.running")"
+                CancelText="@T("common.cancel")"
+                DeleteConfirmTitle="@T("scheduledTask.deleteConfirmTitle")"
+                DeleteConfirmMessage="@T("scheduledTask.deleteConfirmMessage")"
+                ConfirmDeleteText="@T("common.delete")"
+                CronExpressionTitleText="@T("scheduledTask.cronExpression")"
+                CreateDialogTitleText="@T("scheduledTask.dialog.createTitle")"
+                EditDialogTitleText="@T("scheduledTask.dialog.editTitle")"
+                NameLabelText="@T("scheduledTask.dialog.nameLabel")"
+                NamePlaceholderText="@T("scheduledTask.dialog.namePlaceholder")"
+                DescriptionLabelText="@T("scheduledTask.dialog.descriptionLabel")"
+                DescriptionPlaceholderText="@T("scheduledTask.dialog.descriptionPlaceholder")"
+                ToolLabelText="@T("scheduledTask.dialog.toolLabel")"
+                SelectToolText="@T("scheduledTask.dialog.selectTool")"
+                PromptLabelText="@T("scheduledTask.dialog.promptLabel")"
+                PromptPlaceholderText="@T("scheduledTask.dialog.promptPlaceholder")"
+                SessionLabelText="@T("scheduledTask.dialog.sessionLabel")"
+                NewSessionText="@T("scheduledTask.dialog.newSession")"
+                SessionHintText="@T("scheduledTask.dialog.sessionHint")"
+                CronLabelText="@T("scheduledTask.dialog.cronLabel")"
+                SelectPresetText="@T("scheduledTask.dialog.selectPreset")"
+                ValidateText="@T("scheduledTask.dialog.validate")"
+                NextRunTimesText="@T("scheduledTask.dialog.nextRunTimes")"
+                AdvancedSettingsText="@T("scheduledTask.dialog.advancedSettings")"
+                TimeoutLabelText="@T("scheduledTask.dialog.timeoutLabel")"
+                SecondsText="@T("scheduledTask.dialog.seconds")"
+                TimeoutHintText="@T("scheduledTask.dialog.timeoutHint")"
+                RetryLabelText="@T("scheduledTask.dialog.retryLabel")"
+                RetryHintText="@T("scheduledTask.dialog.retryHint")"
+                DialogEnabledLabelText="@T("scheduledTask.dialog.enabledLabel")"
+                DialogEnabledHintText="@T("scheduledTask.dialog.enabledHint")"
+                SaveText="@T("common.save")"
+                CreateText="@T("common.create")"
+                CronValidText="@T("scheduledTask.dialog.cronValid")"
+                CronInvalidText="@T("scheduledTask.dialog.cronInvalid")"
+                CronValidateFailedText="@T("scheduledTask.dialog.cronValidateFailed")"
+                ErrorNameRequiredText="@T("scheduledTask.dialog.errorNameRequired")"
+                ErrorToolRequiredText="@T("scheduledTask.dialog.errorToolRequired")"
+                ErrorPromptRequiredText="@T("scheduledTask.dialog.errorPromptRequired")"
+                ErrorCronRequiredText="@T("scheduledTask.dialog.errorCronRequired")"
+                ErrorCronInvalidText="@T("scheduledTask.dialog.errorCronInvalid")"
+                SaveFailedText="@T("scheduledTask.dialog.saveFailed")"
+                SaveFailedWithMessageText="@T("scheduledTask.dialog.saveFailedWithMessage")"
+                HistoryTitleText="@T("scheduledTask.historyDialog.title")"
+                ExecutionListText="@T("scheduledTask.historyDialog.executionList")"
+                RefreshText="@T("common.refresh")"
+                NoExecutionsText="@T("scheduledTask.historyDialog.noExecutions")"
+                TimeoutText="@T("scheduledTask.status.timeout")"
+                CancelledText="@T("scheduledTask.status.cancelled")"
+                ManualText="@T("scheduledTask.trigger.manual")"
+                ScheduledText="@T("scheduledTask.trigger.scheduled")"
+                ExecutionDetailsText="@T("scheduledTask.historyDialog.details")"
+                CancelExecutionText="@T("scheduledTask.historyDialog.cancelExecution")"
+                StartTimeText="@T("scheduledTask.historyDialog.startTime")"
+                EndTimeText="@T("scheduledTask.historyDialog.endTime")"
+                DurationText="@T("scheduledTask.historyDialog.duration")"
+                TriggerTypeText="@T("scheduledTask.historyDialog.triggerType")"
+                ErrorText="@T("common.error")"
+                OutputText="@T("scheduledTask.historyDialog.output")"
+                CopyText="@T("common.copy")"
+                WrapTextText="@T("scheduledTask.historyDialog.wrapText")"
+                NoOutputText="@T("scheduledTask.historyDialog.noOutput")"
+                SelectExecutionHintText="@T("scheduledTask.historyDialog.selectExecutionHint")"
+                OnError="HandleTaskError" />
         </div>
     };
 }

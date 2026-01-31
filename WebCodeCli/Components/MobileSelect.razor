@@ -1,0 +1,149 @@
+@* MobileSelect - 移动端友好的下拉选择组件 *@
+@namespace WebCodeCli.Components
+@typeparam TValue
+
+<div class="relative" @onclick:stopPropagation="true">
+    <!-- 选择按钮 -->
+    <button type="button"
+            @onclick="ToggleDropdown"
+            disabled="@Disabled"
+            class="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-left flex items-center justify-between focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed @ButtonClass">
+        <span class="truncate text-sm @(string.IsNullOrEmpty(DisplayText) ? "text-gray-400" : "text-gray-800")">
+            @(string.IsNullOrEmpty(DisplayText) ? Placeholder : DisplayText)
+        </span>
+        <svg class="w-4 h-4 text-gray-500 flex-shrink-0 ml-2 transition-transform @(_isOpen ? "rotate-180" : "")" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+        </svg>
+    </button>
+    
+    <!-- 下拉菜单 -->
+    @if (_isOpen)
+    {
+        <!-- 移动端底部弹出式 -->
+        @if (UseMobileSheet)
+        {
+            <div class="fixed inset-0 z-[100] flex items-end justify-center" @onclick="CloseDropdown">
+                <div class="absolute inset-0 bg-black/50 transition-opacity"></div>
+                <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl safe-area-bottom transform transition-transform animate-slideUp"
+                     @onclick:stopPropagation="true">
+                    <!-- 拖拽指示条 -->
+                    <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-2"></div>
+                    
+                    <!-- 标题 -->
+                    @if (!string.IsNullOrEmpty(Title))
+                    {
+                        <div class="px-4 py-3 border-b border-gray-100">
+                            <h3 class="text-base font-semibold text-gray-800 text-center">@Title</h3>
+                        </div>
+                    }
+                    
+                    <!-- 选项列表 -->
+                    <div class="max-h-[60vh] overflow-y-auto">
+                        @ChildContent
+                    </div>
+                    
+                    <!-- 取消按钮 -->
+                    <div class="px-4 py-4 border-t border-gray-100">
+                        <button @onclick="CloseDropdown"
+                                class="w-full py-3 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-xl font-medium text-gray-700 transition-colors">
+                            @CancelText
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- PC端下拉菜单 -->
+            <div class="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto @DropdownClass">
+                @ChildContent
+            </div>
+        }
+    }
+</div>
+
+@code {
+    /// <summary>
+    /// 当前选中的值
+    /// </summary>
+    [Parameter] public TValue? Value { get; set; }
+    
+    /// <summary>
+    /// 值变化时的回调
+    /// </summary>
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+    
+    /// <summary>
+    /// 显示文本
+    /// </summary>
+    [Parameter] public string? DisplayText { get; set; }
+    
+    /// <summary>
+    /// 占位符文本
+    /// </summary>
+    [Parameter] public string Placeholder { get; set; } = "请选择...";
+    
+    /// <summary>
+    /// 标题（用于移动端弹出框）
+    /// </summary>
+    [Parameter] public string? Title { get; set; }
+    
+    /// <summary>
+    /// 取消按钮文本
+    /// </summary>
+    [Parameter] public string CancelText { get; set; } = "取消";
+    
+    /// <summary>
+    /// 是否禁用
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+    
+    /// <summary>
+    /// 是否使用移动端底部弹出样式
+    /// </summary>
+    [Parameter] public bool UseMobileSheet { get; set; } = true;
+    
+    /// <summary>
+    /// 自定义按钮样式
+    /// </summary>
+    [Parameter] public string? ButtonClass { get; set; }
+    
+    /// <summary>
+    /// 自定义下拉菜单样式
+    /// </summary>
+    [Parameter] public string? DropdownClass { get; set; }
+    
+    /// <summary>
+    /// 子内容（选项列表）
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    
+    private bool _isOpen = false;
+    
+    private void ToggleDropdown()
+    {
+        if (!Disabled)
+        {
+            _isOpen = !_isOpen;
+        }
+    }
+    
+    /// <summary>
+    /// 关闭下拉菜单
+    /// </summary>
+    public void CloseDropdown()
+    {
+        _isOpen = false;
+        StateHasChanged();
+    }
+    
+    /// <summary>
+    /// 选择值并关闭下拉菜单
+    /// </summary>
+    public async Task SelectValueAsync(TValue value)
+    {
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+        CloseDropdown();
+    }
+}

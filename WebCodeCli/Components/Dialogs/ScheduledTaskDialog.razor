@@ -44,14 +44,24 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1.5">
                     @ToolLabelText <span class="text-red-500">*</span>
                 </label>
-                <select @bind="FormData.ToolId"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-all">
-                    <option value="">@SelectToolText</option>
+                <MobileSelect TValue="string"
+                              @ref="_toolSelect"
+                              Value="@FormData.ToolId"
+                              DisplayText="@GetSelectedToolDisplayText()"
+                              Placeholder="@SelectToolText"
+                              Title="@ToolLabelText"
+                              CancelText="@CancelText"
+                              UseMobileSheet="true">
                     @foreach (var tool in AvailableTools)
                     {
-                        <option value="@tool.Id">@tool.DisplayName</option>
+                        <MobileSelectOption TValue="string"
+                                            Value="@tool.Id"
+                                            Text="@tool.Name"
+                                            Description="@tool.Description"
+                                            IsSelected="@(FormData.ToolId == tool.Id)"
+                                            OnSelect="SelectTool" />
                     }
-                </select>
+                </MobileSelect>
             </div>
             
             <!-- 执行提示词 -->
@@ -67,14 +77,29 @@
             <!-- 目标会话 -->
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1.5">@SessionLabelText</label>
-                <select @bind="FormData.SessionId"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-all">
-                    <option value="">@NewSessionText</option>
+                <MobileSelect TValue="string"
+                              @ref="_sessionSelect"
+                              Value="@FormData.SessionId"
+                              DisplayText="@GetSelectedSessionDisplayText()"
+                              Placeholder="@NewSessionText"
+                              Title="@SessionLabelText"
+                              CancelText="@CancelText"
+                              UseMobileSheet="true">
+                    <MobileSelectOption TValue="string"
+                                        Value="@string.Empty"
+                                        Text="@NewSessionText"
+                                        Description="@SessionHintText"
+                                        IsSelected="@(string.IsNullOrEmpty(FormData.SessionId))"
+                                        OnSelect="SelectSession" />
                     @foreach (var session in AvailableSessions)
                     {
-                        <option value="@session.Id">@session.Title</option>
+                        <MobileSelectOption TValue="string"
+                                            Value="@session.Id"
+                                            Text="@session.Title"
+                                            IsSelected="@(FormData.SessionId == session.Id)"
+                                            OnSelect="SelectSession" />
                     }
-                </select>
+                </MobileSelect>
                 <p class="mt-1 text-xs text-gray-500">@SessionHintText</p>
             </div>
             
@@ -83,15 +108,25 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1.5">
                     @CronLabelText <span class="text-red-500">*</span>
                 </label>
-                <div class="flex gap-2 mb-2">
-                    <select @onchange="OnCronPresetChange"
-                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-all">
-                        <option value="">@SelectPresetText</option>
+                <div class="mb-2">
+                    <MobileSelect TValue="string"
+                                  @ref="_cronPresetSelect"
+                                  Value="@_selectedCronPreset"
+                                  DisplayText="@GetSelectedCronPresetDisplayText()"
+                                  Placeholder="@SelectPresetText"
+                                  Title="@CronLabelText"
+                                  CancelText="@CancelText"
+                                  UseMobileSheet="true">
                         @foreach (var preset in CronPresets)
                         {
-                            <option value="@preset.Expression">@preset.Name - @preset.Description</option>
+                            <MobileSelectOption TValue="string"
+                                                Value="@preset.Expression"
+                                                Text="@preset.Name"
+                                                Description="@preset.Description"
+                                                IsSelected="@(_selectedCronPreset == preset.Expression)"
+                                                OnSelect="SelectCronPreset" />
                         }
-                    </select>
+                    </MobileSelect>
                 </div>
                 <div class="flex gap-2">
                     <input type="text" @bind="FormData.CronExpression" @bind:event="oninput" @onblur="ValidateCron"
@@ -253,6 +288,12 @@
     private bool IsSaving { get; set; }
     private string? ErrorMessage { get; set; }
     
+    // MobileSelect 组件引用
+    private MobileSelect<string>? _toolSelect;
+    private MobileSelect<string>? _sessionSelect;
+    private MobileSelect<string>? _cronPresetSelect;
+    private string _selectedCronPreset = string.Empty;
+    
     protected override async Task OnInitializedAsync()
     {
         await LoadCronPresetsAsync();
@@ -272,6 +313,13 @@
                 IsEnabled = Task.IsEnabled
             };
             
+            // 匹配当前cron表达式对应的预设
+            var matchedPreset = CronPresets.FirstOrDefault(p => p.Expression == Task.CronExpression);
+            if (matchedPreset != null)
+            {
+                _selectedCronPreset = matchedPreset.Expression;
+            }
+            
             await ValidateCron();
         }
     }
@@ -290,6 +338,58 @@
         {
             Logger.LogError(ex, "加载 Cron 预设失败");
         }
+    }
+    
+    // 获取选中工具的显示文本
+    private string GetSelectedToolDisplayText()
+    {
+        if (string.IsNullOrEmpty(FormData.ToolId)) return string.Empty;
+        var tool = AvailableTools.FirstOrDefault(t => t.Id == FormData.ToolId);
+        return tool?.Name ?? string.Empty;
+    }
+    
+    // 选择工具
+    private async System.Threading.Tasks.Task SelectTool(string toolId)
+    {
+        FormData.ToolId = toolId;
+        _toolSelect?.CloseDropdown();
+        await System.Threading.Tasks.Task.CompletedTask;
+    }
+    
+    // 获取选中会话的显示文本
+    private string GetSelectedSessionDisplayText()
+    {
+        if (string.IsNullOrEmpty(FormData.SessionId)) return NewSessionText;
+        var session = AvailableSessions.FirstOrDefault(s => s.Id == FormData.SessionId);
+        return session?.Title ?? NewSessionText;
+    }
+    
+    // 选择会话
+    private async System.Threading.Tasks.Task SelectSession(string sessionId)
+    {
+        FormData.SessionId = sessionId;
+        _sessionSelect?.CloseDropdown();
+        await System.Threading.Tasks.Task.CompletedTask;
+    }
+    
+    // 获取选中Cron预设的显示文本
+    private string GetSelectedCronPresetDisplayText()
+    {
+        if (string.IsNullOrEmpty(_selectedCronPreset)) return string.Empty;
+        var preset = CronPresets.FirstOrDefault(p => p.Expression == _selectedCronPreset);
+        return preset != null ? $"{preset.Name} - {preset.Description}" : string.Empty;
+    }
+    
+    // 选择Cron预设
+    private async System.Threading.Tasks.Task SelectCronPreset(string expression)
+    {
+        _selectedCronPreset = expression;
+        if (!string.IsNullOrEmpty(expression))
+        {
+            FormData.CronExpression = expression;
+            await ValidateCron();
+        }
+        _cronPresetSelect?.CloseDropdown();
     }
     
     private void OnCronPresetChange(ChangeEventArgs e)
