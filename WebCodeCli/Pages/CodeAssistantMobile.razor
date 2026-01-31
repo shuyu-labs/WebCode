@@ -1149,29 +1149,31 @@
 {
     <div class="fixed inset-0 z-50 flex items-end justify-center" @onclick="CloseCreateFolderDialog">
         <div class="absolute inset-0 bg-black/50"></div>
-        <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl p-6 pb-8 safe-area-bottom transform transition-transform"
+        <div class="relative w-full max-w-lg bg-white rounded-t-3xl shadow-2xl safe-area-bottom transform transition-transform"
              @onclick:stopPropagation="true">
-            <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
-            <h3 class="text-lg font-bold text-gray-800 mb-4">@T("codeAssistant.createFolder")</h3>
-            <input @bind="_newFolderName"
-                   @bind:event="oninput"
-                   type="text"
-                   placeholder="@T("codeAssistant.folderNamePlaceholder")"
-                   class="w-full px-4 py-3 bg-gray-100 border-0 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4" />
-            <div class="flex gap-3">
-                <button @onclick="CloseCreateFolderDialog"
-                        class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 active:bg-gray-100 transition-colors">
-                    @T("common.cancel")
-                </button>
-                <button @onclick="CreateFolder"
-                        disabled="@(string.IsNullOrWhiteSpace(_newFolderName) || _isCreatingFolder)"
-                        class="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-                    @if (_isCreatingFolder)
-                    {
-                        <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
-                    }
-                    @T("codeAssistant.create")
-                </button>
+            <div class="p-6 pb-8">
+                <div class="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
+                <h3 class="text-lg font-bold text-gray-800 mb-4">@T("codeAssistant.createFolder")</h3>
+                <input @bind="_newFolderName"
+                       @bind:event="oninput"
+                       type="text"
+                       placeholder="@T("codeAssistant.folderNamePlaceholder")"
+                       class="w-full px-4 py-3 bg-gray-100 border-0 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6" />
+                <div class="flex gap-3">
+                    <button @onclick="CloseCreateFolderDialog"
+                            class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                        @T("common.cancel")
+                    </button>
+                    <button @onclick="CreateFolder"
+                            disabled="@(string.IsNullOrWhiteSpace(_newFolderName) || _isCreatingFolder)"
+                            class="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                        @if (_isCreatingFolder)
+                        {
+                            <div class="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div>
+                        }
+                        @T("codeAssistant.create")
+                    </button>
+                </div>
             </div>
         </div>
     </div>
