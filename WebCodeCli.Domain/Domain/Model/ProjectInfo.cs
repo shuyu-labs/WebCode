@@ -113,6 +113,17 @@ public class CreateProjectRequest
 }
 
 /// <summary>
+/// 从 ZIP 压缩包创建项目请求
+/// </summary>
+public class CreateProjectFromZipRequest
+{
+    /// <summary>
+    /// 项目名称
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// 更新项目请求
 /// </summary>
 public class UpdateProjectRequest

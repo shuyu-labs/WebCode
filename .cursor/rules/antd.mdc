@@ -34,6 +34,7 @@ alwaysApply: false
 - 确保建议符合Blazor的最佳实践
 - 考虑界面的可维护性、可扩展性和重用性
 - 在保持功能完整的同时，追求简洁高效的实现
+- 多语言需要修改Resource\Localization目录而不是wwwroot目录，请注意确保4个语言都同步修改
 </additional_guidance>
 
 

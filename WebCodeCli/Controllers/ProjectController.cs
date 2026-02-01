@@ -94,6 +94,59 @@ public class ProjectController : ControllerBase
     }
 
     /// <summary>
+    /// 从 ZIP 压缩包创建项目
+    /// </summary>
+    [HttpPost("upload-zip")]
+    [RequestSizeLimit(100_000_000)] // 100MB 限制
+    public async Task<ActionResult<ProjectInfo>> CreateProjectFromZip([FromForm] string name, IFormFile zipFile)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return BadRequest(new { Error = "项目名称不能为空" });
+            }
+            
+            if (zipFile == null || zipFile.Length == 0)
+            {
+                return BadRequest(new { Error = "请选择 ZIP 文件" });
+            }
+            
+            // 验证文件扩展名
+            var extension = Path.GetExtension(zipFile.FileName)?.ToLowerInvariant();
+            if (extension != ".zip")
+            {
+                return BadRequest(new { Error = "请选择有效的 ZIP 文件" });
+            }
+            
+            // 验证文件大小（100MB）
+            if (zipFile.Length > 100_000_000)
+            {
+                return BadRequest(new { Error = "文件过大，最大支持 100MB" });
+            }
+            
+            // 读取文件内容
+            using var memoryStream = new MemoryStream();
+            await zipFile.CopyToAsync(memoryStream);
+            var zipContent = memoryStream.ToArray();
+            
+            var (project, errorMessage) = await _projectService.CreateProjectFromZipAsync(name, zipContent);
+            
+            if (project == null)
+            {
+                return BadRequest(new { Error = errorMessage ?? "创建项目失败" });
+            }
+            
+            return Ok(project);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "从 ZIP 创建项目失败");
+            return StatusCode(500, new { Error = "创建项目失败" });
+        }
+    }
+
+    /// <summary>
     /// 更新项目
     /// </summary>
     [HttpPut("{projectId}")]

@@ -1,5 +1,7 @@
 @namespace WebCodeCli.Components
 @using System.Text.Json
+@using System.Net.Http.Headers
+@using Microsoft.AspNetCore.Components.Forms
 @using WebCodeCli.Domain.Domain.Model
 @using WebCodeCli.Domain.Domain.Service
 @inject HttpClient Http
@@ -96,14 +98,29 @@
                                                     {
                                                         <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">@T("project.status.pending")</span>
                                                     }
+                                                    <!-- 来源标签 -->
+                                                    @if (IsZipProject(project))
+                                                    {
+                                                        <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">@T("project.localProject")</span>
+                                                    }
                                                     <span class="text-sm font-semibold text-gray-800 truncate">@project.Name</span>
                                                 </div>
-                                                <p class="text-xs text-gray-500 truncate mb-1">@project.GitUrl</p>
+                                                @if (!IsZipProject(project))
+                                                {
+                                                    <p class="text-xs text-gray-500 truncate mb-1">@project.GitUrl</p>
+                                                }
                                                 <div class="flex items-center gap-3 text-xs text-gray-400">
-                                                    <span>@T("project.branch"): @project.Branch</span>
+                                                    @if (!IsZipProject(project))
+                                                    {
+                                                        <span>@T("project.branch"): @project.Branch</span>
+                                                    }
                                                     @if (project.LastSyncAt.HasValue)
                                                     {
                                                         <span>@T("project.lastSync"): @project.LastSyncAt.Value.ToString("MM-dd HH:mm")</span>
+                                                    }
+                                                    @if (IsZipProject(project))
+                                                    {
+                                                        <span>@T("project.sourceZip")</span>
                                                     }
                                                 </div>
                                                 @if (!string.IsNullOrEmpty(project.ErrorMessage))
@@ -112,7 +129,7 @@
                                                 }
                                             </div>
                                             <div class="flex items-center gap-1 ml-2">
-                                                @if (project.Status == "pending" || project.Status == "error")
+                                                @if (!IsZipProject(project) && (project.Status == "pending" || project.Status == "error"))
                                                 {
                                                     <button @onclick="() => CloneProject(project.ProjectId)"
                                                             disabled="@(_cloningProjectId == project.ProjectId)"
@@ -130,7 +147,7 @@
                                                         }
                                                     </button>
                                                 }
-                                                else if (project.Status == "ready")
+                                                else if (!IsZipProject(project) && project.Status == "ready")
                                                 {
                                                     <button @onclick="() => PullProject(project.ProjectId)"
                                                             disabled="@(_pullingProjectId == project.ProjectId)"
@@ -148,13 +165,16 @@
                                                         }
                                                     </button>
                                                 }
-                                                <button @onclick="() => ShowEditDialog(project)"
-                                                        class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                                                        title="@T("common.edit")">
-                                                    <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                                                    </svg>
-                                                </button>
+                                                @if (!IsZipProject(project))
+                                                {
+                                                    <button @onclick="() => ShowEditDialog(project)"
+                                                            class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                                                            title="@T("common.edit")">
+                                                        <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                                        </svg>
+                                                    </button>
+                                                }
                                                 <button @onclick="() => DeleteProject(project.ProjectId)"
                                                         class="p-2 hover:bg-red-100 rounded-lg transition-colors"
                                                         title="@T("common.delete")">
@@ -173,19 +193,46 @@
                     {
                         <!-- 创建/编辑项目表单 -->
                         <div class="space-y-4">
-                            <!-- 项目名称 -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">
-                                                @T("project.name") <span class="text-red-500">*</span>
-                                </label>
-                                <input type="text"
-                                       @bind="_formName"
-                                                    placeholder="@T("project.namePlaceholder")"
-                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
-                                       disabled="@_isSaving" />
-                            </div>
+                            @if (_editingProject == null)
+                            {
+                                <!-- 项目来源切换（仅新建时显示） -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">@T("project.sourceType")</label>
+                                    <div class="flex gap-2">
+                                        <button @onclick='() => _sourceType = "git"'
+                                                class="flex-1 py-2 px-4 rounded-lg border-2 transition-colors flex items-center justify-center gap-2 @(_sourceType == "git" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-300 hover:border-gray-400")">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                                            </svg>
+                                            @T("project.sourceGit")
+                                        </button>
+                                        <button @onclick='() => _sourceType = "zip"'
+                                                class="flex-1 py-2 px-4 rounded-lg border-2 transition-colors flex items-center justify-center gap-2 @(_sourceType == "zip" ? "border-gray-900 bg-gray-900 text-white" : "border-gray-300 hover:border-gray-400")">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                                            </svg>
+                                            @T("project.sourceZip")
+                                        </button>
+                                    </div>
+                                </div>
+                            }
 
-                            <!-- Git 仓库地址 -->
+                            @if (_sourceType == "git" || _editingProject != null)
+                            {
+                                <!-- Git 项目表单 -->
+                                <!-- 项目名称 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        @T("project.name") <span class="text-red-500">*</span>
+                                    </label>
+                                    <input type="text"
+                                           @bind="_formName"
+                                           placeholder="@T("project.namePlaceholder")"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+                                           disabled="@_isSaving" />
+                                </div>
+
+                                <!-- Git 仓库地址 -->
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">
                                                 @T("project.gitUrl") <span class="text-red-500">*</span>
@@ -324,39 +371,131 @@
                             </div>
 
                             <!-- 错误提示 -->
-                            @if (!string.IsNullOrEmpty(_formError))
-                            {
-                                <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
-                                    @_formError
+                                @if (!string.IsNullOrEmpty(_formError))
+                                {
+                                    <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                                        @_formError
+                                    </div>
+                                }
+
+                                <!-- 提交按钮 -->
+                                <div class="flex gap-3">
+                                    @if (_editingProject != null)
+                                    {
+                                        <button @onclick="CancelEdit"
+                                                class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                            @T("common.cancel")
+                                        </button>
+                                    }
+                                    <button @onclick="SaveProject"
+                                            disabled="@(_isSaving || string.IsNullOrWhiteSpace(_formName) || string.IsNullOrWhiteSpace(_formGitUrl))"
+                                            class="flex-1 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                                        @if (_isSaving)
+                                        {
+                                            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                            <span>@T("project.saving")</span>
+                                        }
+                                        else
+                                        {
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                            </svg>
+                                            <span>@(_editingProject != null ? T("project.saveChanges") : T("project.create"))</span>
+                                        }
+                                    </button>
                                 </div>
                             }
+                            else
+                            {
+                                <!-- ZIP 上传表单 -->
+                                <!-- 项目名称 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        @T("project.name") <span class="text-red-500">*</span>
+                                    </label>
+                                    <input type="text"
+                                           @bind="_zipFormName"
+                                           placeholder="@T("project.namePlaceholder")"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+                                           disabled="@_isUploadingZip" />
+                                </div>
 
-                            <!-- 提交按钮 -->
-                            <div class="flex gap-3">
-                                @if (_editingProject != null)
+                                <!-- ZIP 文件选择 -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        @T("project.selectZipFile") <span class="text-red-500">*</span>
+                                    </label>
+                                    <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                                        <InputFile OnChange="OnZipFileSelected" 
+                                                   accept=".zip" 
+                                                   disabled="@_isUploadingZip"
+                                                   class="hidden" 
+                                                   id="zip-file-input" />
+                                        <label for="zip-file-input" class="cursor-pointer">
+                                            @if (_selectedZipFile != null)
+                                            {
+                                                <div class="flex items-center justify-center gap-2 text-gray-700">
+                                                    <svg class="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                    </svg>
+                                                    <div class="text-left">
+                                                        <p class="font-medium">@_selectedZipFile.Name</p>
+                                                        <p class="text-xs text-gray-500">@FormatFileSize(_selectedZipFile.Size)</p>
+                                                    </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <svg class="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                                                </svg>
+                                                <p class="text-gray-600">@T("project.selectZipFile")</p>
+                                                <p class="text-xs text-gray-400 mt-1">@T("project.fileTooLarge")</p>
+                                            }
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- 上传进度 -->
+                                @if (_isUploadingZip)
                                 {
-                                    <button @onclick="CancelEdit"
-                                            class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                                        @T("common.cancel")
-                                    </button>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center justify-between text-sm">
+                                            <span class="text-gray-600">@T("project.uploading")</span>
+                                            <span class="text-gray-900 font-medium">@_uploadProgress%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-gray-900 h-2 rounded-full transition-all duration-300" style="width: @(_uploadProgress)%"></div>
+                                        </div>
+                                    </div>
                                 }
-                                <button @onclick="SaveProject"
-                                        disabled="@(_isSaving || string.IsNullOrWhiteSpace(_formName) || string.IsNullOrWhiteSpace(_formGitUrl))"
-                                        class="flex-1 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
-                                    @if (_isSaving)
+
+                                <!-- 错误提示 -->
+                                @if (!string.IsNullOrEmpty(_zipFormError))
+                                {
+                                    <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                                        @_zipFormError
+                                    </div>
+                                }
+
+                                <!-- 上传按钮 -->
+                                <button @onclick="UploadZipProject"
+                                        disabled="@(_isUploadingZip || string.IsNullOrWhiteSpace(_zipFormName) || _selectedZipFile == null)"
+                                        class="w-full py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                                    @if (_isUploadingZip)
                                     {
                                         <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                        <span>@T("project.saving")</span>
+                                        <span>@T("project.uploading")</span>
                                     }
                                     else
                                     {
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                                         </svg>
-                                        <span>@(_editingProject != null ? T("project.saveChanges") : T("project.create"))</span>
+                                        <span>@T("project.uploadZip")</span>
                                     }
                                 </button>
-                            </div>
+                            }
                         </div>
                     }
                 </div>
@@ -397,6 +536,16 @@
     
     // 认证方式选择组件引用
     private MobileSelect<string>? _authTypeSelect;
+    
+    // 项目来源类型：git 或 zip
+    private string _sourceType = "git";
+    
+    // ZIP 上传相关
+    private IBrowserFile? _selectedZipFile = null;
+    private string _zipFormName = string.Empty;
+    private string _zipFormError = string.Empty;
+    private bool _isUploadingZip = false;
+    private int _uploadProgress = 0;
 
     // 本地化相关
     private Dictionary<string, string> _translations = new();
@@ -810,6 +959,146 @@
         _formError = string.Empty;
         _availableBranches.Clear();
         _authTypeSelect?.CloseDropdown();
+        
+        // 重置 ZIP 上传表单
+        _sourceType = "git";
+        _selectedZipFile = null;
+        _zipFormName = string.Empty;
+        _zipFormError = string.Empty;
+        _isUploadingZip = false;
+        _uploadProgress = 0;
+    }
+
+    /// <summary>
+    /// 判断是否为 ZIP 上传的项目（无 Git URL）
+    /// </summary>
+    private static bool IsZipProject(ProjectInfo project)
+    {
+        return string.IsNullOrEmpty(project.GitUrl);
+    }
+
+    /// <summary>
+    /// ZIP 文件选择事件
+    /// </summary>
+    private void OnZipFileSelected(InputFileChangeEventArgs e)
+    {
+        _zipFormError = string.Empty;
+        var file = e.File;
+        
+        // 验证文件类型
+        if (!file.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            _zipFormError = T("project.invalidZipFile");
+            _selectedZipFile = null;
+            return;
+        }
+        
+        // 验证文件大小（100MB）
+        if (file.Size > 100_000_000)
+        {
+            _zipFormError = T("project.fileTooLarge");
+            _selectedZipFile = null;
+            return;
+        }
+        
+        _selectedZipFile = file;
+        
+        // 自动填充项目名称（如果为空）
+        if (string.IsNullOrWhiteSpace(_zipFormName))
+        {
+            var fileName = Path.GetFileNameWithoutExtension(file.Name);
+            _zipFormName = fileName;
+        }
+        
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// 上传 ZIP 项目
+    /// </summary>
+    private async Task UploadZipProject()
+    {
+        if (string.IsNullOrWhiteSpace(_zipFormName))
+        {
+            _zipFormError = T("project.error.nameRequired");
+            return;
+        }
+        
+        if (_selectedZipFile == null)
+        {
+            _zipFormError = T("project.invalidZipFile");
+            return;
+        }
+        
+        try
+        {
+            _isUploadingZip = true;
+            _zipFormError = string.Empty;
+            _uploadProgress = 0;
+            StateHasChanged();
+            
+            // 读取文件内容
+            using var content = new MultipartFormDataContent();
+            
+            // 添加项目名称
+            content.Add(new StringContent(_zipFormName), "name");
+            
+            // 添加 ZIP 文件
+            var fileContent = new StreamContent(_selectedZipFile.OpenReadStream(maxAllowedSize: 100_000_000));
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+            content.Add(fileContent, "zipFile", _selectedZipFile.Name);
+            
+            _uploadProgress = 50; // 模拟进度
+            StateHasChanged();
+            
+            var response = await Http.PostAsync("/api/project/upload-zip", content);
+            
+            _uploadProgress = 90;
+            StateHasChanged();
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                _zipFormError = error?.Error ?? T("project.zipUploadFailed");
+                return;
+            }
+            
+            _uploadProgress = 100;
+            StateHasChanged();
+            
+            // 成功后刷新列表
+            await LoadProjects();
+            await OnProjectsChanged.InvokeAsync();
+            
+            // 切换到列表页
+            _activeTab = "list";
+            ResetForm();
+        }
+        catch (Exception ex)
+        {
+            _zipFormError = T("project.zipUploadFailed") + ": " + ex.Message;
+        }
+        finally
+        {
+            _isUploadingZip = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// 格式化文件大小
+    /// </summary>
+    private static string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
     }
 
     private class ErrorResponse

@@ -23,6 +23,13 @@ public interface IProjectService
     Task<(ProjectInfo? Project, string? ErrorMessage)> CreateProjectAsync(CreateProjectRequest request);
     
     /// <summary>
+    /// 从 ZIP 压缩包创建项目
+    /// </summary>
+    /// <param name="projectName">项目名称</param>
+    /// <param name="zipFileContent">ZIP 文件内容</param>
+    Task<(ProjectInfo? Project, string? ErrorMessage)> CreateProjectFromZipAsync(string projectName, byte[] zipFileContent);
+    
+    /// <summary>
     /// 更新项目配置
     /// </summary>
     Task<(bool Success, string? ErrorMessage)> UpdateProjectAsync(string projectId, UpdateProjectRequest request);
