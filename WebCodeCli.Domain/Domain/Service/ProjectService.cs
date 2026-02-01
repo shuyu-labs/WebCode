@@ -193,35 +193,29 @@ public class ProjectService : IProjectService
                 archive.ExtractToDirectory(tempPath);
             }
             
+            // 确保目标父目录存在
+            var parentDir = Path.GetDirectoryName(localPath);
+            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+            {
+                Directory.CreateDirectory(parentDir);
+            }
+            
             // 检查是否只有一个根目录，如果是则提升内容
             var rootItems = Directory.GetFileSystemEntries(tempPath);
+            string sourcePath;
             if (rootItems.Length == 1 && Directory.Exists(rootItems[0]))
             {
-                // 只有一个根目录，需要提升内容
-                var singleRootDir = rootItems[0];
-                
-                // 确保目标父目录存在
-                var parentDir = Path.GetDirectoryName(localPath);
-                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                {
-                    Directory.CreateDirectory(parentDir);
-                }
-                
-                // 移动单一根目录到目标路径
-                Directory.Move(singleRootDir, localPath);
+                // 只有一个根目录，使用它作为源目录
+                sourcePath = rootItems[0];
             }
             else
             {
-                // 多个文件/目录，直接移动整个临时目录
-                var parentDir = Path.GetDirectoryName(localPath);
-                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                {
-                    Directory.CreateDirectory(parentDir);
-                }
-                
-                Directory.Move(tempPath, localPath);
-                tempPath = string.Empty; // 已移动，不需要清理
+                // 多个文件/目录，使用整个临时目录作为源
+                sourcePath = tempPath;
             }
+            
+            // 使用复制代替移动（跨卷兼容）
+            await CopyDirectoryAsync(sourcePath, localPath, excludeGit: false);
             
             // 创建实体（ZIP 上传的项目 GitUrl 设为特殊标记）
             var entity = new ProjectEntity
