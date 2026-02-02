@@ -123,11 +123,11 @@ public partial class Setup : ComponentBase
         // OpenCode 默认环境变量
         _openCodeEnvVars = new List<EnvVarItem>
         {
+            new() { Key = "OPENCODE_CONFIG_CONTENT", Value = "" },
             new() { Key = "OPENCODE_AUTO_SHARE", Value = "" },
             new() { Key = "OPENCODE_GIT_BASH_PATH", Value = "" },
             new() { Key = "OPENCODE_CONFIG", Value = "" },
             new() { Key = "OPENCODE_CONFIG_DIR", Value = "" },
-            new() { Key = "OPENCODE_CONFIG_CONTENT", Value = "" },
             new() { Key = "OPENCODE_DISABLE_AUTOUPDATE", Value = "" },
             new() { Key = "OPENCODE_DISABLE_PRUNE", Value = "" },
             new() { Key = "OPENCODE_DISABLE_TERMINAL_TITLE", Value = "" },
