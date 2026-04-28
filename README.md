@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/xuzeyu91-webcode-badge.png)](https://mseep.ai/app/xuzeyu91-webcode)
+
 # WebCode
 
 <p align="center">
