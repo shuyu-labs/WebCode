@@ -190,6 +190,10 @@
     "notAvailable": "사용할 수 없음",
     "statusUnavailable": "어시스턴트 상태를 일시적으로 가져올 수 없습니다."
   },
+  "adminUserManagement": {
+    "title": "사용자 관리",
+    "subtitle": "계정, 도구 권한, 작업 공간 허용 목록 및 Feishu 봇 관리"
+  },
   "cliEvent": {
     "title": {
       "threadStarted": "스레드 시작",
@@ -413,6 +417,29 @@
     "quickActions": "빠른 작업",
     "viewDetails": "세부 정보 보기",
     "hideDetails": "세부 정보 숨기기"
+  },
+  "externalCliSessionImport": {
+    "menuTitle": "로컬 세션 가져오기",
+    "menuDescription": "OpenCode/Codex/Claude Code 세션을 찾아 가져오기",
+    "title": "로컬 CLI 세션 가져오기",
+    "description": "현재 Windows 계정이며 허용된 작업 공간 경로에 있는 세션만 표시합니다.",
+    "toolLabel": "도구",
+    "countLabel": "개수",
+    "allTools": "전체",
+    "reloading": "새로 고침 중...",
+    "reloadList": "목록 새로 고침",
+    "empty": "가져올 수 있는 세션을 찾지 못했습니다.",
+    "imported": "가져옴",
+    "workspace": "작업 공간",
+    "updatedAt": "최근 업데이트",
+    "open": "열기",
+    "importing": "가져오는 중...",
+    "import": "가져오기",
+    "currentUser": "사용자",
+    "usernameRequired": "사용자 이름이 비어 있어 세션을 찾을 수 없습니다.",
+    "discoverFailed": "세션을 찾지 못했습니다: {message}",
+    "importFailedRetry": "가져오기에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+    "importFailed": "가져오기에 실패했습니다: {message}"
   },
   "envConfig": {
     "title": "cc-switch status",

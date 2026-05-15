@@ -151,6 +151,10 @@
     "notAvailable": "Not available",
     "statusUnavailable": "Assistant status is temporarily unavailable."
   },
+  "adminUserManagement": {
+    "title": "User Management",
+    "subtitle": "Manage accounts, tool permissions, workspace allowlists, and Feishu bots"
+  },
   "cliEvent": {
     "title": {
       "threadStarted": "Session started",
@@ -376,6 +380,29 @@
     "quickActions": "Quick Actions",
     "viewDetails": "View Details",
     "hideDetails": "Hide Details"
+  },
+  "externalCliSessionImport": {
+    "menuTitle": "Import Local Sessions",
+    "menuDescription": "Discover and import OpenCode/Codex/Claude Code",
+    "title": "Import Local CLI Sessions",
+    "description": "Only sessions for the current Windows account and within allowed workspace paths are shown.",
+    "toolLabel": "Tool",
+    "countLabel": "Count",
+    "allTools": "All",
+    "reloading": "Refreshing...",
+    "reloadList": "Refresh List",
+    "empty": "No importable sessions were found.",
+    "imported": "Imported",
+    "workspace": "Workspace",
+    "updatedAt": "Updated",
+    "open": "Open",
+    "importing": "Importing...",
+    "import": "Import",
+    "currentUser": "User",
+    "usernameRequired": "Username is empty and sessions cannot be discovered.",
+    "discoverFailed": "Failed to discover sessions: {message}",
+    "importFailedRetry": "Import failed. Please try again later.",
+    "importFailed": "Import failed: {message}"
   },
   "envConfig": {
     "title": "cc-switch status",

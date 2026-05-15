@@ -70,14 +70,18 @@ Common/
   CliToolsOption.cs
   DBConnectionOption.cs
   FeishuOptions.cs
+  FeishuReplyTtsOptions.cs
   OpenAIOption.cs
 Domain/
  Exceptions/QuotaExceededException.cs
  Model/Channels/
   FeishuCommand.cs
   FeishuCommandCategory.cs
+  FeishuCompletedReplyTtsRequest.cs
   FeishuHelpCardAction.cs
   FeishuIncomingMessage.cs
+  FeishuReplyTtsHealthStatus.cs
+  FeishuReplyTtsVoiceOption.cs
   FeishuStreamingCardChrome.cs
   FeishuStreamingHandle.cs
   RawJsonCard.cs
@@ -92,11 +96,13 @@ Domain/
   ContextManagement.cs
   DevServerInfo.cs
   ExternalCliHistoryMessage.cs
+  ExternalCliHistoryResult.cs
   ExternalCliSessionSummary.cs
   FileChangeEvent.cs
   FrontendProjectInfo.cs
   GitCommit.cs
   GitModels.cs
+  GoalQuickActionDefaults.cs
   LowInterruptionContinueDefaults.cs
   OutputPanelState.cs
   PageList.cs
@@ -121,6 +127,9 @@ Domain/
   AuthenticationService.cs
   CcSwitchModels.cs
   Channels/
+   AudioTranscodeService.cs
+   ExternalProcessRunner.cs
+   FeishuAudioMessageService.cs
    FeishuCardActionHandler.cs
    FeishuCardActionService.cs
    FeishuCardKitClient.cs
@@ -130,11 +139,30 @@ Domain/
    FeishuMessageHandler.cs
    FeishuPluginPathHelper.cs
    FeishuPromptNormalizer.cs
+   FeishuReplyTtsPlatformService.cs
    FeishuStreamingLaunchStateResolver.cs
    FeishuStreamingTopChipLayout.cs
+   GoalQuickActionCardHelper.cs
+   IAudioTranscodeService.cs
+   IExternalProcessRunner.cs
+   IFeishuAudioMessageService.cs
    IFeishuCardKitClient.cs
    IFeishuChannelService.cs
+   IFeishuReplyTtsPlatformService.cs
+   IReplyTtsEnablementService.cs
+   IReplyTtsLocalServiceManager.cs
+   IReplyTtsOrchestrator.cs
+   ISherpaKokoroTtsClient.cs
    LowInterruptionContinueHelper.cs
+   ReplyTtsChunker.cs
+   ReplyTtsEnablementService.cs
+   ReplyTtsFfmpegPathResolver.cs
+   ReplyTtsLocalServiceManager.cs
+   ReplyTtsOrchestrator.cs
+   ReplyTtsSpeechTextNormalizer.cs
+   ReplyTtsStartupHostedService.cs
+   ReplyTtsStorageRootResolver.cs
+   SherpaKokoroTtsClient.cs
    SuperpowersQuickActionCardHelper.cs
   ChatSessionService.cs
   CliExecutorService.cs
@@ -144,6 +172,7 @@ Domain/
   CommandScannerService.cs
   ContextManagerService.cs
   DevServerManager.cs
+  ExternalCliHistoryTextBuilder.cs
   ExternalCliSessionHistoryService.cs
   ExternalCliSessionService.cs
   FeishuBindingUsernameValidationHelper.cs
@@ -153,6 +182,8 @@ Domain/
   FileSearchService.cs
   FrontendProjectDetector.cs
   GitService.cs
+  GoalCapabilityService.cs
+  GoalPromptBuilder.cs
   HostedServiceRuntimeMonitorPolicy.cs
   IAuthenticationService.cs
   IChatSessionService.cs
@@ -221,6 +252,7 @@ obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
  WebCodeCli.Domain.AssemblyInfo.cs
  WebCodeCli.Domain.GlobalUsings.g.cs
+Properties/AssemblyInfo.cs
 Repositories/Base/ChatSession/
  ChatMessageEntity.cs
  ChatMessageRepository.cs

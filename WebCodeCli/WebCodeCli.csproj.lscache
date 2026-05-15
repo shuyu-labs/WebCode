@@ -78,10 +78,12 @@ Domain/Domain/
  Service/SkillService.cs
 Helpers/
  AdminUserManagementFormHelper.cs
+ AdminUserManagementReplyTtsUiState.cs
  AssistantCatalogHelper.cs
  DataProtectionServiceCollectionExtensions.cs
  FileIconHelper.cs
  LowInterruptionContinueHelper.cs
+ SqliteConnectionStringResolver.cs
  SuperpowersQuickActionHelper.cs
  WebRootPathResolver.cs
 Models/WorkspaceDtos.cs
@@ -95,6 +97,7 @@ obj/Debug/net10.0/
 Pages/
  CodeAssistant.razor.cs
  CodeAssistantMobile.razor.cs
+ GoalQuickActionSubmissionHelper.cs
  Login.razor.cs
  Setup.razor.cs
  SuperpowersQuickActionSubmissionHelper.cs

@@ -190,6 +190,10 @@
     "notAvailable": "利用不可",
     "statusUnavailable": "アシスタント状態を一時的に取得できません。"
   },
+  "adminUserManagement": {
+    "title": "ユーザー管理",
+    "subtitle": "アカウント、ツール権限、ワークスペース許可リスト、Feishu ボットを管理"
+  },
   "cliEvent": {
     "title": {
       "threadStarted": "スレッド開始",
@@ -413,6 +417,29 @@
     "quickActions": "クイックアクション",
     "viewDetails": "詳細を表示",
     "hideDetails": "詳細を非表示"
+  },
+  "externalCliSessionImport": {
+    "menuTitle": "ローカルセッションをインポート",
+    "menuDescription": "OpenCode/Codex/Claude Code を検出してインポート",
+    "title": "ローカル CLI セッションをインポート",
+    "description": "現在の Windows アカウントで、許可されたワークスペース配下のセッションのみ表示します。",
+    "toolLabel": "ツール",
+    "countLabel": "件数",
+    "allTools": "すべて",
+    "reloading": "更新中...",
+    "reloadList": "一覧を更新",
+    "empty": "インポート可能なセッションは見つかりませんでした。",
+    "imported": "インポート済み",
+    "workspace": "ワークスペース",
+    "updatedAt": "最終更新",
+    "open": "開く",
+    "importing": "インポート中...",
+    "import": "インポート",
+    "currentUser": "ユーザー",
+    "usernameRequired": "ユーザー名が空のため、セッションを検出できません。",
+    "discoverFailed": "セッションの検出に失敗しました: {message}",
+    "importFailedRetry": "インポートに失敗しました。しばらくしてから再試行してください。",
+    "importFailed": "インポートに失敗しました: {message}"
   },
   "envConfig": {
     "title": "cc-switch status",

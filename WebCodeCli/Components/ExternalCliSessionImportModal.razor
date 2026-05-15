@@ -1,6 +1,8 @@
+@using System.Text.Json
 @using WebCodeCli.Domain.Domain.Model
 @using WebCodeCli.Domain.Domain.Service
 @inject IExternalCliSessionService ExternalCliSessionService
+@inject ILocalizationService L
 
 <div class="external-cli-session-import-modal">
     @if (_isVisible)
@@ -18,15 +20,15 @@
                             </svg>
                         </div>
                         <div class="min-w-0">
-                            <h3 class="text-lg font-bold text-gray-800 truncate">导入本地 CLI 会话</h3>
+                            <h3 class="text-lg font-bold text-gray-800 truncate">@T("externalCliSessionImport.title")</h3>
                             <p class="text-xs text-gray-500 truncate">
-                                仅显示当前 Windows 账户下、且工作区在允许目录内的会话。
+                                @T("externalCliSessionImport.description")
                             </p>
                         </div>
                     </div>
                     <button @onclick="Close"
                             class="text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg p-2 transition-all"
-                            title="关闭">
+                            title="@T("common.close")">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                   d="M6 18L18 6M6 6l12 12"></path>
@@ -37,10 +39,10 @@
                 <div class="flex-1 overflow-y-auto p-6 space-y-4">
                     <div class="flex flex-col md:flex-row md:items-center gap-3">
                         <div class="flex items-center gap-2">
-                            <span class="text-sm font-medium text-gray-700">工具</span>
+                            <span class="text-sm font-medium text-gray-700">@T("externalCliSessionImport.toolLabel")</span>
                             <select class="px-3 py-2 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-1 focus:ring-gray-500"
                                     @bind="_toolFilter">
-                                <option value="">全部</option>
+                                <option value="">@T("externalCliSessionImport.allTools")</option>
                                 <option value="opencode">OpenCode</option>
                                 <option value="codex">Codex</option>
                                 <option value="claude-code">Claude Code</option>
@@ -48,7 +50,7 @@
                         </div>
 
                         <div class="flex items-center gap-2">
-                            <span class="text-sm font-medium text-gray-700">数量</span>
+                            <span class="text-sm font-medium text-gray-700">@T("externalCliSessionImport.countLabel")</span>
                             <input type="number"
                                    class="w-24 px-3 py-2 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-1 focus:ring-gray-500"
                                    min="5" max="1000" step="5"
@@ -64,12 +66,12 @@
                             {
                                 <div class="flex items-center gap-2">
                                     <div class="animate-spin h-4 w-4 border-2 border-gray-700 rounded-full border-t-transparent"></div>
-                                    <span>刷新中...</span>
+                                    <span>@T("externalCliSessionImport.reloading")</span>
                                 </div>
                             }
                             else
                             {
-                                <span>刷新列表</span>
+                                <span>@T("externalCliSessionImport.reloadList")</span>
                             }
                         </button>
                     </div>
@@ -90,7 +92,7 @@
                     else if (_sessions.Count == 0)
                     {
                         <div class="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-600">
-                            未发现可导入的会话。
+                            @T("externalCliSessionImport.empty")
                         </div>
                     }
                     else
@@ -111,7 +113,7 @@
                                                 @if (item.AlreadyImported && !string.IsNullOrWhiteSpace(item.ImportedSessionId))
                                                 {
                                                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                                                        已导入
+                                                        @T("externalCliSessionImport.imported")
                                                     </span>
                                                 }
                                             </div>
@@ -120,13 +122,9 @@
                                                 @(!string.IsNullOrWhiteSpace(item.Title) ? item.Title : item.CliThreadId)
                                             </div>
 
-                                            <div class="mt-1 text-xs text-gray-500 break-all">
-                                                工作区: @item.WorkspacePath
-                                            </div>
+                                            <div class="mt-1 text-xs text-gray-500 break-all">@(T("externalCliSessionImport.workspace") + ": " + item.WorkspacePath)</div>
 
-                                            <div class="mt-1 text-xs text-gray-400">
-                                                最近更新: @FormatDateTime(item.UpdatedAt)
-                                            </div>
+                                            <div class="mt-1 text-xs text-gray-400">@(T("externalCliSessionImport.updatedAt") + ": " + FormatDateTime(item.UpdatedAt))</div>
                                         </div>
 
                                         <div class="flex gap-2 md:flex-col md:items-stretch">
@@ -134,7 +132,7 @@
                                             {
                                                 <button class="btn-primary"
                                                         @onclick="() => OpenImportedSessionAsync(item.ImportedSessionId!)">
-                                                    打开
+                                                    @T("externalCliSessionImport.open")
                                                 </button>
                                             }
                                             else
@@ -144,11 +142,11 @@
                                                         @onclick="() => ImportAsync(item)">
                                                     @if (isImporting)
                                                     {
-                                                        <span>导入中...</span>
+                                                        <span>@T("externalCliSessionImport.importing")</span>
                                                     }
                                                     else
                                                     {
-                                                        <span>导入</span>
+                                                        <span>@T("externalCliSessionImport.import")</span>
                                                     }
                                                 </button>
                                             }
@@ -156,7 +154,7 @@
                                             <button class="btn-default"
                                                     disabled="@_isLoading"
                                                     @onclick="ReloadAsync">
-                                                刷新
+                                                @T("common.refresh")
                                             </button>
                                         </div>
                                     </div>
@@ -167,10 +165,8 @@
                 </div>
 
                 <div class="flex items-center justify-between p-6 border-t border-gray-300 bg-gray-50 rounded-b-2xl">
-                    <div class="text-xs text-gray-500">
-                        用户: @_username
-                    </div>
-                    <button class="btn-default" @onclick="Close">关闭</button>
+                    <div class="text-xs text-gray-500">@(T("externalCliSessionImport.currentUser") + ": " + _username)</div>
+                    <button class="btn-default" @onclick="Close">@T("common.close")</button>
                 </div>
             </div>
         </div>
@@ -190,9 +186,19 @@
     private string? _errorMessage;
     private List<ExternalCliSessionSummary> _sessions = new();
     private HashSet<string> _importingKeys = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _translations = new();
+    private string _currentLanguage = "zh-CN";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentLanguage = await L.GetCurrentLanguageAsync();
+        await LoadTranslationsAsync();
+    }
 
     public async Task ShowAsync(string username)
     {
+        _currentLanguage = await L.GetCurrentLanguageAsync();
+        await LoadTranslationsAsync();
         _username = username?.Trim() ?? string.Empty;
         _toolFilter = string.Empty;
         _maxCount = 20;
@@ -221,7 +227,7 @@
     {
         if (string.IsNullOrWhiteSpace(_username))
         {
-            _errorMessage = "用户名为空，无法发现会话。";
+            _errorMessage = T("externalCliSessionImport.usernameRequired");
             StateHasChanged();
             return;
         }
@@ -238,7 +244,7 @@
         }
         catch (Exception ex)
         {
-            _errorMessage = $"发现会话失败: {ex.Message}";
+            _errorMessage = T("externalCliSessionImport.discoverFailed", ("message", ex.Message));
             _sessions = new List<ExternalCliSessionSummary>();
         }
         finally
@@ -278,7 +284,7 @@
             var result = await ExternalCliSessionService.ImportAsync(_username, request);
             if (!result.Success)
             {
-                _errorMessage = result.ErrorMessage ?? "导入失败，请稍后重试。";
+                _errorMessage = result.ErrorMessage ?? T("externalCliSessionImport.importFailedRetry");
                 return;
             }
 
@@ -292,7 +298,7 @@
         }
         catch (Exception ex)
         {
-            _errorMessage = $"导入失败: {ex.Message}";
+            _errorMessage = T("externalCliSessionImport.importFailed", ("message", ex.Message));
         }
         finally
         {
@@ -320,5 +326,75 @@
         }
 
         return time.Value.ToString("yyyy-MM-dd HH:mm");
+    }
+
+    private async Task LoadTranslationsAsync()
+    {
+        try
+        {
+            _translations = FlattenTranslations(await L.GetAllTranslationsAsync(_currentLanguage));
+        }
+        catch
+        {
+            _translations = new Dictionary<string, string>();
+        }
+    }
+
+    private static Dictionary<string, string> FlattenTranslations(Dictionary<string, object> source, string prefix = "")
+    {
+        var result = new Dictionary<string, string>();
+
+        foreach (var kvp in source)
+        {
+            var key = string.IsNullOrEmpty(prefix) ? kvp.Key : $"{prefix}.{kvp.Key}";
+
+            if (kvp.Value is JsonElement jsonElement)
+            {
+                if (jsonElement.ValueKind == JsonValueKind.Object)
+                {
+                    var nested = JsonSerializer.Deserialize<Dictionary<string, object>>(jsonElement.GetRawText());
+                    if (nested != null)
+                    {
+                        foreach (var item in FlattenTranslations(nested, key))
+                        {
+                            result[item.Key] = item.Value;
+                        }
+                    }
+                }
+                else if (jsonElement.ValueKind == JsonValueKind.String)
+                {
+                    result[key] = jsonElement.GetString() ?? key;
+                }
+            }
+            else if (kvp.Value is Dictionary<string, object> dict)
+            {
+                foreach (var item in FlattenTranslations(dict, key))
+                {
+                    result[item.Key] = item.Value;
+                }
+            }
+            else if (kvp.Value is string str)
+            {
+                result[key] = str;
+            }
+        }
+
+        return result;
+    }
+
+    private string T(string key)
+    {
+        return _translations.TryGetValue(key, out var translation) ? translation : key;
+    }
+
+    private string T(string key, params (string name, string value)[] parameters)
+    {
+        var text = T(key);
+        foreach (var (name, value) in parameters)
+        {
+            text = text.Replace($"{{{name}}}", value);
+        }
+
+        return text;
     }
 }

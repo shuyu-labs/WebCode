@@ -151,6 +151,10 @@
     "notAvailable": "不可用",
     "statusUnavailable": "暂时无法获取该助手的状态。"
   },
+  "adminUserManagement": {
+    "title": "用户管理",
+    "subtitle": "管理账号、工具权限、目录白名单和飞书机器人"
+  },
   "cliEvent": {
     "title": {
       "threadStarted": "会话已启动",
@@ -376,6 +380,29 @@
     "quickActions": "快捷操作",
     "viewDetails": "查看详情",
     "hideDetails": "收起详情"
+  },
+  "externalCliSessionImport": {
+    "menuTitle": "导入本地会话",
+    "menuDescription": "发现并导入 OpenCode/Codex/Claude Code",
+    "title": "导入本地 CLI 会话",
+    "description": "仅显示当前 Windows 账户下、且工作区在允许目录内的会话。",
+    "toolLabel": "工具",
+    "countLabel": "数量",
+    "allTools": "全部",
+    "reloading": "刷新中...",
+    "reloadList": "刷新列表",
+    "empty": "未发现可导入的会话。",
+    "imported": "已导入",
+    "workspace": "工作区",
+    "updatedAt": "最近更新",
+    "open": "打开",
+    "importing": "导入中...",
+    "import": "导入",
+    "currentUser": "用户",
+    "usernameRequired": "用户名为空，无法发现会话。",
+    "discoverFailed": "发现会话失败: {message}",
+    "importFailedRetry": "导入失败，请稍后重试。",
+    "importFailed": "导入失败: {message}"
   },
   "envConfig": {
     "title": "cc-switch 状态",
