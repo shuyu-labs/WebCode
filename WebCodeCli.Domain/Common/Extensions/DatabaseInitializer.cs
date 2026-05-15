@@ -189,6 +189,7 @@ public static class DatabaseInitializer
             
             // 创建聊天消息表
             db.CodeFirst.InitTables<ChatMessageEntity>();
+            db.CodeFirst.InitTables<ChatMessageAttachmentEntity>();
             
             // 创建会话输出状态表
             db.CodeFirst.InitTables<SessionOutputEntity>();
@@ -236,6 +237,8 @@ public static class DatabaseInitializer
             EnsureColumnIfNotExists(db, "ChatSession", "CcSwitchSnapshotRelativePath", "varchar(512) NULL", logger);
             EnsureColumnIfNotExists(db, "ChatSession", "CcSwitchSnapshotSyncedAt", "datetime NULL", logger);
             EnsureColumnIfNotExists(db, "ChatSession", "ToolLaunchOverridesJson", "TEXT NULL", logger);
+            EnsureColumnIfNotExists(db, "ChatMessage", "MessageId", "varchar(64) NOT NULL DEFAULT ''", logger);
+            BackfillLegacyChatMessageIds(db, logger);
             BackfillCliThreadIdsFromImportedTitles(db, logger);
         }
         catch (Exception ex)
@@ -301,6 +304,17 @@ public static class DatabaseInitializer
     /// <summary>
     /// 为聊天会话相关表创建索引
     /// </summary>
+    private static void BackfillLegacyChatMessageIds(SqlSugarScope db, ILogger? logger = null)
+    {
+        var rows = db.Ado.ExecuteCommand(
+            "UPDATE ChatMessage SET MessageId = 'legacy-msg-' || Id WHERE IFNULL(MessageId, '') = ''");
+
+        if (rows > 0)
+        {
+            logger?.LogInformation("Backfilled {Count} ChatMessage.MessageId values", rows);
+        }
+    }
+
     private static void InitializeChatSessionIndexes(SqlSugarScope db, ILogger? logger = null)
     {
         try
@@ -323,6 +337,12 @@ public static class DatabaseInitializer
             
             // ChatMessage: SessionId 索引（按会话查询消息）
             CreateIndexIfNotExists(db, "ChatMessage", "IX_ChatMessage_SessionId", 
+                new[] { "SessionId" }, logger);
+
+            CreateIndexIfNotExists(db, "ChatMessageAttachment", "IX_ChatMessageAttachment_MessageId",
+                new[] { "MessageId" }, logger);
+
+            CreateIndexIfNotExists(db, "ChatMessageAttachment", "IX_ChatMessageAttachment_SessionId",
                 new[] { "SessionId" }, logger);
             
             // ChatMessage: Username + SessionId 索引

@@ -18,6 +18,12 @@ public class ChatMessageEntity
     /// 关联的会话ID
     /// </summary>
     [SugarColumn(Length = 64, IsNullable = false)]
+    public string MessageId { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// 閫昏緫娑堟伅ID
+    /// </summary>
+    [SugarColumn(Length = 64, IsNullable = false)]
     public string SessionId { get; set; } = string.Empty;
     
     /// <summary>

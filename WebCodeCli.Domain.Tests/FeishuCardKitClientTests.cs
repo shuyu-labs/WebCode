@@ -78,6 +78,48 @@ public class FeishuCardKitClientTests
     }
 
     [Fact]
+    public async Task DownloadMessageResourceAsync_GetsBinaryBodyAndInfersFileName()
+    {
+        var imageBytes = new byte[] { 1, 2, 3, 4 };
+        var handler = new StubHttpMessageHandler(
+        [
+            CreateJsonResponse("""{"tenant_access_token":"token-123","expire":7200}"""),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(imageBytes)
+                {
+                    Headers =
+                    {
+                        ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png"),
+                        ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+                        {
+                            FileName = "\"screen.png\""
+                        }
+                    }
+                }
+            }
+        ]);
+
+        var client = CreateClient(handler);
+
+        var result = await client.DownloadMessageResourceAsync(
+            "om_message_123",
+            "img_v2_123",
+            "image",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(imageBytes, result.Content);
+        Assert.Equal("screen.png", result.FileName);
+        Assert.Equal("image/png", result.MimeType);
+        Assert.Equal(
+        [
+            "/open-apis/auth/v3/tenant_access_token/internal",
+            "/open-apis/im/v1/messages/om_message_123/resources/img_v2_123"
+        ], handler.RequestPaths);
+        Assert.Equal("type=image", handler.RequestQueries[1]);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_SendsTextPayload()
     {
         var handler = new StubHttpMessageHandler(
@@ -550,6 +592,149 @@ public class FeishuCardKitClientTests
     }
 
     [Fact]
+    public async Task CreateStreamingHandleAsync_RendersBottomActionsAcrossMultipleRows_WhenRowKeysDiffer()
+    {
+        var handler = new StubHttpMessageHandler(
+        [
+            CreateJsonResponse("""{"tenant_access_token":"token-123","expire":7200}"""),
+            CreateJsonResponse("""{"code":0,"data":{"card_id":"card_123"}}"""),
+            CreateJsonResponse("""{"code":0,"data":{"message_id":"om_stream_success"}}""")
+        ]);
+
+        var client = CreateClient(handler);
+        var chrome = new FeishuStreamingCardChrome
+        {
+            StatusMarkdown = "当前会话"
+        };
+        chrome.BottomActions.AddRange(
+        [
+            new FeishuStreamingCardBottomAction
+            {
+                Text = "/goal",
+                RowKey = "goal_row_1",
+                Value = new { action = "status_goal", session_id = "session-1" }
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = "/goal pause",
+                RowKey = "goal_row_1",
+                Value = new { action = "pause_goal", session_id = "session-1" }
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = "继续",
+                RowKey = "execution_control_row",
+                Value = new { action = "continue_superpowers", session_id = "session-1" }
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = "停止",
+                RowKey = "execution_control_row",
+                Value = new { action = "stop_streaming_execution", session_id = "session-1" }
+            }
+        ]);
+
+        await client.CreateStreamingHandleAsync(
+            "oc_stream_chat",
+            null,
+            "still have backlog",
+            "AI 助手",
+            TestContext.Current.CancellationToken,
+            chrome: chrome);
+
+        using var createDoc = JsonDocument.Parse(handler.RequestBodies[1]);
+        using var cardDoc = JsonDocument.Parse(createDoc.RootElement.GetProperty("data").GetString()!);
+        var elements = cardDoc.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.Equal("🟥🟥🟥 **Superpowers 工作流**", elements[3].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("column_set", elements[4].GetProperty("tag").GetString());
+        Assert.Equal("column_set", elements[5].GetProperty("tag").GetString());
+        Assert.Equal(2, elements[4].GetProperty("columns").GetArrayLength());
+        Assert.Equal(2, elements[5].GetProperty("columns").GetArrayLength());
+        Assert.Equal("/goal", elements[4].GetProperty("columns")[0].GetProperty("elements")[0].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("/goal pause", elements[4].GetProperty("columns")[1].GetProperty("elements")[0].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("继续", elements[5].GetProperty("columns")[0].GetProperty("elements")[0].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("停止", elements[5].GetProperty("columns")[1].GetProperty("elements")[0].GetProperty("text").GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task CreateStreamingHandleAsync_RendersLatestToolCallLineBelowReplyContent()
+    {
+        var handler = new StubHttpMessageHandler(
+        [
+            CreateJsonResponse("""{"tenant_access_token":"token-123","expire":7200}"""),
+            CreateJsonResponse("""{"code":0,"data":{"card_id":"card_123"}}"""),
+            CreateJsonResponse("""{"code":0,"data":{"message_id":"om_stream_success"}}""")
+        ]);
+
+        var client = CreateClient(handler);
+        var chrome = new FeishuStreamingCardChrome
+        {
+            StatusMarkdown = "当前会话",
+            LatestToolCallMarkdown = "**调用工具：** `Bash · git status --short`"
+        };
+
+        await client.CreateStreamingHandleAsync(
+            "oc_stream_chat",
+            null,
+            "assistant output",
+            "AI 助手",
+            TestContext.Current.CancellationToken,
+            chrome: chrome);
+
+        using var createDoc = JsonDocument.Parse(handler.RequestBodies[1]);
+        using var cardDoc = JsonDocument.Parse(createDoc.RootElement.GetProperty("data").GetString()!);
+        var elements = cardDoc.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.Equal("🟥🟥🟥 **回复内容**", elements[1].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("markdown", elements[2].GetProperty("tag").GetString());
+        Assert.Equal("assistant output", elements[2].GetProperty("content").GetString());
+        Assert.Equal("div", elements[3].GetProperty("tag").GetString());
+        Assert.Equal("**调用工具：** `Bash · git status --short`", elements[3].GetProperty("text").GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task CreateStreamingHandleAsync_RendersBottomNoticeAboveActions()
+    {
+        var handler = new StubHttpMessageHandler(
+        [
+            CreateJsonResponse("""{"tenant_access_token":"token-123","expire":7200}"""),
+            CreateJsonResponse("""{"code":0,"data":{"card_id":"card_123"}}"""),
+            CreateJsonResponse("""{"code":0,"data":{"message_id":"om_stream_success"}}""")
+        ]);
+
+        var client = CreateClient(handler);
+        var chrome = new FeishuStreamingCardChrome
+        {
+            StatusMarkdown = "当前会话"
+        };
+        chrome.BottomNoticeMarkdowns.Add("⚠️ 当前激活会话已经变化");
+        chrome.BottomActions.Add(new FeishuStreamingCardBottomAction
+        {
+            Text = "继续原会话",
+            Type = "default",
+            Value = new { action = "confirm_bound_superpowers_action", session_id = "session-1" }
+        });
+
+        await client.CreateStreamingHandleAsync(
+            "oc_stream_chat",
+            null,
+            "still have backlog",
+            "AI 助手",
+            TestContext.Current.CancellationToken,
+            chrome: chrome);
+
+        using var createDoc = JsonDocument.Parse(handler.RequestBodies[1]);
+        using var cardDoc = JsonDocument.Parse(createDoc.RootElement.GetProperty("data").GetString()!);
+        var elements = cardDoc.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.Equal("🟥🟥🟥 **Superpowers 工作流**", elements[3].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("div", elements[4].GetProperty("tag").GetString());
+        Assert.Equal("⚠️ 当前激活会话已经变化", elements[4].GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal("column_set", elements[5].GetProperty("tag").GetString());
+    }
+
+    [Fact]
     public async Task CreateStreamingHandleAsync_KeepsClientStreamingMode_WhenNoOverflowActionsExist()
     {
         var handler = new StubHttpMessageHandler(
@@ -651,9 +836,51 @@ public class FeishuCardKitClientTests
             operations);
     }
 
-    private static FeishuCardKitClient CreateClient(StubHttpMessageHandler handler)
+    [Fact]
+    public async Task CreateStreamingHandleAsync_RetriesTimedOutUpdateOnceWithSameSequenceAndUuid()
     {
-        var options = Options.Create(new FeishuOptions
+        var handler = new TimeoutOnFirstCardUpdateHandler();
+        var client = CreateClient(handler, new FeishuOptions
+        {
+            AppId = "app-id",
+            AppSecret = "app-secret",
+            HttpTimeoutSeconds = 1,
+            StreamingThrottleMs = 0
+        });
+
+        var handle = await client.CreateStreamingHandleAsync(
+            "oc_stream_chat",
+            null,
+            "initial",
+            "AI 助手",
+            TestContext.Current.CancellationToken);
+
+        await handle.UpdateAsync("first update");
+        await handle.UpdateAsync("second update");
+
+        Assert.False(handle.AreCardUpdatesStopped);
+        Assert.Equal(
+            3,
+            handler.RequestPaths.Count(path => string.Equals(path, "/open-apis/cardkit/v1/cards/card_123", StringComparison.Ordinal)));
+
+        var updateBodies = handler.RequestPaths
+            .Select((path, index) => new { path, body = handler.RequestBodies[index] })
+            .Where(entry => string.Equals(entry.path, "/open-apis/cardkit/v1/cards/card_123", StringComparison.Ordinal))
+            .Select(entry => JsonDocument.Parse(entry.body))
+            .ToArray();
+
+        Assert.Equal(1, updateBodies[0].RootElement.GetProperty("sequence").GetInt32());
+        Assert.Equal(1, updateBodies[1].RootElement.GetProperty("sequence").GetInt32());
+        Assert.Equal(2, updateBodies[2].RootElement.GetProperty("sequence").GetInt32());
+
+        var firstUuid = updateBodies[0].RootElement.GetProperty("uuid").GetString();
+        Assert.Equal(firstUuid, updateBodies[1].RootElement.GetProperty("uuid").GetString());
+        Assert.NotEqual(firstUuid, updateBodies[2].RootElement.GetProperty("uuid").GetString());
+    }
+
+    private static FeishuCardKitClient CreateClient(HttpMessageHandler handler, FeishuOptions? optionsOverride = null)
+    {
+        var options = Options.Create(optionsOverride ?? new FeishuOptions
         {
             AppId = "app-id",
             AppSecret = "app-secret",
@@ -684,12 +911,14 @@ public class FeishuCardKitClientTests
         private readonly Queue<HttpResponseMessage> _responses = new(responses);
 
         public List<string> RequestPaths { get; } = [];
+        public List<string> RequestQueries { get; } = [];
         public List<string> RequestBodies { get; } = [];
         public List<string?> RequestContentTypes { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestPaths.Add(request.RequestUri!.AbsolutePath);
+            RequestQueries.Add(request.RequestUri.Query.TrimStart('?'));
             RequestContentTypes.Add(request.Content?.Headers.ContentType?.MediaType);
             RequestBodies.Add(request.Content == null
                 ? string.Empty
@@ -701,6 +930,56 @@ public class FeishuCardKitClientTests
             }
 
             return _responses.Dequeue();
+        }
+    }
+
+    private sealed class TimeoutOnFirstCardUpdateHandler : HttpMessageHandler
+    {
+        private int _updateCount;
+
+        public List<string> RequestPaths { get; } = [];
+        public List<string> RequestBodies { get; } = [];
+        public List<string?> RequestContentTypes { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestPaths.Add(request.RequestUri!.AbsolutePath);
+            RequestContentTypes.Add(request.Content?.Headers.ContentType?.MediaType);
+            RequestBodies.Add(request.Content == null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken));
+
+            var path = request.RequestUri!.AbsolutePath;
+            if (string.Equals(path, "/open-apis/auth/v3/tenant_access_token/internal", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse("""{"tenant_access_token":"token-123","expire":7200}""");
+            }
+
+            if (request.Method == HttpMethod.Post &&
+                string.Equals(path, "/open-apis/cardkit/v1/cards", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse("""{"code":0,"data":{"card_id":"card_123"}}""");
+            }
+
+            if (request.Method == HttpMethod.Post &&
+                string.Equals(path, "/open-apis/im/v1/messages", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse("""{"code":0,"data":{"message_id":"om_stream_success"}}""");
+            }
+
+            if (request.Method == HttpMethod.Put &&
+                string.Equals(path, "/open-apis/cardkit/v1/cards/card_123", StringComparison.Ordinal))
+            {
+                _updateCount++;
+                if (_updateCount == 1)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1500), cancellationToken);
+                }
+
+                return CreateJsonResponse("""{"code":0}""");
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request sent to {request.RequestUri}.");
         }
     }
 }

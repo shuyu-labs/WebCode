@@ -18,6 +18,8 @@ public sealed class SuperpowersCapabilityServiceTests : IDisposable
     [Fact]
     public async Task ProbeAsync_ReturnsAvailable_WhenPluginManifestExistsRecursively()
     {
+        CreateAllCodexSkills(
+            Path.Combine(_userProfileRoot, ".codex", "plugins", "cache", "openai-curated", "superpowers", "3c463363", "skills"));
         CreatePluginManifest(
             Path.Combine(_userProfileRoot, ".codex", "plugins", "cache", "openai-curated", "superpowers", "3c463363", ".codex-plugin"));
 
@@ -34,6 +36,7 @@ public sealed class SuperpowersCapabilityServiceTests : IDisposable
         Assert.Equal(SuperpowersCapabilityProbeOutcome.Available, result.Outcome);
         Assert.True(result.HasSuperpowersPlugin);
         Assert.False(result.UsedSkillFallback);
+        Assert.True(File.Exists(Path.Combine(_workspaceRoot, ".codex", "skills", "using-superpowers", "SKILL.md")));
     }
 
     [Fact]
@@ -90,6 +93,8 @@ public sealed class SuperpowersCapabilityServiceTests : IDisposable
         var initial = await service.ProbeAsync(context);
         Assert.Equal(SuperpowersCapabilityState.Unavailable, initial.State);
 
+        CreateAllCodexSkills(
+            Path.Combine(_userProfileRoot, ".codex", "plugins", "cache", "openai-curated", "superpowers", "cache-hit", "skills"));
         CreatePluginManifest(
             Path.Combine(_userProfileRoot, ".codex", "plugins", "cache", "openai-curated", "superpowers", "cache-hit", ".codex-plugin"));
 
@@ -100,6 +105,7 @@ public sealed class SuperpowersCapabilityServiceTests : IDisposable
         var refreshed = await service.ProbeAsync(context, forceRefresh: true);
         Assert.False(refreshed.FromCache);
         Assert.Equal(SuperpowersCapabilityState.Available, refreshed.State);
+        Assert.True(File.Exists(Path.Combine(_workspaceRoot, ".codex", "skills", "using-superpowers", "SKILL.md")));
 
         var otherProviderState = await service.GetStateAsync(new SuperpowersCapabilityContext
         {

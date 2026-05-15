@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HooksListParams",
+  "type": "object",
+  "properties": {
+    "cwds": {
+      "description": "When empty, defaults to the current session working directory.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -52,6 +52,14 @@ public interface ICliExecutorService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 停止指定会话当前正在运行的 CLI 执行
+    /// </summary>
+    Task StopSessionExecutionAsync(
+        string sessionId,
+        string? toolId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 执行 CLI 命令并返回流式输出
     /// </summary>
     /// <param name="sessionId">会话ID,用于创建独立工作区</param>
@@ -63,7 +71,20 @@ public interface ICliExecutorService
         string sessionId,
         string toolId,
         string userPrompt,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default)
+        => ExecuteStreamAsync(
+            new CliExecutionRequest
+            {
+                SessionId = sessionId,
+                ToolId = toolId,
+                PromptText = userPrompt
+            },
+            cancellationToken);
+
+    IAsyncEnumerable<StreamOutputChunk> ExecuteStreamAsync(
+        CliExecutionRequest request,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Implement the request-based ExecuteStreamAsync overload.");
 
     /// <summary>
     /// 判断工具是否支持少打断执行

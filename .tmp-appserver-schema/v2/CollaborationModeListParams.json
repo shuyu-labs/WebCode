@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CollaborationModeListParams",
+  "description": "EXPERIMENTAL - list collaboration mode presets.",
+  "type": "object"
+}

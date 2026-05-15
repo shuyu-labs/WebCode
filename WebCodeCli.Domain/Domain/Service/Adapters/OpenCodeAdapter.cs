@@ -48,6 +48,9 @@ public class OpenCodeAdapter : ICliToolAdapter
 
     public bool SupportsStreamParsing => true;
 
+    public CliAttachmentCapabilities GetAttachmentCapabilities(CliToolConfig tool)
+        => CliAttachmentCapabilities.ReferenceOnly();
+
     public bool CanHandle(CliToolConfig tool)
     {
         if (tool == null) return false;
@@ -55,6 +58,11 @@ public class OpenCodeAdapter : ICliToolAdapter
         return SupportedToolIds.Any(id => 
             string.Equals(tool.Id, id, StringComparison.OrdinalIgnoreCase)) ||
                (tool.Command?.Contains("opencode", StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    public string BuildArguments(CliToolConfig tool, CliExecutionRequest request)
+    {
+        return BuildArguments(tool, request.BuildPromptText(), request.SessionContext);
     }
 
     public string BuildArguments(CliToolConfig tool, string prompt, CliSessionContext context)

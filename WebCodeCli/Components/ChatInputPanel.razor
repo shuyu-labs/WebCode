@@ -35,6 +35,52 @@
         </div>
     </div>
 
+    <div class="mb-3 flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-2 px-1">
+            <label class="text-[10px] sm:text-xs text-gray-600 font-medium">@MessageAttachmentsLabel</label>
+            <label class="btn-default flex items-center gap-1 sm:gap-1.5 h-9 sm:h-10 px-3 py-2 text-[11px] sm:text-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm hover:shadow-md transition-all flex-shrink-0"
+                   title="@AttachToMessageTitle">
+                @if (IsMessageAttachmentUploading)
+                {
+                    <div class="animate-spin h-3.5 w-3.5 border-2 border-gray-600 rounded-full border-t-transparent"></div>
+                }
+                else
+                {
+                    <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                    </svg>
+                }
+                <span>@AddAttachmentText</span>
+                <InputFile OnChange="OnMessageAttachmentUpload"
+                           disabled="@(IsLoading || IsMessageAttachmentUploading)"
+                           multiple
+                           class="hidden" />
+            </label>
+        </div>
+        @if (PendingMessageAttachments.Any())
+        {
+            <div class="flex flex-wrap gap-2">
+                @foreach (var attachment in PendingMessageAttachments)
+                {
+                    <div class="inline-flex max-w-full items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] sm:text-xs text-blue-900 shadow-sm"
+                         title="@attachment.FileName">
+                        <span class="truncate max-w-[180px] sm:max-w-[220px]">@attachment.FileName</span>
+                        <span class="text-blue-600/80">@FormatAttachmentSize(attachment)</span>
+                        <button type="button"
+                                @onclick="() => OnRemoveMessageAttachment.InvokeAsync(attachment.Id)"
+                                class="inline-flex h-5 w-5 items-center justify-center rounded-full text-blue-700 hover:bg-blue-100 transition-colors"
+                                title="@RemoveAttachmentTitle"
+                                aria-label="@RemoveAttachmentTitle">
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
     <div class="flex items-end gap-2 sm:gap-3 relative">
         <div class="flex-1 relative">
             <textarea @bind-value="InputMessage"
@@ -112,7 +158,7 @@
         <div class="flex flex-col items-end gap-1.5 sm:gap-2 flex-shrink-0">
             <span class="text-[10px] sm:text-xs text-gray-500 font-medium whitespace-nowrap">@InputLengthText</span>
             <button @onclick="OnSendMessage"
-                    disabled="@IsLoading"
+                    disabled="@(IsLoading || IsMessageAttachmentUploading)"
                     class="btn-primary flex items-center gap-1.5 sm:gap-2 shadow-md hover:shadow-lg transition-all h-10 sm:h-11 px-3 sm:px-4 text-xs sm:text-sm">
                 @if (IsLoading)
                 {
@@ -135,6 +181,10 @@
     [Parameter] public string RootFolderText { get; set; } = string.Empty;
     [Parameter] public string UploadToWorkspaceTitle { get; set; } = string.Empty;
     [Parameter] public string SelectFileText { get; set; } = string.Empty;
+    [Parameter] public string MessageAttachmentsLabel { get; set; } = "Message attachments";
+    [Parameter] public string AttachToMessageTitle { get; set; } = "Attach files to this message";
+    [Parameter] public string AddAttachmentText { get; set; } = "Add attachments";
+    [Parameter] public string RemoveAttachmentTitle { get; set; } = "Remove attachment";
     [Parameter] public string InputPlaceholder { get; set; } = string.Empty;
     [Parameter] public string SelectSkillText { get; set; } = string.Empty;
     [Parameter] public string FilterText { get; set; } = string.Empty;
@@ -153,6 +203,10 @@
     [Parameter] public EventCallback<string> SelectedUploadFolderChanged { get; set; }
     [Parameter] public IReadOnlyList<string> AvailableFolders { get; set; } = Array.Empty<string>();
     [Parameter] public EventCallback<InputFileChangeEventArgs> OnFileUpload { get; set; }
+    [Parameter] public IReadOnlyList<MessageDraftAttachmentInput> PendingMessageAttachments { get; set; } = Array.Empty<MessageDraftAttachmentInput>();
+    [Parameter] public bool IsMessageAttachmentUploading { get; set; }
+    [Parameter] public EventCallback<InputFileChangeEventArgs> OnMessageAttachmentUpload { get; set; }
+    [Parameter] public EventCallback<string> OnRemoveMessageAttachment { get; set; }
 
     [Parameter] public bool ShowSkillPicker { get; set; }
     [Parameter] public IReadOnlyList<SkillItem> FilteredSkills { get; set; } = Array.Empty<SkillItem>();
@@ -240,5 +294,21 @@
     {
         var value = args.Value?.ToString() ?? string.Empty;
         return SelectedUploadFolderChanged.InvokeAsync(value);
+    }
+
+    private static string FormatAttachmentSize(MessageDraftAttachmentInput attachment)
+    {
+        var bytes = attachment.Content.LongLength;
+        string[] sizes = ["B", "KB", "MB", "GB"];
+        double length = bytes;
+        var order = 0;
+
+        while (length >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            length /= 1024;
+        }
+
+        return $"{length:0.#} {sizes[order]}";
     }
 }

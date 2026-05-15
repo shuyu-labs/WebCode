@@ -72,6 +72,9 @@ WebCode 是一个基于 `Blazor Server + .NET 10` 的 AI CLI 工作平台。它�
 - 支持历史会话切换、关闭、隔离和清理
 - 支持导入本地 CLI 会话并继续在 WebCode 中使用
 - 支持在移动端抽屉和飞书会话卡片里直接管理会话
+- 支持在桌面 Web、移动端和飞书中提交“文本 + 附件”消息；附件会按工具能力走原生附加或工作区引用降级
+- 支持飞书顶层 `image/file` 消息先生成“待提交附件”卡片，补充说明后再发送给 CLI
+- 支持飞书富文本 `post` 消息中的“粘贴图片 + 文本”直接把图片和文本一起提交给 CLI
 
 #### 功能入口矩阵
 
@@ -104,6 +107,8 @@ WebCode 是一个基于 `Blazor Server + .NET 10` 的 AI CLI 工作平台。它�
 - 支持在飞书端浏览并导入外部 CLI 会话
 - 支持在飞书卡片中触发 `/goal`、`Superpowers` 等快捷动作
 - 支持流式卡片更新，在执行过程中持续回显输出内容
+- 支持图片、文件消息的“待提交附件”卡片流程，先暂存到工作区，再补充说明后提交给 CLI
+- 支持文本框粘贴图片形成的富文本 `post` 消息，直接把内嵌图片和文字一并提交给 CLI
 - 支持会话级 Provider 同步，确保飞书侧也遵循 `cc-switch` 当前激活状态
 - 支持 Reply TTS 相关能力，用于把回复内容进一步转换为语音或语音服务调用链
 - 支持帮助卡片、快捷入口卡片、会话管理卡片等多种交互载体
@@ -183,6 +188,7 @@ WebCode 是一个基于 `Blazor Server + .NET 10` 的 AI CLI 工作平台。它�
 - 校验文件 `SHA256SUMS.txt`
 - Release 说明 `RELEASE_NOTES.md`
 - 包含 Reply TTS 服务与运行所需资源的 `tts-bundle/`
+- 发布包页面：`https://github.com/lusile2024/WebCode/releases`
 
 ## `cc-switch` 托管模型
 
@@ -230,7 +236,7 @@ WebCode 现在遵循“像终端窗口一样”的会话语义：
 适合试用、内网部署和小团队使用。
 
 ```bash
-git clone https://github.com/shuyu-labs/WebCode.git
+git clone https://github.com/lusile2024/WebCode.git
 cd WebCode
 docker compose up -d
 ```
@@ -251,7 +257,8 @@ docker compose up -d
 
 下载入口：
 
-- [GitHub Releases](https://github.com/shuyu-labs/WebCode/releases/latest)
+- [GitHub Releases](https://github.com/lusile2024/WebCode/releases)
+- 发布包页面：`https://github.com/lusile2024/WebCode/releases`
 
 当前 Windows 发布资产包括：
 
@@ -285,7 +292,7 @@ docker compose up -d
 #### 启动命令
 
 ```bash
-git clone https://github.com/shuyu-labs/WebCode.git
+git clone https://github.com/lusile2024/WebCode.git
 cd WebCode
 dotnet restore
 dotnet run --project WebCodeCli

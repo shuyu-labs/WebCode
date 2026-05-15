@@ -236,7 +236,8 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
         var pluginScanResult = TryFindSuperpowersPluginManifest(pluginRoots);
         var pluginManifestPath = pluginScanResult.ManifestPath;
         LogProbe($"plugin manifest: {(string.IsNullOrWhiteSpace(pluginManifestPath) ? "<not found>" : pluginManifestPath)} (hadReadError={pluginScanResult.HadReadError})");
-        if (!string.IsNullOrWhiteSpace(pluginManifestPath))
+        var hasSuperpowersPlugin = !string.IsNullOrWhiteSpace(pluginManifestPath);
+        if (hasSuperpowersPlugin)
         {
             _logger.LogInformation(
                 "检测到 Superpowers 插件: ToolId={ToolId}, ProviderId={ProviderId}, Manifest={ManifestPath}",
@@ -244,15 +245,28 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
                 context.ProviderId,
                 pluginManifestPath);
 
-            return new SuperpowersCapabilityProbeResult
+            if (string.Equals(context.ToolId, "codex", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(context.WorkspacePath))
             {
-                ToolId = context.ToolId,
-                ProviderId = context.ProviderId,
-                CacheKey = context.CacheKey,
-                State = SuperpowersCapabilityState.Available,
-                Outcome = SuperpowersCapabilityProbeOutcome.Available,
-                HasSuperpowersPlugin = true
-            };
+                if (!EnsureWorkspaceSuperpowersSkillsFromPlugin(
+                        context.WorkspacePath,
+                        pluginManifestPath!,
+                        out var materializeError))
+                {
+                    return new SuperpowersCapabilityProbeResult
+                    {
+                        ToolId = context.ToolId,
+                        ProviderId = context.ProviderId,
+                        CacheKey = context.CacheKey,
+                        State = SuperpowersCapabilityState.Unknown,
+                        Outcome = SuperpowersCapabilityProbeOutcome.ProbeFailed,
+                        HasSuperpowersPlugin = true,
+                        Message = string.IsNullOrWhiteSpace(materializeError)
+                            ? "检测 superpowers 能力失败，请重试"
+                            : materializeError
+                    };
+                }
+            }
         }
 
         var skillRoots = ResolveSkillRoots(context.ToolId, context.WorkspacePath);
@@ -280,16 +294,27 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
                 CacheKey = context.CacheKey,
                 State = SuperpowersCapabilityState.Unknown,
                 Outcome = SuperpowersCapabilityProbeOutcome.ProbeFailed,
+                HasSuperpowersPlugin = hasSuperpowersPlugin,
                 Message = "检测 superpowers 能力失败，请重试"
             };
         }
 
         if (missingSkills.Length == 0)
         {
-            _logger.LogInformation(
-                "未检测到 Superpowers 插件，但技能兜底完整: ToolId={ToolId}, ProviderId={ProviderId}",
-                context.ToolId,
-                context.ProviderId);
+            if (hasSuperpowersPlugin)
+            {
+                _logger.LogInformation(
+                    "Superpowers 插件与技能已就绪: ToolId={ToolId}, ProviderId={ProviderId}",
+                    context.ToolId,
+                    context.ProviderId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "未检测到 Superpowers 插件，但技能兜底完整: ToolId={ToolId}, ProviderId={ProviderId}",
+                    context.ToolId,
+                    context.ProviderId);
+            }
 
             return new SuperpowersCapabilityProbeResult
             {
@@ -298,7 +323,8 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
                 CacheKey = context.CacheKey,
                 State = SuperpowersCapabilityState.Available,
                 Outcome = SuperpowersCapabilityProbeOutcome.Available,
-                UsedSkillFallback = true
+                HasSuperpowersPlugin = hasSuperpowersPlugin,
+                UsedSkillFallback = !hasSuperpowersPlugin
             };
         }
 
@@ -315,6 +341,7 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
             CacheKey = context.CacheKey,
             State = SuperpowersCapabilityState.Unavailable,
             Outcome = SuperpowersCapabilityProbeOutcome.MissingCapability,
+            HasSuperpowersPlugin = hasSuperpowersPlugin,
             Message = "当前 Provider 缺少 superpowers 能力",
             MissingSkills = missingSkills
         };
@@ -402,6 +429,7 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
                 break;
             case "codex":
                 AddPath(roots, Path.Combine(userProfile, ".codex", "skills"));
+                AddWorkspacePath(roots, workspacePath, ".codex", "skills");
                 AddWorkspacePath(roots, workspacePath, "skills", "codex");
                 break;
             case "opencode":
@@ -483,6 +511,97 @@ public sealed class SuperpowersCapabilityService : ISuperpowersCapabilityService
         catch
         {
             return new PluginManifestMatchResult(IsMatch: false, HadReadError: true);
+        }
+    }
+
+    private bool EnsureWorkspaceSuperpowersSkillsFromPlugin(
+        string workspacePath,
+        string pluginManifestPath,
+        out string? errorMessage)
+    {
+        errorMessage = null;
+
+        var workspaceSkillsRoot = ResolveWorkspaceCodexSkillsDirectory(workspacePath);
+        var workspaceSkillScan = LoadSkillNames([workspaceSkillsRoot]);
+        if (workspaceSkillScan.SkillNames.Contains("using-superpowers"))
+        {
+            LogProbe($"workspace already contains using-superpowers: {workspaceSkillsRoot}");
+            return true;
+        }
+
+        var pluginSkillsRoot = ResolveSuperpowersPluginSkillsDirectory(pluginManifestPath);
+        if (string.IsNullOrWhiteSpace(pluginSkillsRoot) || !Directory.Exists(pluginSkillsRoot))
+        {
+            errorMessage = "检测到 superpowers 插件，但未找到可同步的 skills 目录";
+            LogProbe($"plugin skills root missing: {pluginSkillsRoot ?? "<null>"}");
+            return false;
+        }
+
+        try
+        {
+            LogProbe($"copy plugin skills: source={pluginSkillsRoot}, target={workspaceSkillsRoot}");
+            CopyDirectory(pluginSkillsRoot, workspaceSkillsRoot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "同步 superpowers plugin skills 到工作区失败: Workspace={WorkspacePath}, Source={SourceSkillsRoot}, Target={TargetSkillsRoot}",
+                workspacePath,
+                pluginSkillsRoot,
+                workspaceSkillsRoot);
+            errorMessage = "同步 superpowers skills 到工作区失败，请重试";
+            return false;
+        }
+
+        var refreshedWorkspaceSkills = LoadSkillNames([workspaceSkillsRoot]);
+        if (refreshedWorkspaceSkills.SkillNames.Contains("using-superpowers"))
+        {
+            LogProbe($"workspace skill materialized: {workspaceSkillsRoot}");
+            return true;
+        }
+
+        errorMessage = "检测到 superpowers 插件，但工作区仍缺少 using-superpowers skill";
+        LogProbe($"workspace still missing using-superpowers after copy: {workspaceSkillsRoot}");
+        return false;
+    }
+
+    private static string? ResolveSuperpowersPluginSkillsDirectory(string pluginManifestPath)
+    {
+        var manifestDirectory = Path.GetDirectoryName(pluginManifestPath);
+        var pluginPackageDirectory = string.IsNullOrWhiteSpace(manifestDirectory)
+            ? null
+            : Directory.GetParent(manifestDirectory)?.FullName;
+
+        return string.IsNullOrWhiteSpace(pluginPackageDirectory)
+            ? null
+            : Path.Combine(pluginPackageDirectory, "skills");
+    }
+
+    private static string ResolveWorkspaceCodexSkillsDirectory(string workspacePath)
+    {
+        var trimmedWorkspace = workspacePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(Path.GetFileName(trimmedWorkspace), ".codex", StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(trimmedWorkspace, "skills")
+            : Path.Combine(trimmedWorkspace, ".codex", "skills");
+    }
+
+    private static void CopyDirectory(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var fileName = Path.GetFileName(file);
+            var targetFile = Path.Combine(targetDir, fileName);
+            File.Copy(file, targetFile, overwrite: true);
+        }
+
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        {
+            var dirName = Path.GetFileName(subDir);
+            var targetSubDir = Path.Combine(targetDir, dirName);
+            CopyDirectory(subDir, targetSubDir);
         }
     }
 

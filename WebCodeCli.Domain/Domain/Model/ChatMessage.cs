@@ -21,6 +21,11 @@ public class ChatMessage
     public string Content { get; set; } = string.Empty;
 
     /// <summary>
+    /// 娑堟伅闄勪欢
+    /// </summary>
+    public List<MessageAttachment> Attachments { get; set; } = new();
+
+    /// <summary>
     /// 使用的 CLI 工具ID
     /// </summary>
     public string? CliToolId { get; set; }

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FileChangePatchUpdatedNotification",
+  "type": "object",
+  "required": [
+    "changes",
+    "itemId",
+    "threadId",
+    "turnId"
+  ],
+  "properties": {
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/FileUpdateChange"
+      }
+    },
+    "itemId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "FileUpdateChange": {
+      "type": "object",
+      "required": [
+        "diff",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "diff": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/PatchChangeKind"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "PatchChangeKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "add"
+              ],
+              "title": "AddPatchChangeKindType"
+            }
+          },
+          "title": "AddPatchChangeKind"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "delete"
+              ],
+              "title": "DeletePatchChangeKindType"
+            }
+          },
+          "title": "DeletePatchChangeKind"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "move_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "update"
+              ],
+              "title": "UpdatePatchChangeKindType"
+            }
+          },
+          "title": "UpdatePatchChangeKind"
+        }
+      ]
+    }
+  }
+}

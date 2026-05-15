@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ModelProviderCapabilitiesReadResponse",
+  "type": "object",
+  "required": [
+    "imageGeneration",
+    "namespaceTools",
+    "webSearch"
+  ],
+  "properties": {
+    "imageGeneration": {
+      "type": "boolean"
+    },
+    "namespaceTools": {
+      "type": "boolean"
+    },
+    "webSearch": {
+      "type": "boolean"
+    }
+  }
+}

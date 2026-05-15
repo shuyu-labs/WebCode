@@ -569,6 +569,14 @@ public sealed class ReplyTtsOrchestratorTests
 
         public Task<string> ReplyRawCardAsync(string replyMessageId, string cardJson, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
             => throw new NotSupportedException();
+
+        public Task<(byte[] Content, string FileName, string MimeType)> DownloadMessageResourceAsync(
+            string messageId,
+            string fileKey,
+            string resourceType,
+            CancellationToken cancellationToken = default,
+            FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>

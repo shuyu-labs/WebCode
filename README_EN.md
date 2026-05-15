@@ -53,6 +53,21 @@ The relevant implementations live mainly under [WebCodeCli.Domain/Domain/Service
 - session history, switching, closing, isolation, and cleanup are supported
 - existing local CLI sessions can be imported and continued inside WebCode
 - mobile session drawers and Feishu session cards can manage the same session set
+- supports attachment-aware messages across desktop Web, mobile, and Feishu, with native CLI attachment input when available and workspace-reference fallback otherwise
+- supports top-level Feishu `image/file` messages through a staged "submit attachment" card before forwarding the final prompt to the CLI
+- supports Feishu rich-text `post` messages where pasted images and text are submitted together to the CLI
+
+#### Feishu workflow coverage
+
+Feishu is not limited to notifications. It already supports a usable card-driven session workflow:
+
+- bind Feishu chats to WebCode users and local/server-side CLI sessions
+- create, switch, close, and continue sessions directly from Feishu cards
+- browse and import external local CLI sessions from Feishu
+- trigger `/goal`, `Superpowers`, and other quick actions from cards
+- stream output back into Feishu cards during execution
+- stage top-level image/file messages into workspace-backed attachment submission cards, then send them to the CLI with extra instructions
+- send pasted inline images from Feishu rich-text `post` messages directly to the CLI together with the accompanying text
 
 ### Multi-user controls
 
@@ -79,6 +94,8 @@ The repository already includes a Windows packaging script that builds:
 - portable archive `WebCode-vX.Y.Z-win-x64-portable.zip`
 - checksum file `SHA256SUMS.txt`
 - release notes `RELEASE_NOTES.md`
+- bundled Reply TTS runtime assets under `tts-bundle/`
+- release package page: `https://github.com/lusile2024/WebCode/releases`
 
 ## `cc-switch` Managed Assistant Model
 
@@ -147,7 +164,8 @@ Use this when you want to run WebCode directly on Windows without preinstalling 
 
 Download:
 
-- [GitHub Releases](https://github.com/lusile2024/WebCode/releases/latest)
+- [GitHub Releases](https://github.com/lusile2024/WebCode/releases)
+- release package page: `https://github.com/lusile2024/WebCode/releases`
 
 The Windows release assets include:
 

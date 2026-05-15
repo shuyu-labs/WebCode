@@ -177,7 +177,8 @@ public static class SessionLaunchOverrideHelper
         IReadOnlyDictionary<string, SessionToolLaunchOverride>? currentOverrides,
         string toolId,
         string? model,
-        string? reasoningEffort)
+        string? reasoningEffort,
+        bool? usePersistentProcess = null)
     {
         var normalizedToolId = NormalizeToolId(toolId);
         if (!SupportsLaunchOverrides(normalizedToolId))
@@ -188,20 +189,108 @@ public static class SessionLaunchOverrideHelper
         ValidateOrThrow(normalizedToolId, model, reasoningEffort);
 
         var updatedOverrides = NormalizeOverrideDictionary(currentOverrides);
+        updatedOverrides.TryGetValue(normalizedToolId, out var existingOverride);
         var normalizedModel = NormalizeValue(model);
         var normalizedReasoningEffort = NormalizeValue(reasoningEffort);
+        var normalizedUsePersistentProcess = usePersistentProcess ?? existingOverride?.UsePersistentProcess;
+        var normalizedOverride = CreateNormalizedOverride(
+            normalizedModel,
+            normalizedReasoningEffort,
+            normalizedUsePersistentProcess,
+            existingOverride?.UseGoalRuntime);
 
-        if (string.IsNullOrWhiteSpace(normalizedModel) && string.IsNullOrWhiteSpace(normalizedReasoningEffort))
+        if (normalizedOverride == null)
         {
             updatedOverrides.Remove(normalizedToolId);
             return updatedOverrides;
         }
 
-        updatedOverrides[normalizedToolId] = new SessionToolLaunchOverride
+        updatedOverrides[normalizedToolId] = normalizedOverride;
+
+        return updatedOverrides;
+    }
+
+    /// <summary>
+    /// 仅更新工具的持久化进程覆盖项
+    /// </summary>
+    public static Dictionary<string, SessionToolLaunchOverride> ApplyPersistentProcessOverride(
+        IReadOnlyDictionary<string, SessionToolLaunchOverride>? currentOverrides,
+        string toolId,
+        bool? usePersistentProcess)
+    {
+        var normalizedToolId = NormalizeToolId(toolId);
+        if (!SupportsLaunchOverrides(normalizedToolId))
         {
-            Model = normalizedModel,
-            ReasoningEffort = normalizedReasoningEffort
-        };
+            throw new ArgumentException($"Tool '{toolId}' does not support launch overrides.", nameof(toolId));
+        }
+
+        var updatedOverrides = NormalizeOverrideDictionary(currentOverrides);
+        updatedOverrides.TryGetValue(normalizedToolId, out var existingOverride);
+        var normalizedOverride = CreateNormalizedOverride(
+            existingOverride?.Model,
+            existingOverride?.ReasoningEffort,
+            usePersistentProcess,
+            existingOverride?.UseGoalRuntime);
+
+        if (normalizedOverride == null)
+        {
+            updatedOverrides.Remove(normalizedToolId);
+            return updatedOverrides;
+        }
+
+        updatedOverrides[normalizedToolId] = normalizedOverride;
+
+        return updatedOverrides;
+    }
+
+    /// <summary>
+    /// 仅更新工具的 goal runtime 覆盖项
+    /// </summary>
+    public static Dictionary<string, SessionToolLaunchOverride> ApplyGoalRuntimeOverride(
+        IReadOnlyDictionary<string, SessionToolLaunchOverride>? currentOverrides,
+        string toolId,
+        bool? useGoalRuntime)
+    {
+        var normalizedToolId = NormalizeToolId(toolId);
+        if (!SupportsLaunchOverrides(normalizedToolId))
+        {
+            throw new ArgumentException($"Tool '{toolId}' does not support launch overrides.", nameof(toolId));
+        }
+
+        var updatedOverrides = NormalizeOverrideDictionary(currentOverrides);
+        updatedOverrides.TryGetValue(normalizedToolId, out var existingOverride);
+        var normalizedOverride = CreateNormalizedOverride(
+            existingOverride?.Model,
+            existingOverride?.ReasoningEffort,
+            existingOverride?.UsePersistentProcess,
+            useGoalRuntime);
+
+        if (normalizedOverride == null)
+        {
+            updatedOverrides.Remove(normalizedToolId);
+            return updatedOverrides;
+        }
+
+        updatedOverrides[normalizedToolId] = normalizedOverride;
+
+        return updatedOverrides;
+    }
+
+    /// <summary>
+    /// 从指定工具中移除覆盖项
+    /// </summary>
+    public static Dictionary<string, SessionToolLaunchOverride> RemoveOverride(
+        IReadOnlyDictionary<string, SessionToolLaunchOverride>? currentOverrides,
+        string toolId)
+    {
+        var normalizedToolId = NormalizeToolId(toolId);
+        if (!SupportsLaunchOverrides(normalizedToolId))
+        {
+            throw new ArgumentException($"Tool '{toolId}' does not support launch overrides.", nameof(toolId));
+        }
+
+        var updatedOverrides = NormalizeOverrideDictionary(currentOverrides);
+        updatedOverrides.Remove(normalizedToolId);
 
         return updatedOverrides;
     }
@@ -280,9 +369,25 @@ public static class SessionLaunchOverrideHelper
             return null;
         }
 
-        var normalizedModel = NormalizeValue(value.Model);
-        var normalizedReasoningEffort = NormalizeValue(value.ReasoningEffort);
-        if (string.IsNullOrWhiteSpace(normalizedModel) && string.IsNullOrWhiteSpace(normalizedReasoningEffort))
+        return CreateNormalizedOverride(
+            value.Model,
+            value.ReasoningEffort,
+            value.UsePersistentProcess,
+            value.UseGoalRuntime);
+    }
+
+    private static SessionToolLaunchOverride? CreateNormalizedOverride(
+        string? model,
+        string? reasoningEffort,
+        bool? usePersistentProcess,
+        bool? useGoalRuntime)
+    {
+        var normalizedModel = NormalizeValue(model);
+        var normalizedReasoningEffort = NormalizeValue(reasoningEffort);
+        if (string.IsNullOrWhiteSpace(normalizedModel)
+            && string.IsNullOrWhiteSpace(normalizedReasoningEffort)
+            && !usePersistentProcess.HasValue
+            && !useGoalRuntime.HasValue)
         {
             return null;
         }
@@ -290,7 +395,9 @@ public static class SessionLaunchOverrideHelper
         return new SessionToolLaunchOverride
         {
             Model = normalizedModel,
-            ReasoningEffort = normalizedReasoningEffort
+            ReasoningEffort = normalizedReasoningEffort,
+            UsePersistentProcess = usePersistentProcess,
+            UseGoalRuntime = useGoalRuntime
         };
     }
 

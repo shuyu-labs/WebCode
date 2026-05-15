@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadGoalSetParams",
+  "type": "object",
+  "required": [
+    "threadId"
+  ],
+  "properties": {
+    "objective": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadGoalStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "tokenBudget": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    }
+  },
+  "definitions": {
+    "ThreadGoalStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "budgetLimited",
+        "complete"
+      ]
+    }
+  }
+}

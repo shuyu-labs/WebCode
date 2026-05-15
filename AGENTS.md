@@ -14,3 +14,10 @@ This repository allows autonomous coding agents to make scoped code and document
 
 - Repository-local agent or tool state under `/.codex/` must remain untracked.
 - Do not use repository commits to persist machine-local, user-local, or provider-auth state.
+
+## Engineering Notes
+
+- Agent implementation notes live under `/docs/agent-notes/`.
+- Add notable implementation findings to a daily Markdown file named `YYYY-MM-DD.md`.
+- Update the current day's note when you solve a bug, confirm a non-obvious platform constraint, or discover a working reference implementation worth reusing.
+- Before changing behavior for a bugfix, Feishu card feature, or other non-trivial implementation detail, search `/docs/agent-notes/` for relevant prior notes and reuse confirmed patterns where possible.

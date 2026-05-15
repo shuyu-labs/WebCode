@@ -30,6 +30,7 @@ public class PersistentProcessInfo : IDisposable
             if (Process != null && !Process.HasExited)
             {
                 Process.Kill(true);
+                Process.WaitForExit(5000);
             }
             Process?.Dispose();
         }
@@ -205,6 +206,23 @@ public class PersistentProcessManager : IDisposable
         await processInfo.Process.StandardInput.WriteLineAsync(input);
         await processInfo.Process.StandardInput.FlushAsync();
         processInfo.LastUsedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// 清理指定会话和工具的持久化进程
+    /// </summary>
+    public bool CleanupProcess(string sessionId, string toolId)
+    {
+        var key = GetProcessKey(sessionId, toolId);
+        if (!_processes.TryRemove(key, out var processInfo))
+        {
+            return false;
+        }
+
+        _logger.LogInformation("清理会话进程: Session={SessionId}, Tool={ToolId}, PID={ProcessId}",
+            processInfo.SessionId, processInfo.ToolId, processInfo.Process?.Id);
+        processInfo.Dispose();
+        return true;
     }
 
     /// <summary>

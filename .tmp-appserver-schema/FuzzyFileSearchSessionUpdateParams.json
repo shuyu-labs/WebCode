@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FuzzyFileSearchSessionUpdateParams",
+  "type": "object",
+  "required": [
+    "query",
+    "sessionId"
+  ],
+  "properties": {
+    "query": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    }
+  }
+}

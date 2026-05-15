@@ -2,9 +2,11 @@
 
 ## 概述
 
-为了支持 OpenAI Codex 的会话恢复功能，系统现在能够自动解析 Codex 返回的 session id，并在后续请求中使用 `resume` 命令来保持会话上下文。
+为了支持 OpenAI Codex 的会话恢复功能，系统现在能够自动解析 Codex 返回的 thread id（兼容旧版 session id 文本），并在后续恢复时直接 resume 该原生会话。
 
-**注意：** 使用**一次性进程模式**而非持久化进程模式，因为Web环境中持久化进程管理较为复杂且不稳定。
+**注意：**
+- `/goal` 相关提交必须运行在**非一次性进程**会话中。
+- `/codex resume` 的恢复语义是不再额外发送 follow-up 命令，只恢复到已有 thread id 对应的会话。
 
 ## 功能特性
 
@@ -28,16 +30,16 @@ session id: 019a3994-f978-7fe2-8028-3bf4365b4af7
 
 系统会提取 `session id: 019a3994-f978-7fe2-8028-3bf4365b4af7` 并存储起来。
 
-### 2. 自动使用 Resume 命令
+### 2. 自动使用 Resume 会话
 
-- **第一次请求**：发送完整的初始命令
+- **第一次请求**：启动普通会话并记录 thread id
   ```
   exec --sandbox danger-full-access --json "创建一个HTML页面"
   ```
 
-- **后续请求**：自动添加 resume 参数
+- **后续恢复**：只 resume 已有 thread id，不拼接额外继续命令
   ```
-  exec --sandbox danger-full-access --json "添加CSS样式" resume 019a3994-f978-7fe2-8028-3bf4365b4af7
+  exec resume --json 019a3994-f978-7fe2-8028-3bf4365b4af7
   ```
 
 ### 3. 会话隔离
@@ -120,9 +122,9 @@ public class ChatMessage
 ```
 
 **重要说明：**
-- `UsePersistentProcess` 设置为 `false` - 使用一次性进程模式
-- 每次请求都会启动新的 `codex` 进程
-- 通过 `resume SESSION_ID` 参数来保持上下文连续性
+- 普通一次性执行仍可用于新任务启动。
+- `/goal` 与需要原生恢复语义的场景必须使用非一次性进程。
+- 恢复 thread id 时不应再自动注入额外 follow-up prompt。
 
 ## 使用流程
 
@@ -133,9 +135,9 @@ public class ChatMessage
 3. 输入第一个问题，例如："创建一个HTML页面"
    - 系统执行：`codex exec --sandbox danger-full-access --json "创建一个HTML页面"`
    - 解析输出中的 session id
-4. 继续输入后续问题，例如："添加CSS样式"
-   - 系统自动执行：`codex exec --sandbox danger-full-access --json "添加CSS样式" resume 019a3994...`
-5. Codex 能够记住之前的对话上下文，提供连贯的代码修改
+4. 当需要恢复原生线程时，系统直接 resume 已有 thread id
+   - 系统执行：`codex exec resume --json 019a3994...`
+5. 如需继续推进，由当前非一次性会话内部继续交互，而不是在恢复动作里额外拼接一条命令
 
 ### 系统行为
 
@@ -153,9 +155,9 @@ public class ChatMessage
 ```
 
 **关键点：**
-- 每次请求都是**独立的进程**
-- Session ID 保存在服务器内存中
-- 通过 `resume` 参数连接到 Codex 的云端会话
+- 原生 thread id 保存在服务器内存中
+- 恢复动作只负责 resume 线程，不负责补发继续命令
+- `/goal` 不能建立在一次性进程之上
 
 ## 清理机制
 

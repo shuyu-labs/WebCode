@@ -156,6 +156,56 @@ public class ExternalCliSessionHistoryServiceTests
     }
 
     [Fact]
+    public async Task GetRecentHistoryAsync_ForCodex_ReusesResolvedRolloutPathAcrossRepeatedLookups()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-cache-hit";
+        var workspacePath = sandbox.CreateDirectory("workspace");
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "07", $"rollout-2026-05-07T14-59-00-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-05-07T14:59:00Z","type":"session_meta","payload":{"id":"codex-thread-cache-hit","cwd":"D:\\workspace","model_provider":"project-provider"}}
+            {"timestamp":"2026-05-07T14:59:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"workspace user"}]}}
+            {"timestamp":"2026-05-07T14:59:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"workspace assistant"}]}}
+            """);
+
+        var logger = new RecordingLogger<ExternalCliSessionHistoryService>();
+        var service = new TestExternalCliSessionHistoryService(logger: logger);
+
+        var warmupMessages = await service.GetRecentMessagesAsync("codex", threadId, workspacePath: workspacePath);
+        var history = await service.GetRecentHistoryAsync("codex", threadId, workspacePath: workspacePath);
+
+        Assert.Collection(
+            warmupMessages,
+            message =>
+            {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("workspace user", message.Content);
+            },
+            message =>
+            {
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal("workspace assistant", message.Content);
+            });
+        Assert.Collection(
+            history.Messages,
+            message =>
+            {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("workspace user", message.Content);
+            },
+            message =>
+            {
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal("workspace assistant", message.Content);
+            });
+
+        var startResolveCount = logger.Entries.Count(entry =>
+            entry.Message.Contains("[CodexHistory] Start resolving rollout", StringComparison.Ordinal));
+        Assert.Equal(1, startResolveCount);
+    }
+
+    [Fact]
     public async Task GetRecentMessagesAsync_ForCodex_ReadsArchivedWorkspaceRolloutWhenActiveHistoryWasArchived()
     {
         using var sandbox = new HistoryTestSandbox();

@@ -137,6 +137,9 @@ copilot --resume
 # Codex - 恢复上一个会话
 codex resume --last
 
+# WebCode 约束：恢复 thread 时不要额外补发消息
+codex exec resume --json <thread_id>
+
 # OpenCode - 继续上次会话
 opencode --continue
 opencode -c

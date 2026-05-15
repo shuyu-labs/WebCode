@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -17,7 +17,7 @@ using WebCodeCli.Domain.Repositories.Base.SystemSettings;
 namespace WebCodeCli.Domain.Domain.Service;
 
 /// <summary>
-/// CLI 执行服务实现
+/// CLI 鎵ц鏈嶅姟瀹炵幇
 /// </summary>
 [ServiceDescription(typeof(ICliExecutorService), ServiceLifetime.Singleton)]
 public class CliExecutorService : ICliExecutorService
@@ -30,25 +30,26 @@ public class CliExecutorService : ICliExecutorService
     private readonly Dictionary<string, string> _sessionWorkspaces = new();
     private readonly object _workspaceLock = new();
     private readonly PersistentProcessManager _processManager;
+    private readonly ICodexAppServerSessionManager _codexAppServerSessionManager;
     private readonly IServiceProvider _serviceProvider;
     private readonly IChatSessionService _chatSessionService;
     private readonly ICliAdapterFactory _adapterFactory;
     private readonly ICcSwitchService _ccSwitchService;
     private readonly IGoalCapabilityService _goalCapabilityService;
+    private readonly Func<string> _userProfileResolver;
     
-    // 缓存的有效工作区根目录
+    // 缂撳瓨鐨勬湁鏁堝伐浣滃尯鏍圭洰褰?
     private string? _effectiveWorkspaceRoot;
     private readonly object _workspaceRootLock = new();
 
-    // 存储每个会话的CLI Thread ID（适用于所有CLI工具）
     private readonly Dictionary<string, string> _cliThreadIds = new();
     private readonly object _cliSessionLock = new();
 
-    // Codex 配置文件缓存（避免每次执行都重新生成）
-    private string? _lastCodexConfigHash;
-    private readonly object _codexConfigLock = new();
+    // 璁板綍褰撳墠浼氳瘽鐨勬椿璺冭繘绋嬶紝渚夸簬鏄惧紡鍋滄褰撳墠鎵ц
+    private readonly Dictionary<string, Process> _activeSessionProcesses = new();
+    private readonly object _activeProcessLock = new();
 
-    // Windows 下为 Claude Code 选择可用的较高版本 Node.js
+    // Windows 涓嬩负 Claude Code 閫夋嫨鍙敤鐨勮緝楂樼増鏈?Node.js
     private string? _preferredNodeExecutablePath;
     private readonly object _preferredNodeExecutableLock = new();
 
@@ -60,39 +61,43 @@ public class CliExecutorService : ICliExecutorService
         IChatSessionService chatSessionService,
         ICliAdapterFactory adapterFactory,
         ICcSwitchService ccSwitchService,
-        IGoalCapabilityService? goalCapabilityService = null)
+        IGoalCapabilityService? goalCapabilityService = null,
+        ICodexAppServerSessionManager? codexAppServerSessionManager = null,
+        Func<string>? userProfileResolver = null)
     {
         _logger = logger;
         _options = options.Value;
         _concurrencyLimiter = new SemaphoreSlim(_options.MaxConcurrentExecutions);
         _processManager = new PersistentProcessManager(processManagerLogger);
+        _codexAppServerSessionManager = codexAppServerSessionManager ?? new CodexAppServerSessionManager(_logger);
         _serviceProvider = serviceProvider;
         _chatSessionService = chatSessionService;
         _adapterFactory = adapterFactory;
         _ccSwitchService = ccSwitchService;
         _goalCapabilityService = goalCapabilityService ?? NullGoalCapabilityService.Instance;
+        _userProfileResolver = userProfileResolver ?? ResolveUserProfilePath;
         
-        // 初始化工作区根目录（延迟加载，首次使用时从数据库获取）
+        // 鍒濆鍖栧伐浣滃尯鏍圭洰褰曪紙寤惰繜鍔犺浇锛岄娆′娇鐢ㄦ椂浠庢暟鎹簱鑾峰彇锛?
         InitializeWorkspaceRoot();
     }
     
     /// <summary>
-    /// 初始化工作区根目录
+    /// 鍒濆鍖栧伐浣滃尯鏍圭洰褰?
     /// </summary>
     private void InitializeWorkspaceRoot()
     {
         var workspaceRoot = GetEffectiveWorkspaceRoot();
         
-        // 确保临时工作区根目录存在
+        // 纭繚涓存椂宸ヤ綔鍖烘牴鐩綍瀛樺湪
         if (!Directory.Exists(workspaceRoot))
         {
             Directory.CreateDirectory(workspaceRoot);
-            _logger.LogInformation("创建临时工作区根目录: {Root}", workspaceRoot);
+            _logger.LogInformation("鍒涘缓涓存椂宸ヤ綔鍖烘牴鐩綍: {Root}", workspaceRoot);
         }
     }
     
     /// <summary>
-    /// 获取有效的工作区根目录（优先数据库配置，否则使用配置文件，最后使用默认值）
+    /// 鑾峰彇鏈夋晥鐨勫伐浣滃尯鏍圭洰褰曪紙浼樺厛鏁版嵁搴撻厤缃紝鍚﹀垯浣跨敤閰嶇疆鏂囦欢锛屾渶鍚庝娇鐢ㄩ粯璁ゅ€硷級
     /// </summary>
     private string GetEffectiveWorkspaceRoot()
     {
@@ -105,7 +110,7 @@ public class CliExecutorService : ICliExecutorService
             
             try
             {
-                // 尝试从数据库获取
+                // 灏濊瘯浠庢暟鎹簱鑾峰彇
                 using var scope = _serviceProvider.CreateScope();
                 var repository = scope.ServiceProvider.GetService<ISystemSettingsRepository>();
                 if (repository != null)
@@ -114,48 +119,48 @@ public class CliExecutorService : ICliExecutorService
                     if (!string.IsNullOrWhiteSpace(dbValue))
                     {
                         _effectiveWorkspaceRoot = dbValue;
-                        _logger.LogInformation("从数据库加载工作区根目录: {Root}", dbValue);
+                        _logger.LogInformation("浠庢暟鎹簱鍔犺浇宸ヤ綔鍖烘牴鐩綍: {Root}", dbValue);
                         return _effectiveWorkspaceRoot;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "从数据库加载工作区根目录失败，使用配置文件值");
+                _logger.LogWarning(ex, "Failed to load workspace root from database; using configured fallback.");
             }
             
-            // 使用配置文件中的值
+            // 浣跨敤閰嶇疆鏂囦欢涓殑鍊?
             if (!string.IsNullOrWhiteSpace(_options.TempWorkspaceRoot))
             {
                 _effectiveWorkspaceRoot = _options.TempWorkspaceRoot;
                 return _effectiveWorkspaceRoot;
             }
             
-            // 使用默认值
+            // 浣跨敤榛樿鍊?
             _effectiveWorkspaceRoot = GetDefaultWorkspaceRoot();
-            _logger.LogWarning("TempWorkspaceRoot 配置为空，使用默认路径: {Root}", _effectiveWorkspaceRoot);
+            _logger.LogWarning("TempWorkspaceRoot 閰嶇疆涓虹┖锛屼娇鐢ㄩ粯璁よ矾寰? {Root}", _effectiveWorkspaceRoot);
             return _effectiveWorkspaceRoot;
         }
     }
     
     /// <summary>
-    /// 获取默认工作区根目录
+    /// 鑾峰彇榛樿宸ヤ綔鍖烘牴鐩綍
     /// </summary>
     private static string GetDefaultWorkspaceRoot()
     {
-        // Docker 环境使用固定路径
+        // Docker 鐜浣跨敤鍥哄畾璺緞
         if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true")
         {
             return "/app/workspaces";
         }
         
-        // 非 Docker 环境使用应用根目录下的 workspaces 文件夹
+        // 闈?Docker 鐜浣跨敤搴旂敤鏍圭洰褰曚笅鐨?workspaces 鏂囦欢澶?
         var appRoot = AppContext.BaseDirectory;
         return Path.Combine(appRoot, "workspaces");
     }
     
     /// <summary>
-    /// 刷新工作区根目录缓存（当数据库配置更新时调用）
+    /// 鍒锋柊宸ヤ綔鍖烘牴鐩綍缂撳瓨锛堝綋鏁版嵁搴撻厤缃洿鏂版椂璋冪敤锛?
     /// </summary>
     public void RefreshWorkspaceRootCache()
     {
@@ -198,7 +203,7 @@ public class CliExecutorService : ICliExecutorService
             }
         }
 
-        // 缓存未命中时，从数据库回退（ChatSession.CliThreadId / SessionOutput.ActiveThreadId）
+        // 缂撳瓨鏈懡涓椂锛屼粠鏁版嵁搴撳洖閫€锛圕hatSession.CliThreadId / SessionOutput.ActiveThreadId锛?
         try
         {
             using var scope = _serviceProvider.CreateScope();
@@ -222,7 +227,7 @@ public class CliExecutorService : ICliExecutorService
                 threadId = CliThreadIdRecoveryHelper.TryRecoverFromImportedTitle(session.ToolId, session.Title);
                 if (!string.IsNullOrWhiteSpace(threadId))
                 {
-                    _logger.LogInformation("从导入标题恢复会话 {SessionId} 的 CLI ThreadId: {ThreadId}", sessionId, threadId);
+                    _logger.LogInformation("浠庡鍏ユ爣棰樻仮澶嶄細璇?{SessionId} 鐨?CLI ThreadId: {ThreadId}", sessionId, threadId);
 
                     lock (_cliSessionLock)
                     {
@@ -248,7 +253,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "从数据库回退 CLI ThreadId 失败: {SessionId}", sessionId);
+            _logger.LogDebug(ex, "浠庢暟鎹簱鍥為€€ CLI ThreadId 澶辫触: {SessionId}", sessionId);
         }
 
         return null;
@@ -261,10 +266,10 @@ public class CliExecutorService : ICliExecutorService
         lock (_cliSessionLock)
         {
             _cliThreadIds[sessionId] = threadId;
-            _logger.LogInformation("设置会话 {SessionId} 的CLI线程ID: {ThreadId}", sessionId, threadId);
+            _logger.LogInformation("璁剧疆浼氳瘽 {SessionId} 鐨凜LI绾跨▼ID: {ThreadId}", sessionId, threadId);
         }
 
-        // 最佳努力：持久化到数据库，保证服务重启/页面刷新后仍可恢复会话
+        // 鏈€浣冲姫鍔涳細鎸佷箙鍖栧埌鏁版嵁搴擄紝淇濊瘉鏈嶅姟閲嶅惎/椤甸潰鍒锋柊鍚庝粛鍙仮澶嶄細璇?
         try
         {
             using var scope = _serviceProvider.CreateScope();
@@ -273,7 +278,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "持久化 CLI ThreadId 失败: {SessionId}", sessionId);
+            _logger.LogDebug(ex, "鎸佷箙鍖?CLI ThreadId 澶辫触: {SessionId}", sessionId);
         }
     }
 
@@ -290,6 +295,7 @@ public class CliExecutorService : ICliExecutorService
         cancellationToken.ThrowIfCancellationRequested();
 
         _processManager.CleanupSessionProcesses(sessionId);
+        _codexAppServerSessionManager.CleanupSession(sessionId);
 
         lock (_cliSessionLock)
         {
@@ -320,7 +326,7 @@ public class CliExecutorService : ICliExecutorService
                 }
             }
 
-            _logger.LogInformation("已重置会话运行态: {SessionId}", sessionId);
+            _logger.LogInformation("宸查噸缃細璇濊繍琛屾€? {SessionId}", sessionId);
         }
         catch (OperationCanceledException)
         {
@@ -328,8 +334,55 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "重置会话运行态失败(已完成内存清理): {SessionId}", sessionId);
+            _logger.LogWarning(ex, "閲嶇疆浼氳瘽杩愯鎬佸け璐?宸插畬鎴愬唴瀛樻竻鐞?: {SessionId}", sessionId);
         }
+    }
+
+    public async Task StopSessionExecutionAsync(
+        string sessionId,
+        string? toolId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var currentSession = await TryGetChatSessionAsync(sessionId);
+        var resolvedToolId = toolId ?? currentSession?.ToolId ?? string.Empty;
+        var sessionLaunchOverride = await GetEffectiveSessionLaunchOverrideAsync(sessionId, resolvedToolId);
+        var isGoalRuntimeSession = sessionLaunchOverride?.UseGoalRuntime == true;
+
+        if (isGoalRuntimeSession)
+        {
+            try
+            {
+                if (await _codexAppServerSessionManager.InterruptActiveTurnAsync(sessionId, cancellationToken))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "中断 Codex app-server 当前 turn 失败: Session={SessionId}", sessionId);
+            }
+        }
+
+        await TerminateActiveSessionProcessAsync(sessionId);
+
+        if (!string.IsNullOrWhiteSpace(toolId))
+        {
+            _processManager.CleanupProcess(sessionId, toolId);
+        }
+        else
+        {
+            _processManager.CleanupSessionProcesses(sessionId);
+        }
+
+        _codexAppServerSessionManager.CleanupSession(sessionId);
+
     }
 
     #endregion
@@ -340,6 +393,28 @@ public class CliExecutorService : ICliExecutorService
         string userPrompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (var chunk in ExecuteStreamAsync(
+            new CliExecutionRequest
+            {
+                SessionId = sessionId,
+                ToolId = toolId,
+                PromptText = userPrompt
+            },
+            cancellationToken))
+        {
+            yield return chunk;
+        }
+    }
+
+    public async IAsyncEnumerable<StreamOutputChunk> ExecuteStreamAsync(
+        CliExecutionRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var sessionId = request.SessionId;
+        var toolId = request.ToolId;
+        var userPrompt = request.PromptText;
         var username = ResolveUsernameForToolOperation(null, sessionId);
         var tool = GetTool(toolId, username);
         if (tool == null && await HasValidCcSwitchSnapshotAsync(sessionId, toolId))
@@ -356,7 +431,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = launchBlockingMessage ?? $"CLI 工具 '{toolId}' 不存在或当前用户无权使用"
+                ErrorMessage = launchBlockingMessage ?? $"CLI 宸ュ叿 '{toolId}' 涓嶅瓨鍦ㄦ垨褰撳墠鐢ㄦ埛鏃犳潈浣跨敤"
             };
             yield break;
         }
@@ -367,17 +442,34 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = $"CLI 工具 '{tool.Name}' 已禁用"
+                ErrorMessage = $"CLI tool {tool.Name} is disabled."
             };
             yield break;
         }
 
-        // 限制并发执行数量
+        var sessionLaunchOverride = await GetEffectiveSessionLaunchOverrideAsync(sessionId, toolId);
+        tool = ApplySessionLaunchOverride(tool, sessionLaunchOverride);
+        var goalRuntimeEnabled = sessionLaunchOverride?.UseGoalRuntime == true;
+
+        if (IsGoalCommand(userPrompt))
+        {
+            await EnsureGoalExecutionRuntimeAsync(
+                sessionId,
+                toolId,
+                cancellationToken);
+            goalRuntimeEnabled = true;
+        }
+
+        // 闄愬埗骞跺彂鎵ц鏁伴噺
         await _concurrencyLimiter.WaitAsync(cancellationToken);
 
         try
         {
-            await foreach (var chunk in ExecuteProcessStreamAsync(sessionId, tool, userPrompt, cancellationToken))
+            await foreach (var chunk in ExecuteProcessStreamAsync(
+                request,
+                tool,
+                goalRuntimeEnabled,
+                cancellationToken))
             {
                 yield return chunk;
             }
@@ -433,7 +525,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = launchBlockingMessage ?? $"CLI 宸ュ叿 '{toolId}' 涓嶅瓨鍦ㄦ垨褰撳墠鐢ㄦ埛鏃犳潈浣跨敤"
+                ErrorMessage = launchBlockingMessage ?? $"CLI 瀹搞儱鍙?'{toolId}' 娑撳秴鐡ㄩ崷銊﹀灗瑜版挸澧犻悽銊﹀煕閺冪姵娼堟担璺ㄦ暏"
             };
             yield break;
         }
@@ -444,7 +536,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = $"CLI 宸ュ叿 '{tool.Name}' 宸茬鐢?"
+                ErrorMessage = $"CLI 瀹搞儱鍙?'{tool.Name}' 瀹歌尙顩﹂悽?"
             };
             yield break;
         }
@@ -455,7 +547,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = $"CLI 宸ュ叿 '{tool.Name}' 涓嶆敮鎸佸皯鎵撴柇鎵ц"
+                ErrorMessage = $"CLI tool {tool.Name} does not support low-interruption continue."
             };
             yield break;
         }
@@ -475,7 +567,17 @@ public class CliExecutorService : ICliExecutorService
 
         try
         {
-            await foreach (var chunk in ExecuteOneTimeProcessAsync(sessionId, tool, string.Empty, true, prompt, cancellationToken))
+            await foreach (var chunk in ExecuteOneTimeProcessAsync(
+                new CliExecutionRequest
+                {
+                    SessionId = sessionId,
+                    ToolId = toolId,
+                    PromptText = string.Empty
+                },
+                tool,
+                true,
+                prompt,
+                cancellationToken))
             {
                 yield return chunk;
             }
@@ -502,24 +604,69 @@ public class CliExecutorService : ICliExecutorService
     }
 
     private async IAsyncEnumerable<StreamOutputChunk> ExecuteProcessStreamAsync(
-        string sessionId,
+        CliExecutionRequest request,
         CliToolConfig tool,
-        string userPrompt,
+        bool goalRuntimeEnabled,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // 根据工具配置选择执行模式
-        if (tool.UsePersistentProcess)
+        var sessionId = request.SessionId;
+        var userPrompt = request.PromptText;
+        var adapter = _adapterFactory.GetAdapter(tool);
+        if (goalRuntimeEnabled && IsNativeCodexGoalRuntimeTool(tool))
+        {
+            await foreach (var chunk in ExecuteCodexGoalRuntimeStreamAsync(
+                sessionId,
+                tool,
+                userPrompt,
+                cancellationToken))
+            {
+                yield return chunk;
+            }
+
+            yield break;
+        }
+
+        var usePersistentProcess = tool.UsePersistentProcess && !goalRuntimeEnabled;
+        if (goalRuntimeEnabled && IsNativeCodexGoalRuntimeTool(tool))
+        {
+            _logger.LogInformation(
+                "【Goal 会话运行态】工具: {Tool}, Session={Session}, UsePersistentProcess={Flag}",
+                tool.Name,
+                sessionId,
+                tool.UsePersistentProcess);
+        }
+
+        // 鏍规嵁宸ュ叿閰嶇疆閫夋嫨鎵ц妯″紡
+        if (usePersistentProcess && !ShouldUseOneTimeExecutionDespitePersistentMode(tool, adapter))
         {
             _logger.LogInformation("【持久化进程模式】工具: {Tool}, UsePersistentProcess={Flag}", tool.Name, tool.UsePersistentProcess);
-            await foreach (var chunk in ExecutePersistentProcessAsync(sessionId, tool, userPrompt, cancellationToken))
+            await foreach (var chunk in ExecutePersistentProcessAsync(request, tool, cancellationToken))
             {
                 yield return chunk;
             }
         }
         else
         {
-            _logger.LogInformation("【一次性进程模式】工具: {Tool}, UsePersistentProcess={Flag}", tool.Name, tool.UsePersistentProcess);
-            await foreach (var chunk in ExecuteOneTimeProcessAsync(sessionId, tool, userPrompt, false, null, cancellationToken))
+            if (tool.UsePersistentProcess)
+            {
+                _logger.LogInformation(
+                    goalRuntimeEnabled
+                        ? "【Goal 会话运行态】工具: {Tool}, UsePersistentProcess={Flag}。为避免不支持的 stdin 复用，切换到一次性 exec/resume。"
+                        : "【兼容一次性进程模式】工具: {Tool}, UsePersistentProcess={Flag}。由于不支持基于 stdin 的持久复用，回退到一次性 exec/resume。",
+                    tool.Name,
+                    tool.UsePersistentProcess);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    goalRuntimeEnabled
+                        ? "【Goal 会话运行态】工具: {Tool}, UsePersistentProcess={Flag}。使用一次性 exec/resume。"
+                        : "【一次性进程模式】工具: {Tool}, UsePersistentProcess={Flag}",
+                    tool.Name,
+                    tool.UsePersistentProcess);
+            }
+
+            await foreach (var chunk in ExecuteOneTimeProcessAsync(request, tool, false, null, cancellationToken))
             {
                 yield return chunk;
             }
@@ -527,14 +674,15 @@ public class CliExecutorService : ICliExecutorService
     }
 
     /// <summary>
-    /// 使用持久化进程执行
+    /// 浣跨敤鎸佷箙鍖栬繘绋嬫墽琛?
     /// </summary>
     private async IAsyncEnumerable<StreamOutputChunk> ExecutePersistentProcessAsync(
-        string sessionId,
+        CliExecutionRequest request,
         CliToolConfig tool,
-        string userPrompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var sessionId = request.SessionId;
+        var userPrompt = request.PromptText;
         var launchBlockingMessage = await GetLaunchBlockingMessageAsync(tool.Id, sessionId, cancellationToken);
         if (launchBlockingMessage != null)
         {
@@ -563,7 +711,7 @@ public class CliExecutorService : ICliExecutorService
             yield break;
         }
         
-        // 解析命令路径
+        // 瑙ｆ瀽鍛戒护璺緞
         var resolvedCommand = ResolveCommandPath(tool.Command);
 
         var managedSnapshotError = await EnsureManagedToolSessionSnapshotAsync(sessionId, tool.Id, sessionWorkspace, cancellationToken);
@@ -578,23 +726,17 @@ public class CliExecutorService : ICliExecutorService
             yield break;
         }
         
-        // 获取环境变量(优先从数据库)
+        // 鑾峰彇鐜鍙橀噺(浼樺厛浠庢暟鎹簱)
         var environmentVariables = await GetToolEnvironmentVariablesAsync(tool.Id);
 
-        if (string.Equals(tool.Id, "codex", StringComparison.OrdinalIgnoreCase)
-            && !_ccSwitchService.IsManagedTool(tool.Id))
-        {
-            GenerateCodexConfigFile(environmentVariables);
-        }
-        
-        // 获取适配器
+        // 鑾峰彇閫傞厤鍣?
         var adapter = _adapterFactory.GetAdapter(tool);
         bool hasAdapter = adapter != null;
         
-        // 获取CLI线程ID（用于会话恢复）
+        // 鑾峰彇CLI绾跨▼ID锛堢敤浜庝細璇濇仮澶嶏級
         string? cliThreadId = GetCliThreadId(sessionId);
         
-        // 构建会话上下文
+        // 鏋勫缓浼氳瘽涓婁笅鏂?
         var sessionContext = await BuildCliSessionContextAsync(
             sessionId,
             tool.Id,
@@ -602,32 +744,33 @@ public class CliExecutorService : ICliExecutorService
             cliThreadId,
             environmentVariables,
             cancellationToken);
+        var requestWithContext = request.WithSessionContext(sessionContext);
         
-        _logger.LogInformation("使用持久化进程模式执行 CLI 工具: {Tool}, 会话: {Session}, 工作目录: {Workspace}, 命令: {Command}, CLI Thread: {CliThread}, 适配器: {Adapter}", 
-            tool.Name, sessionId, sessionWorkspace, resolvedCommand, cliThreadId ?? "新会话", adapter?.GetType().Name ?? "无");
+        _logger.LogInformation("浣跨敤鎸佷箙鍖栬繘绋嬫ā寮忔墽琛?CLI 宸ュ叿: {Tool}, 浼氳瘽: {Session}, 宸ヤ綔鐩綍: {Workspace}, 鍛戒护: {Command}, CLI Thread: {CliThread}, 閫傞厤鍣? {Adapter}", 
+            tool.Name, sessionId, sessionWorkspace, resolvedCommand, cliThreadId ?? "New Session", adapter?.GetType().Name ?? "None");
 
         PersistentProcessInfo? processInfo = null;
         bool hasError = false;
         string? errorMessage = null;
         
-        // 创建带有解析后命令路径和环境变量的tool副本
+        // 鍒涘缓甯︽湁瑙ｆ瀽鍚庡懡浠よ矾寰勫拰鐜鍙橀噺鐨則ool鍓湰
         var toolWithResolvedCommand = new CliToolConfig
         {
             Id = tool.Id,
             Name = tool.Name,
             Description = tool.Description,
-            Command = resolvedCommand, // 使用解析后的命令路径
+            Command = resolvedCommand, // 浣跨敤瑙ｆ瀽鍚庣殑鍛戒护璺緞
             ArgumentTemplate = tool.ArgumentTemplate,
             LowInterruptionArgumentTemplate = tool.LowInterruptionArgumentTemplate,
             WorkingDirectory = tool.WorkingDirectory,
             Enabled = tool.Enabled,
             TimeoutSeconds = tool.TimeoutSeconds,
-            EnvironmentVariables = environmentVariables, // 使用从数据库或配置文件获取的环境变量
+            EnvironmentVariables = environmentVariables, // 浣跨敤浠庢暟鎹簱鎴栭厤缃枃浠惰幏鍙栫殑鐜鍙橀噺
             UsePersistentProcess = tool.UsePersistentProcess,
             PersistentModeArguments = tool.PersistentModeArguments
         };
         
-        // 获取或创建持久化进程
+        // 鑾峰彇鎴栧垱寤烘寔涔呭寲杩涚▼
         try
         {
             processInfo = _processManager.GetOrCreateProcess(
@@ -639,9 +782,9 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "创建持久化进程失败");
+            _logger.LogError(ex, "创建持久化进程失败。");
             hasError = true;
-            errorMessage = $"创建进程失败: {ex.Message}";
+            errorMessage = $"鍒涘缓杩涚▼澶辫触: {ex.Message}";
         }
 
         if (hasError || processInfo == null)
@@ -650,10 +793,12 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = errorMessage ?? "创建进程失败"
+                ErrorMessage = errorMessage ?? "鍒涘缓杩涚▼澶辫触"
             };
             yield break;
         }
+
+        RegisterActiveSessionProcess(sessionId, processInfo.Process);
 
         if (!processInfo.IsRunning)
         {
@@ -661,23 +806,23 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = "进程未运行"
+                ErrorMessage = "进程未运行。"
             };
             yield break;
         }
 
-        // 向进程发送用户输入
-        // 使用适配器构建命令（如果有适配器）
+        // 鍚戣繘绋嬪彂閫佺敤鎴疯緭鍏?
+        // 浣跨敤閫傞厤鍣ㄦ瀯寤哄懡浠わ紙濡傛灉鏈夐€傞厤鍣級
         string actualInput;
         if (hasAdapter)
         {
-            actualInput = adapter!.BuildArguments(tool, userPrompt, sessionContext);
-            _logger.LogInformation("使用适配器 {Adapter} 构建命令: PID={ProcessId}, IsResume={IsResume}, Prompt长度={Length}", 
-                adapter.GetType().Name, processInfo.Process.Id, sessionContext.IsResume, userPrompt.Length);
+            actualInput = adapter!.BuildArguments(tool, requestWithContext);
+            _logger.LogInformation("浣跨敤閫傞厤鍣?{Adapter} 鏋勫缓鍛戒护: PID={ProcessId}, IsResume={IsResume}, Prompt闀垮害={Length}", 
+                adapter.GetType().Name, processInfo.Process.Id, sessionContext.IsResume, requestWithContext.PromptText.Length);
         }
         else
         {
-            // 无适配器时，直接发送用户输入
+            // 鏃犻€傞厤鍣ㄦ椂锛岀洿鎺ュ彂閫佺敤鎴疯緭鍏?
             actualInput = userPrompt;
             _logger.LogInformation("向持久化进程发送输入: PID={ProcessId}, Prompt长度={Length}", 
                 processInfo.Process.Id, userPrompt.Length);
@@ -692,7 +837,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "发送输入到进程失败");
+            _logger.LogError(ex, "发送输入到进程失败。");
             sendError = true;
             sendErrorMessage = $"发送输入失败: {ex.Message}";
         }
@@ -703,12 +848,12 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = sendErrorMessage ?? "发送输入失败"
+                ErrorMessage = sendErrorMessage ?? "发送输入失败。"
             };
             yield break;
         }
 
-        // 读取输出
+        // 璇诲彇杈撳嚭
         using var outputCts = new CancellationTokenSource();
         if (tool.TimeoutSeconds > 0)
         {
@@ -723,9 +868,11 @@ public class CliExecutorService : ICliExecutorService
         bool terminalEventIsError = false;
         string? terminalEventErrorMessage = null;
         var terminalEventBuffer = hasAdapter && adapter!.SupportsStreamParsing ? new StringBuilder() : null;
-        var fullOutput = new StringBuilder(); // 用于解析thread id
+        var fullOutput = new StringBuilder(); // 鐢ㄤ簬瑙ｆ瀽thread id
 
-        await using (var enumerator = ReadPersistentProcessOutputAsync(processInfo, linkedCts.Token)
+        var noOutputTimeout = GetPersistentProcessNoOutputTimeout(tool, userPrompt, adapter);
+
+        await using (var enumerator = ReadPersistentProcessOutputAsync(processInfo, noOutputTimeout, linkedCts.Token)
             .GetAsyncEnumerator(linkedCts.Token))
         {
             while (true)
@@ -754,7 +901,7 @@ public class CliExecutorService : ICliExecutorService
 
                 var chunk = enumerator.Current;
                 
-                // 收集输出内容用于解析session id
+                // 鏀堕泦杈撳嚭鍐呭鐢ㄤ簬瑙ｆ瀽session id
                 if (!chunk.IsError && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullOutput.Append(chunk.Content);
@@ -781,7 +928,7 @@ public class CliExecutorService : ICliExecutorService
                 if (terminalEventDetected)
                 {
                     _logger.LogInformation(
-                        "检测到适配器终止事件，提前结束当前轮输出读取: Tool={ToolId}, Session={SessionId}, IsError={IsError}",
+                        "妫€娴嬪埌閫傞厤鍣ㄧ粓姝簨浠讹紝鎻愬墠缁撴潫褰撳墠杞緭鍑鸿鍙? Tool={ToolId}, Session={SessionId}, IsError={IsError}",
                         tool.Id,
                         sessionId,
                         terminalEventIsError);
@@ -807,7 +954,7 @@ public class CliExecutorService : ICliExecutorService
             }
         }
         
-        // 如果有适配器且还没有CLI线程ID，尝试从输出中解析
+        // 濡傛灉鏈夐€傞厤鍣ㄤ笖杩樻病鏈塁LI绾跨▼ID锛屽皾璇曚粠杈撳嚭涓В鏋?
         if (hasAdapter && string.IsNullOrEmpty(cliThreadId))
         {
             var output = fullOutput.ToString();
@@ -815,7 +962,7 @@ public class CliExecutorService : ICliExecutorService
             if (!string.IsNullOrEmpty(parsedThreadId))
             {
                 SetCliThreadId(sessionId, parsedThreadId);
-                _logger.LogInformation("解析到CLI Thread ID: {CliThread} for 会话: {Session}", parsedThreadId, sessionId);
+                _logger.LogInformation("瑙ｆ瀽鍒癈LI Thread ID: {CliThread} for 浼氳瘽: {Session}", parsedThreadId, sessionId);
             }
         }
 
@@ -827,7 +974,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = "执行已取消或超时"
+                ErrorMessage = "鎵ц宸插彇娑堟垨瓒呮椂"
             };
         }
         else if (terminalEventDetected && terminalEventIsError)
@@ -836,7 +983,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = terminalEventErrorMessage ?? "执行失败"
+                ErrorMessage = terminalEventErrorMessage ?? "鎵ц澶辫触"
             };
         }
         else
@@ -847,13 +994,16 @@ public class CliExecutorService : ICliExecutorService
                 Content = string.Empty
             };
         }
+
+        UnregisterActiveSessionProcess(sessionId, processInfo.Process);
     }
 
     /// <summary>
-    /// 读取持久化进程的输出
+    /// 璇诲彇鎸佷箙鍖栬繘绋嬬殑杈撳嚭
     /// </summary>
     private async IAsyncEnumerable<StreamOutputChunk> ReadPersistentProcessOutputAsync(
         PersistentProcessInfo processInfo,
+        TimeSpan? noOutputTimeout,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var outputReader = processInfo.Process.StandardOutput;
@@ -861,7 +1011,6 @@ public class CliExecutorService : ICliExecutorService
         var outputBuffer = new char[4096];
         var errorBuffer = new char[4096];
         var lastOutputTime = DateTime.UtcNow;
-        var noOutputTimeout = TimeSpan.FromSeconds(2); // 2秒无新输出则认为结束
         var hasObservedOutput = false;
         var outputClosed = false;
         var errorClosed = false;
@@ -916,9 +1065,11 @@ public class CliExecutorService : ICliExecutorService
                         continue;
                     }
 
-                    if (hasObservedOutput && (DateTime.UtcNow - lastOutputTime) > noOutputTimeout)
+                    if (noOutputTimeout is { } idleTimeout
+                        && hasObservedOutput
+                        && (DateTime.UtcNow - lastOutputTime) > idleTimeout)
                     {
-                        _logger.LogInformation("检测到输出结束（无新输出超过{Timeout}秒）", noOutputTimeout.TotalSeconds);
+                                                _logger.LogInformation("检测到输出结束（无新输出超时 {Timeout} 秒）", idleTimeout.TotalSeconds);
                         readCts.Cancel();
                         break;
                     }
@@ -939,7 +1090,7 @@ public class CliExecutorService : ICliExecutorService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "读取标准输出时发生错误");
+                        _logger.LogWarning(ex, "Failed while reading standard output.");
                         break;
                     }
 
@@ -974,7 +1125,7 @@ public class CliExecutorService : ICliExecutorService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "读取错误输出时发生错误");
+                        _logger.LogWarning(ex, "Failed while reading standard error.");
                         break;
                     }
 
@@ -990,7 +1141,7 @@ public class CliExecutorService : ICliExecutorService
                         yield return new StreamOutputChunk
                         {
                             Content = new string(errorBuffer, 0, charsRead),
-                            IsError = false, // Codex 输出到 stderr 也是正常内容
+                            IsError = false, // Codex 杈撳嚭鍒?stderr 涔熸槸姝ｅ父鍐呭
                             IsCompleted = false
                         };
                     }
@@ -1004,8 +1155,125 @@ public class CliExecutorService : ICliExecutorService
                 readCts.Cancel();
             }
 
-            await ObservePendingPersistentReadTaskAsync(outputReadTask, "标准输出");
-            await ObservePendingPersistentReadTaskAsync(errorReadTask, "错误输出");
+            await ObservePendingPersistentReadTaskAsync(outputReadTask, "鏍囧噯杈撳嚭");
+            await ObservePendingPersistentReadTaskAsync(errorReadTask, "閿欒杈撳嚭");
+        }
+    }
+
+    private void RegisterActiveSessionProcess(string sessionId, Process process)
+    {
+        lock (_activeProcessLock)
+        {
+            _activeSessionProcesses[sessionId] = process;
+        }
+    }
+
+    private void UnregisterActiveSessionProcess(string sessionId, Process? process)
+    {
+        lock (_activeProcessLock)
+        {
+            if (!_activeSessionProcesses.TryGetValue(sessionId, out var current))
+            {
+                return;
+            }
+
+            if (process == null || ReferenceEquals(current, process))
+            {
+                _activeSessionProcesses.Remove(sessionId);
+            }
+        }
+    }
+
+    private async Task TerminateActiveSessionProcessAsync(string sessionId)
+    {
+        Process? process = null;
+
+        lock (_activeProcessLock)
+        {
+            if (_activeSessionProcesses.TryGetValue(sessionId, out var current))
+            {
+                process = current;
+                _activeSessionProcesses.Remove(sessionId);
+            }
+        }
+
+        if (process == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            if (await TryRequestGracefulStopAsync(process, sessionId))
+            {
+                return;
+            }
+
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+                await WaitForProcessExitWithinAsync(
+                    process,
+                    TimeSpan.FromSeconds(5),
+                    "stop",
+                    sessionId,
+                    "等待强制结束会话进程时发生异常");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "鍋滄浼氳瘽鎵ц鏃剁粓姝㈡椿璺冭繘绋嬪け璐? Session={SessionId}, PID={ProcessId}", sessionId, process.Id);
+        }
+    }
+
+    private async Task<bool> TryRequestGracefulStopAsync(Process process, string sessionId)
+    {
+        if (process.HasExited)
+        {
+            return true;
+        }
+
+        if (TryCloseStandardInput(process, sessionId)
+            && await WaitForProcessExitWithinAsync(
+                process,
+                TimeSpan.FromSeconds(3),
+                "stop",
+                sessionId,
+                "绛夊緟鍏抽棴鏍囧噯杈撳叆鍚庣殑杩涚▼閫€鍑烘椂鍙戠敓寮傚父"))
+        {
+            return true;
+        }
+
+        if (await TryRequestGracefulProcessExitAsync(process, "stop", sessionId))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryCloseStandardInput(Process process, string sessionId)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return false;
+            }
+
+            process.StandardInput.Close();
+            _logger.LogInformation("鍋滄浼氳瘽鎵ц鏃跺凡鍏抽棴鏍囧噯杈撳叆: Session={SessionId}, PID={ProcessId}", sessionId, process.Id);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "鍋滄浼氳瘽鎵ц鏃跺叧闂爣鍑嗚緭鍏ュけ璐? Session={SessionId}, PID={ProcessId}", sessionId, process.Id);
+            return false;
         }
     }
 
@@ -1022,15 +1290,15 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogDebug("{StreamName}读取任务已取消", streamName);
+            _logger.LogDebug("{StreamName} read task was canceled.", streamName);
         }
         catch (ObjectDisposedException)
         {
-            _logger.LogDebug("{StreamName}读取任务对应的流已释放", streamName);
+            _logger.LogDebug("{StreamName} stream was already disposed.", streamName);
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "{StreamName}读取任务在收尾阶段结束异常", streamName);
+            _logger.LogDebug(ex, "{StreamName} read task failed during shutdown.", streamName);
         }
     }
 
@@ -1061,7 +1329,7 @@ public class CliExecutorService : ICliExecutorService
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "解析适配器输出行失败: {Line}", trimmedLine.Length > 120 ? trimmedLine[..120] : trimmedLine);
+                _logger.LogDebug(ex, "瑙ｆ瀽閫傞厤鍣ㄨ緭鍑鸿澶辫触: {Line}", trimmedLine.Length > 120 ? trimmedLine[..120] : trimmedLine);
                 continue;
             }
 
@@ -1090,7 +1358,7 @@ public class CliExecutorService : ICliExecutorService
                 return AdapterTerminalSignal.Failed(
                     outputEvent.ErrorMessage
                     ?? outputEvent.Content
-                    ?? "本轮交互失败。");
+                    ?? "Current interaction failed.");
             }
         }
 
@@ -1132,16 +1400,17 @@ public class CliExecutorService : ICliExecutorService
     }
 
     /// <summary>
-    /// 使用一次性进程执行（原有逻辑）
+    /// 浣跨敤涓€娆℃€ц繘绋嬫墽琛岋紙鍘熸湁閫昏緫锛?
     /// </summary>
     private async IAsyncEnumerable<StreamOutputChunk> ExecuteOneTimeProcessAsync(
-        string sessionId,
+        CliExecutionRequest request,
         CliToolConfig tool,
-        string userPrompt,
         bool useLowInterruption,
         string? lowInterruptionPrompt = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var sessionId = request.SessionId;
+        var userPrompt = request.PromptText;
         var launchBlockingMessage = await GetLaunchBlockingMessageAsync(tool.Id, sessionId, cancellationToken);
         if (launchBlockingMessage != null)
         {
@@ -1156,14 +1425,14 @@ public class CliExecutorService : ICliExecutorService
 
         Process? process = null;
         
-        // 获取适配器
+        // 鑾峰彇閫傞厤鍣?
         var adapter = _adapterFactory.GetAdapter(tool);
         bool hasAdapter = adapter != null;
         
-        // 获取CLI线程ID（用于会话恢复）
+        // 鑾峰彇CLI绾跨▼ID锛堢敤浜庝細璇濇仮澶嶏級
         string? cliThreadId = GetCliThreadId(sessionId);
         
-        // 获取或创建会话专属的工作目录
+        // 鑾峰彇鎴栧垱寤轰細璇濅笓灞炵殑宸ヤ綔鐩綍
         var sessionWorkspace = GetOrCreateSessionWorkspace(sessionId);
 
         var managedSnapshotError = await EnsureManagedToolSessionSnapshotAsync(sessionId, tool.Id, sessionWorkspace, cancellationToken);
@@ -1180,13 +1449,7 @@ public class CliExecutorService : ICliExecutorService
         
         var environmentVariables = await GetToolEnvironmentVariablesAsync(tool.Id);
 
-        if (string.Equals(tool.Id, "codex", StringComparison.OrdinalIgnoreCase)
-            && !_ccSwitchService.IsManagedTool(tool.Id))
-        {
-            GenerateCodexConfigFile(environmentVariables);
-        }
-
-        // 构建会话上下文
+        // 鏋勫缓浼氳瘽涓婁笅鏂?
         var sessionContext = await BuildCliSessionContextAsync(
             sessionId,
             tool.Id,
@@ -1194,8 +1457,9 @@ public class CliExecutorService : ICliExecutorService
             cliThreadId,
             environmentVariables,
             cancellationToken);
+        var requestWithContext = request.WithSessionContext(sessionContext);
 
-        // 构建参数，使用适配器（如果有）
+        // 鏋勫缓鍙傛暟锛屼娇鐢ㄩ€傞厤鍣紙濡傛灉鏈夛級
         string arguments;
         if (useLowInterruption)
         {
@@ -1208,8 +1472,8 @@ public class CliExecutorService : ICliExecutorService
         }
         else if (hasAdapter)
         {
-            arguments = adapter!.BuildArguments(tool, userPrompt, sessionContext);
-            _logger.LogInformation("????????{Adapter} ??????, IsResume={IsResume}", adapter.GetType().Name, sessionContext.IsResume);
+            arguments = adapter!.BuildArguments(tool, requestWithContext);
+            _logger.LogInformation("使用适配器 {Adapter} 构建命令, IsResume={IsResume}", adapter.GetType().Name, sessionContext.IsResume);
         }
         else
         {
@@ -1217,7 +1481,7 @@ public class CliExecutorService : ICliExecutorService
             arguments = tool.ArgumentTemplate.Replace("{prompt}", escapedPrompt);
         }
         
-        // 解析命令路径(如果配置了npm目录且命令是相对路径)
+        // 瑙ｆ瀽鍛戒护璺緞(濡傛灉閰嶇疆浜唍pm鐩綍涓斿懡浠ゆ槸鐩稿璺緞)
         var commandPath = ResolveCommandPath(tool.Command);
 
         _logger.LogInformation("执行 CLI 工具: {Tool}, 会话: {Session}, 工作目录: {Workspace}, 命令: {Command} {Arguments}", 
@@ -1236,21 +1500,21 @@ public class CliExecutorService : ICliExecutorService
             StandardErrorEncoding = Encoding.UTF8
         };
 
-        // 设置工作目录
+        // 璁剧疆宸ヤ綔鐩綍
         if (!string.IsNullOrWhiteSpace(tool.WorkingDirectory))
         {
             startInfo.WorkingDirectory = tool.WorkingDirectory;
         }
         else
         {
-            // 使用会话专属的工作目录
+            // 浣跨敤浼氳瘽涓撳睘鐨勫伐浣滅洰褰?
             startInfo.WorkingDirectory = sessionWorkspace;
         }
 
         var workingDirectoryError = GetWorkingDirectoryValidationError(startInfo.WorkingDirectory, sessionId);
         if (workingDirectoryError != null)
         {
-            _logger.LogWarning("启动 CLI 进程前发现无效工作目录: {WorkingDirectory}", startInfo.WorkingDirectory);
+            _logger.LogWarning("鍚姩 CLI 杩涚▼鍓嶅彂鐜版棤鏁堝伐浣滅洰褰? {WorkingDirectory}", startInfo.WorkingDirectory);
             yield return new StreamOutputChunk
             {
                 IsError = true,
@@ -1260,13 +1524,13 @@ public class CliExecutorService : ICliExecutorService
             yield break;
         }
 
-        // 设置环境变量
+        // 璁剧疆鐜鍙橀噺
         if (environmentVariables != null && environmentVariables.Count > 0)
         {
             foreach (var kvp in environmentVariables)
             {
-                // 空字符串表示显式移除环境变量（用于取消继承父进程的环境变量）
-                // 这对于像 CLAUDECODE 这样的变量很重要，需要完全未设置而不是空字符串
+                // 绌哄瓧绗︿覆琛ㄧず鏄惧紡绉婚櫎鐜鍙橀噺锛堢敤浜庡彇娑堢户鎵跨埗杩涚▼鐨勭幆澧冨彉閲忥級
+                // 杩欏浜庡儚 CLAUDECODE 杩欐牱鐨勫彉閲忓緢閲嶈锛岄渶瑕佸畬鍏ㄦ湭璁剧疆鑰屼笉鏄┖瀛楃涓?
                 if (string.IsNullOrEmpty(kvp.Value))
                 {
                     if (startInfo.EnvironmentVariables.ContainsKey(kvp.Key))
@@ -1276,12 +1540,12 @@ public class CliExecutorService : ICliExecutorService
                     }
                     continue;
                 }
-                // 非空值正常设置
+                // 闈炵┖鍊兼甯歌缃?
                 startInfo.EnvironmentVariables[kvp.Key] = kvp.Value;
                 _logger.LogDebug("设置环境变量: {Key} = {Value}", kvp.Key, kvp.Value);
             }
             
-            // 在 Windows 上额外设置编码相关环境变量(仅在已修改环境变量时)
+            // 鍦?Windows 涓婇澶栬缃紪鐮佺浉鍏崇幆澧冨彉閲?浠呭湪宸蹭慨鏀圭幆澧冨彉閲忔椂)
             if (OperatingSystem.IsWindows())
             {
                 if (!startInfo.EnvironmentVariables.ContainsKey("PYTHONIOENCODING"))
@@ -1294,7 +1558,7 @@ public class CliExecutorService : ICliExecutorService
                     startInfo.EnvironmentVariables["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8";
                     _logger.LogDebug("设置环境变量: PYTHONLEGACYWINDOWSSTDIO = utf-8");
                 }
-                // 设置控制台输出代码页为 UTF-8
+                // 璁剧疆鎺у埗鍙拌緭鍑轰唬鐮侀〉涓?UTF-8
                 if (!startInfo.EnvironmentVariables.ContainsKey("PYTHONLEGACYWINDOWSFSENCODING"))
                 {
                     startInfo.EnvironmentVariables["PYTHONLEGACYWINDOWSFSENCODING"] = "utf-8";
@@ -1311,7 +1575,7 @@ public class CliExecutorService : ICliExecutorService
 
         process = new Process { StartInfo = startInfo };
 
-        // 启动进程
+        // 鍚姩杩涚▼
         bool processStarted = false;
         string? startErrorMessage = null;
         
@@ -1325,7 +1589,7 @@ public class CliExecutorService : ICliExecutorService
             startErrorMessage = $"启动进程失败: {ex.Message}";
         }
 
-        // 检查启动错误
+        // 妫€鏌ュ惎鍔ㄩ敊璇?
         if (startErrorMessage != null)
         {
             yield return new StreamOutputChunk
@@ -1350,11 +1614,13 @@ public class CliExecutorService : ICliExecutorService
             yield break;
         }
 
+        RegisterActiveSessionProcess(sessionId, process);
+
         WriteStandardInput(process, BuildStandardInput(tool, adapter, sessionContext, useLowInterruption, lowInterruptionPrompt));
         
         _logger.LogInformation("进程已启动，PID: {ProcessId}，开始读取输出流", process.Id);
 
-        // 创建超时取消令牌
+        // 鍒涘缓瓒呮椂鍙栨秷浠ょ墝
         using var timeoutCts = new CancellationTokenSource();
         if (tool.TimeoutSeconds > 0)
         {
@@ -1365,22 +1631,22 @@ public class CliExecutorService : ICliExecutorService
             cancellationToken, timeoutCts.Token);
         using var streamReadCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token);
 
-        // 同时读取标准输出和错误输出
-        // 注意：某些 CLI 工具（如 Codex）会将正常输出也输出到 stderr
-        _logger.LogInformation("创建标准输出读取任务");
+        // 鍚屾椂璇诲彇鏍囧噯杈撳嚭鍜岄敊璇緭鍑?
+        // 娉ㄦ剰锛氭煇浜?CLI 宸ュ叿锛堝 Codex锛変細灏嗘甯歌緭鍑轰篃杈撳嚭鍒?stderr
+        _logger.LogInformation("鍒涘缓鏍囧噯杈撳嚭璇诲彇浠诲姟");
         var outputTask = ReadStreamAsync(process.StandardOutput, false, streamReadCts.Token);
-        _logger.LogInformation("创建错误输出读取任务");
-        var errorTask = ReadStreamAsync(process.StandardError, false, streamReadCts.Token); // 不标记为错误
+        _logger.LogInformation("鍒涘缓閿欒杈撳嚭璇诲彇浠诲姟");
+        var errorTask = ReadStreamAsync(process.StandardError, false, streamReadCts.Token); // 涓嶆爣璁颁负閿欒
 
-        _logger.LogInformation("开始合并流输出");
+        _logger.LogInformation("寮€濮嬪悎骞舵祦杈撳嚭");
         int chunkCount = 0;
         bool terminalEventDetected = false;
         bool terminalEventIsError = false;
         string? terminalEventErrorMessage = null;
         var terminalEventBuffer = hasAdapter && adapter!.SupportsStreamParsing ? new StringBuilder() : null;
-        var fullOutput = new StringBuilder(); // 用于解析thread id
+        var fullOutput = new StringBuilder(); // 鐢ㄤ簬瑙ｆ瀽thread id
 
-        // 合并两个流的输出
+        // 鍚堝苟涓や釜娴佺殑杈撳嚭
         await using var mergedEnumerator = MergeStreamsAsync(outputTask, errorTask, streamReadCts.Token).GetAsyncEnumerator();
         while (true)
         {
@@ -1397,7 +1663,7 @@ public class CliExecutorService : ICliExecutorService
             catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
             {
                 _logger.LogInformation(
-                    "流输出合并已取消，等待后续超时/取消收尾逻辑: Tool={Tool}, Session={Session}, TimeoutTriggered={TimeoutTriggered}, CallerCancelled={CallerCancelled}",
+                    "娴佽緭鍑哄悎骞跺凡鍙栨秷锛岀瓑寰呭悗缁秴鏃?鍙栨秷鏀跺熬閫昏緫: Tool={Tool}, Session={Session}, TimeoutTriggered={TimeoutTriggered}, CallerCancelled={CallerCancelled}",
                     tool.Name,
                     sessionId,
                     timeoutCts.IsCancellationRequested,
@@ -1407,7 +1673,7 @@ public class CliExecutorService : ICliExecutorService
 
             chunkCount++;
 
-            // 收集输出用于后续解析session id
+            // 鏀堕泦杈撳嚭鐢ㄤ簬鍚庣画瑙ｆ瀽session id
             if (!chunk.IsError && !string.IsNullOrEmpty(chunk.Content))
             {
                 fullOutput.Append(chunk.Content);
@@ -1434,7 +1700,7 @@ public class CliExecutorService : ICliExecutorService
             if (terminalEventDetected)
             {
                 _logger.LogInformation(
-                    "检测到一次性进程适配器终止事件，提前结束当前轮输出读取: Tool={ToolId}, Session={SessionId}, IsError={IsError}",
+                    "妫€娴嬪埌涓€娆℃€ц繘绋嬮€傞厤鍣ㄧ粓姝簨浠讹紝鎻愬墠缁撴潫褰撳墠杞緭鍑鸿鍙? Tool={ToolId}, Session={SessionId}, IsError={IsError}",
                     tool.Id,
                     sessionId,
                     terminalEventIsError);
@@ -1465,7 +1731,7 @@ public class CliExecutorService : ICliExecutorService
             }
         }
         
-        // 如果有适配器且还没有CLI线程ID，尝试从输出中解析
+        // 濡傛灉鏈夐€傞厤鍣ㄤ笖杩樻病鏈塁LI绾跨▼ID锛屽皾璇曚粠杈撳嚭涓В鏋?
         if (hasAdapter && string.IsNullOrEmpty(cliThreadId))
         {
             var output = fullOutput.ToString();
@@ -1473,12 +1739,12 @@ public class CliExecutorService : ICliExecutorService
             if (!string.IsNullOrEmpty(parsedThreadId))
             {
                 SetCliThreadId(sessionId, parsedThreadId);
-                _logger.LogInformation("解析到CLI Thread ID: {CliThread} for 会话: {Session}", parsedThreadId, sessionId);
+                _logger.LogInformation("瑙ｆ瀽鍒癈LI Thread ID: {CliThread} for 浼氳瘽: {Session}", parsedThreadId, sessionId);
             }
         }
         
 
-        // 等待进程退出
+        // 绛夊緟杩涚▼閫€鍑?
         bool processTimedOut = false;
         bool processCancelled = false;
         
@@ -1508,7 +1774,7 @@ public class CliExecutorService : ICliExecutorService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "终止进程失败");
+                        _logger.LogWarning(ex, "缁堟杩涚▼澶辫触");
                     }
                 }
                 else
@@ -1523,7 +1789,7 @@ public class CliExecutorService : ICliExecutorService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "取消执行时终止进程失败");
+                        _logger.LogWarning(ex, "Failed to terminate process after cancellation.");
                     }
                 }
             }
@@ -1535,7 +1801,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = $"执行超时（{tool.TimeoutSeconds} 秒）"
+                ErrorMessage = $"执行超时 ({tool.TimeoutSeconds} 秒)。"
             };
         }
         else if (processCancelled)
@@ -1544,7 +1810,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = "执行已取消"
+                ErrorMessage = "执行已取消。"
             };
         }
         else if (terminalEventDetected && terminalEventIsError)
@@ -1553,7 +1819,7 @@ public class CliExecutorService : ICliExecutorService
             {
                 IsError = true,
                 IsCompleted = true,
-                ErrorMessage = terminalEventErrorMessage ?? "执行失败"
+                ErrorMessage = terminalEventErrorMessage ?? "鎵ц澶辫触"
             };
         }
         else if (terminalEventDetected)
@@ -1564,7 +1830,7 @@ public class CliExecutorService : ICliExecutorService
                 Content = string.Empty
             };
 
-            _logger.LogInformation("CLI 工具通过语义终止事件完成: {Tool}", tool.Name);
+            _logger.LogInformation("CLI 宸ュ叿閫氳繃璇箟缁堟浜嬩欢瀹屾垚: {Tool}", tool.Name);
         }
         else if (process.ExitCode != 0)
         {
@@ -1578,22 +1844,23 @@ public class CliExecutorService : ICliExecutorService
                 ErrorMessage = failureMessage
             };
 
-            _logger.LogWarning("CLI 工具执行失败: {Tool}, 退出代码: {ExitCode}, 错误信息: {ErrorMessage}",
+            _logger.LogWarning("CLI 宸ュ叿鎵ц澶辫触: {Tool}, 閫€鍑轰唬鐮? {ExitCode}, 閿欒淇℃伅: {ErrorMessage}",
                 tool.Name, process.ExitCode, failureMessage);
         }
         else
         {
-            // 返回完成标记
+            // 杩斿洖瀹屾垚鏍囪
             yield return new StreamOutputChunk
             {
                 IsCompleted = true,
                 Content = string.Empty
             };
 
-            _logger.LogInformation("CLI 工具执行完成: {Tool}, 退出代码: {ExitCode}", 
+            _logger.LogInformation("CLI 宸ュ叿鎵ц瀹屾垚: {Tool}, 閫€鍑轰唬鐮? {ExitCode}", 
                 tool.Name, process.ExitCode);
         }
 
+        UnregisterActiveSessionProcess(sessionId, process);
         process?.Dispose();
     }
 
@@ -1609,7 +1876,7 @@ public class CliExecutorService : ICliExecutorService
                 TimeSpan.FromSeconds(5),
                 toolId,
                 sessionId,
-                "等待语义终止后的进程自然退出时发生异常"))
+                "绛夊緟璇箟缁堟鍚庣殑杩涚▼鑷劧閫€鍑烘椂鍙戠敓寮傚父"))
         {
             return;
         }
@@ -1622,7 +1889,7 @@ public class CliExecutorService : ICliExecutorService
         try
         {
             _logger.LogInformation(
-                "语义终止事件已到达，优雅退出仍未完成，开始强制结束一次性进程: Tool={ToolId}, Session={SessionId}, PID={ProcessId}",
+                "璇箟缁堟浜嬩欢宸插埌杈撅紝浼橀泤閫€鍑轰粛鏈畬鎴愶紝寮€濮嬪己鍒剁粨鏉熶竴娆℃€ц繘绋? Tool={ToolId}, Session={SessionId}, PID={ProcessId}",
                 toolId,
                 sessionId,
                 process.Id);
@@ -1630,7 +1897,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "主动结束一次性进程失败: Tool={ToolId}, Session={SessionId}", toolId, sessionId);
+            _logger.LogWarning(ex, "涓诲姩缁撴潫涓€娆℃€ц繘绋嬪け璐? Tool={ToolId}, Session={SessionId}", toolId, sessionId);
             return;
         }
 
@@ -1639,11 +1906,11 @@ public class CliExecutorService : ICliExecutorService
             TimeSpan.FromSeconds(2),
             toolId,
             sessionId,
-            "等待被终止的一次性进程退出时发生异常");
+            "绛夊緟琚粓姝㈢殑涓€娆℃€ц繘绋嬮€€鍑烘椂鍙戠敓寮傚父");
     }
 
     /// <summary>
-    /// 语义完成后优先尝试温和结束 CLI，尽量给原生 history/rollout 刷盘留时间，再回退到强制结束。
+    /// 璇箟瀹屾垚鍚庝紭鍏堝皾璇曟俯鍜岀粨鏉?CLI锛屽敖閲忕粰鍘熺敓 history/rollout 鍒风洏鐣欐椂闂达紝鍐嶅洖閫€鍒板己鍒剁粨鏉熴€?
     /// </summary>
     protected virtual async Task<bool> TryRequestGracefulProcessExitAsync(Process process, string toolId, string sessionId)
     {
@@ -1658,7 +1925,7 @@ public class CliExecutorService : ICliExecutorService
                 TimeSpan.FromSeconds(3),
                 toolId,
                 sessionId,
-                "等待主窗口关闭后进程退出时发生异常"))
+                "绛夊緟涓荤獥鍙ｅ叧闂悗杩涚▼閫€鍑烘椂鍙戠敓寮傚父"))
         {
             return true;
         }
@@ -1700,7 +1967,7 @@ public class CliExecutorService : ICliExecutorService
             }
 
             _logger.LogInformation(
-                "语义终止事件已到达，已请求一次性进程通过主窗口关闭退出: Tool={ToolId}, Session={SessionId}, PID={ProcessId}",
+                "璇箟缁堟浜嬩欢宸插埌杈撅紝宸茶姹備竴娆℃€ц繘绋嬮€氳繃涓荤獥鍙ｅ叧闂€€鍑? Tool={ToolId}, Session={SessionId}, PID={ProcessId}",
                 toolId,
                 sessionId,
                 process.Id);
@@ -1708,7 +1975,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "请求一次性进程通过主窗口关闭退出失败: Tool={ToolId}, Session={SessionId}", toolId, sessionId);
+            _logger.LogDebug(ex, "璇锋眰涓€娆℃€ц繘绋嬮€氳繃涓荤獥鍙ｅ叧闂€€鍑哄け璐? Tool={ToolId}, Session={SessionId}", toolId, sessionId);
             return false;
         }
     }
@@ -1718,7 +1985,7 @@ public class CliExecutorService : ICliExecutorService
         bool isErrorStream,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("开始读取流，isErrorStream: {IsError}", isErrorStream);
+        _logger.LogInformation("寮€濮嬭鍙栨祦锛宨sErrorStream: {IsError}", isErrorStream);
         var buffer = new char[4096];
         int chunkCount = 0;
 
@@ -1732,18 +1999,18 @@ public class CliExecutorService : ICliExecutorService
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("读取流被取消，isErrorStream: {IsError}, 已读取 {Count} 块", isErrorStream, chunkCount);
+                _logger.LogInformation("Stream read canceled, isErrorStream: {IsError}, chunksRead: {Count}", isErrorStream, chunkCount);
                 break;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "读取流时发生错误，isErrorStream: {IsError}", isErrorStream);
+                _logger.LogWarning(ex, "璇诲彇娴佹椂鍙戠敓閿欒锛宨sErrorStream: {IsError}", isErrorStream);
                 break;
             }
 
             if (charsRead <= 0)
             {
-                _logger.LogInformation("流结束，isErrorStream: {IsError}, 共读取 {Count} 块", isErrorStream, chunkCount);
+                _logger.LogInformation("Stream ended, isErrorStream: {IsError}, totalChunks: {Count}", isErrorStream, chunkCount);
                 break;
             }
 
@@ -1753,7 +2020,7 @@ public class CliExecutorService : ICliExecutorService
             if (!trimmedPreview.StartsWith("{\"type\":\"system\""))
             {
                 var preview = content.Length > 100 ? content[..100] + "..." : content;
-                _logger.LogDebug("CLI输出块: {Preview}", preview.Replace("\r", "\\r").Replace("\n", "\\n"));
+                _logger.LogDebug("CLI杈撳嚭鍧? {Preview}", preview.Replace("\r", "\\r").Replace("\n", "\\n"));
             }
 
             yield return (content, isErrorStream);
@@ -1765,11 +2032,11 @@ public class CliExecutorService : ICliExecutorService
         IAsyncEnumerable<(string content, bool isError)> errorStream,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // 使用 Channel 来更高效地合并两个流
+        // 浣跨敤 Channel 鏉ユ洿楂樻晥鍦板悎骞朵袱涓祦
         var channel = System.Threading.Channels.Channel.CreateUnbounded<StreamOutputChunk>();
         var writer = channel.Writer;
 
-        // 读取标准输出流的任务
+        // 璇诲彇鏍囧噯杈撳嚭娴佺殑浠诲姟
         var outputTask = Task.Run(async () =>
         {
             try
@@ -1786,15 +2053,15 @@ public class CliExecutorService : ICliExecutorService
             }
             catch (OperationCanceledException)
             {
-                _logger.LogDebug("标准输出流读取被取消");
+                _logger.LogDebug("鏍囧噯杈撳嚭娴佽鍙栬鍙栨秷");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "读取标准输出流时发生错误");
+                _logger.LogWarning(ex, "璇诲彇鏍囧噯杈撳嚭娴佹椂鍙戠敓閿欒");
             }
         }, cancellationToken);
 
-        // 读取错误输出流的任务
+        // 璇诲彇閿欒杈撳嚭娴佺殑浠诲姟
         var errorTask = Task.Run(async () =>
         {
             try
@@ -1811,22 +2078,22 @@ public class CliExecutorService : ICliExecutorService
             }
             catch (OperationCanceledException)
             {
-                _logger.LogDebug("错误输出流读取被取消");
+                _logger.LogDebug("閿欒杈撳嚭娴佽鍙栬鍙栨秷");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "读取错误输出流时发生错误");
+                _logger.LogWarning(ex, "璇诲彇閿欒杈撳嚭娴佹椂鍙戠敓閿欒");
             }
         }, cancellationToken);
 
-        // 等待所有读取任务完成后关闭 writer
+        // 绛夊緟鎵€鏈夎鍙栦换鍔″畬鎴愬悗鍏抽棴 writer
         _ = Task.WhenAll(outputTask, errorTask).ContinueWith(_ =>
         {
             writer.Complete();
-            _logger.LogDebug("所有流读取完成，关闭 channel");
+            _logger.LogDebug("鎵€鏈夋祦璇诲彇瀹屾垚锛屽叧闂?channel");
         }, cancellationToken);
 
-        // 从 channel 中读取并返回结果
+        // 浠?channel 涓鍙栧苟杩斿洖缁撴灉
         await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
         {
             yield return chunk;
@@ -1864,7 +2131,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "按用户过滤 CLI 工具失败，回退到全局工具列表");
+            _logger.LogWarning(ex, "鎸夌敤鎴疯繃婊?CLI 宸ュ叿澶辫触锛屽洖閫€鍒板叏灞€宸ュ叿鍒楄〃");
             return enabledTools;
         }
     }
@@ -1883,23 +2150,23 @@ public class CliExecutorService : ICliExecutorService
             return false;
         }
 
-        // 验证命令是否存在（简单检查）
+        // 楠岃瘉鍛戒护鏄惁瀛樺湪锛堢畝鍗曟鏌ワ級
         try
         {
-            // 对于 Windows 系统，检查命令是否可执行
+            // 瀵逛簬 Windows 绯荤粺锛屾鏌ュ懡浠ゆ槸鍚﹀彲鎵ц
             if (OperatingSystem.IsWindows())
             {
-                // 如果是完整路径，检查文件是否存在
+                // 濡傛灉鏄畬鏁磋矾寰勶紝妫€鏌ユ枃浠舵槸鍚﹀瓨鍦?
                 if (Path.IsPathRooted(tool.Command))
                 {
                     return File.Exists(tool.Command);
                 }
-                // 否则假设是系统命令，返回 true
+                // 鍚﹀垯鍋囪鏄郴缁熷懡浠わ紝杩斿洖 true
                 return true;
             }
             else
             {
-                // 对于 Linux/Mac，可以使用 which 命令检查
+                // 瀵逛簬 Linux/Mac锛屽彲浠ヤ娇鐢?which 鍛戒护妫€鏌?
                 return true;
             }
         }
@@ -1910,7 +2177,7 @@ public class CliExecutorService : ICliExecutorService
     }
 
     /// <summary>
-    /// 转义命令行参数以防止注入攻击
+    /// 杞箟鍛戒护琛屽弬鏁颁互闃叉娉ㄥ叆鏀诲嚮
     /// </summary>
     private string EscapeArgument(string argument)
     {
@@ -1919,21 +2186,21 @@ public class CliExecutorService : ICliExecutorService
             return "\"\"";
         }
 
-        // 对于 Windows 系统
+        // 瀵逛簬 Windows 绯荤粺
         if (OperatingSystem.IsWindows())
         {
-            // 替换双引号并用双引号包裹
+            // 鏇挎崲鍙屽紩鍙峰苟鐢ㄥ弻寮曞彿鍖呰９
             return $"\"{argument.Replace("\"", "\\\"")}\"";
         }
         else
         {
-            // 对于 Linux/Mac 系统
+            // 瀵逛簬 Linux/Mac 绯荤粺
             return $"'{argument.Replace("'", "'\\''")}'";
         }
     }
 
     /// <summary>
-    /// 获取或创建会话专属的工作目录
+    /// 鑾峰彇鎴栧垱寤轰細璇濅笓灞炵殑宸ヤ綔鐩綍
     /// </summary>
     private string GetOrCreateSessionWorkspace(string sessionId)
     {
@@ -1946,11 +2213,11 @@ public class CliExecutorService : ICliExecutorService
                     return existingWorkspace;
                 }
 
-                _logger.LogWarning("缓存中的会话工作目录已不存在，将重新解析: {SessionId}, {Workspace}", sessionId, existingWorkspace);
+                _logger.LogWarning("缂撳瓨涓殑浼氳瘽宸ヤ綔鐩綍宸蹭笉瀛樺湪锛屽皢閲嶆柊瑙ｆ瀽: {SessionId}, {Workspace}", sessionId, existingWorkspace);
                 _sessionWorkspaces.Remove(sessionId);
             }
 
-            // 优先使用数据库中已绑定的工作目录（适用于：自定义目录 / 外部会话导入 / 进程重启后恢复）
+            // 浼樺厛浣跨敤鏁版嵁搴撲腑宸茬粦瀹氱殑宸ヤ綔鐩綍锛堥€傜敤浜庯細鑷畾涔夌洰褰?/ 澶栭儴浼氳瘽瀵煎叆 / 杩涚▼閲嶅惎鍚庢仮澶嶏級
             try
             {
                 using var scope = _serviceProvider.CreateScope();
@@ -1965,25 +2232,25 @@ public class CliExecutorService : ICliExecutorService
                         return session.WorkspacePath;
                     }
 
-                    // 自定义目录但不存在时，避免悄悄创建临时目录导致误用
+                    // 鑷畾涔夌洰褰曚絾涓嶅瓨鍦ㄦ椂锛岄伩鍏嶆倓鎮勫垱寤轰复鏃剁洰褰曞鑷磋鐢?
                     if (session.IsCustomWorkspace && !string.IsNullOrWhiteSpace(session.WorkspacePath))
                     {
                         throw new InvalidOperationException(
-                            $"会话 {sessionId} 工作目录不存在或已被清理，请重新创建会话");
+                            $"浼氳瘽 {sessionId} 宸ヤ綔鐩綍涓嶅瓨鍦ㄦ垨宸茶娓呯悊锛岃閲嶆柊鍒涘缓浼氳瘽");
                     }
                 }
             }
             catch (InvalidOperationException)
             {
-                // 自定义目录不存在时：直接失败，避免静默创建临时目录导致误用
+                // 鑷畾涔夌洰褰曚笉瀛樺湪鏃讹細鐩存帴澶辫触锛岄伩鍏嶉潤榛樺垱寤轰复鏃剁洰褰曞鑷磋鐢?
                 throw;
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "从数据库恢复会话工作目录失败，将创建临时目录: {SessionId}", sessionId);
+                _logger.LogDebug(ex, "浠庢暟鎹簱鎭㈠浼氳瘽宸ヤ綔鐩綍澶辫触锛屽皢鍒涘缓涓存椂鐩綍: {SessionId}", sessionId);
             }
 
-            // 创建新的会话工作目录
+            // 鍒涘缓鏂扮殑浼氳瘽宸ヤ綔鐩綍
             var workspaceRoot = GetEffectiveWorkspaceRoot();
             var workspacePath = Path.Combine(workspaceRoot, sessionId);
             
@@ -1992,16 +2259,16 @@ public class CliExecutorService : ICliExecutorService
                 if (!Directory.Exists(workspacePath))
                 {
                     Directory.CreateDirectory(workspacePath);
-                    _logger.LogInformation("为会话 {SessionId} 创建工作目录: {Path}", sessionId, workspacePath);
+                    _logger.LogInformation("涓轰細璇?{SessionId} 鍒涘缓宸ヤ綔鐩綍: {Path}", sessionId, workspacePath);
                 }
 
                 _sessionWorkspaces[sessionId] = workspacePath;
                 
-                // 在工作目录中创建一个标记文件,记录创建时间
+                // 鍦ㄥ伐浣滅洰褰曚腑鍒涘缓涓€涓爣璁版枃浠?璁板綍鍒涘缓鏃堕棿
                 var markerFile = Path.Combine(workspacePath, ".workspace_info");
                 File.WriteAllText(markerFile, $"Created: {DateTime.UtcNow:O}\nSessionId: {sessionId}");
 
-                // 最佳努力：把新创建的临时目录绑定写回数据库，避免后续 GetSessionWorkspacePath 查询不到
+                // 鏈€浣冲姫鍔涳細鎶婃柊鍒涘缓鐨勪复鏃剁洰褰曠粦瀹氬啓鍥炴暟鎹簱锛岄伩鍏嶅悗缁?GetSessionWorkspacePath 鏌ヨ涓嶅埌
                 try
                 {
                     using var scope = _serviceProvider.CreateScope();
@@ -2014,29 +2281,29 @@ public class CliExecutorService : ICliExecutorService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "写回会话工作目录绑定失败(可忽略): {SessionId}", sessionId);
+                    _logger.LogDebug(ex, "鍐欏洖浼氳瘽宸ヤ綔鐩綍缁戝畾澶辫触(鍙拷鐣?: {SessionId}", sessionId);
                 }
                 
                 return workspacePath;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "创建会话工作目录失败: {SessionId}", sessionId);
-                // 创建失败直接抛出异常，不降级使用根目录
-                throw new InvalidOperationException($"创建会话 {sessionId} 工作目录失败: {ex.Message}", ex);
+                _logger.LogError(ex, "鍒涘缓浼氳瘽宸ヤ綔鐩綍澶辫触: {SessionId}", sessionId);
+                // 鍒涘缓澶辫触鐩存帴鎶涘嚭寮傚父锛屼笉闄嶇骇浣跨敤鏍圭洰褰?
+                throw new InvalidOperationException($"鍒涘缓浼氳瘽 {sessionId} 宸ヤ綔鐩綍澶辫触: {ex.Message}", ex);
             }
         }
     }
 
     /// <summary>
-    /// 清理指定会话的工作区
+    /// 娓呯悊鎸囧畾浼氳瘽鐨勫伐浣滃尯
     /// </summary>
     public void CleanupSessionWorkspace(string sessionId)
     {
-        // 清理持久化进程
+        // 娓呯悊鎸佷箙鍖栬繘绋?
         _processManager.CleanupSessionProcesses(sessionId);
 
-        // 清理CLI thread id
+        // 娓呯悊CLI thread id
         lock (_cliSessionLock)
         {
             _cliThreadIds.Remove(sessionId);
@@ -2045,7 +2312,7 @@ public class CliExecutorService : ICliExecutorService
         string? workspacePath = null;
         bool isCustomWorkspace = false;
 
-        // 查询会话信息判断目录类型
+        // 鏌ヨ浼氳瘽淇℃伅鍒ゆ柇鐩綍绫诲瀷
         try
         {
             using var scope = _serviceProvider.CreateScope();
@@ -2060,10 +2327,10 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "查询会话 {SessionId} 信息失败，将按临时目录处理", sessionId);
+            _logger.LogWarning(ex, "Failed to query session info for {SessionId}; falling back to temp workspace handling.", sessionId);
         }
 
-        // 清理内存缓存
+        // 娓呯悊鍐呭瓨缂撳瓨
         lock (_workspaceLock)
         {
             if (_sessionWorkspaces.TryGetValue(sessionId, out var cachedPath))
@@ -2073,14 +2340,14 @@ public class CliExecutorService : ICliExecutorService
             }
         }
 
-        // 自定义目录：只解除绑定，不删除内容
+        // 鑷畾涔夌洰褰曪細鍙В闄ょ粦瀹氾紝涓嶅垹闄ゅ唴瀹?
         if (isCustomWorkspace)
         {
-            _logger.LogInformation("已解除自定义目录会话 {SessionId} 的绑定，保留目录内容: {Path}", sessionId, workspacePath);
+            _logger.LogInformation("宸茶В闄よ嚜瀹氫箟鐩綍浼氳瘽 {SessionId} 鐨勭粦瀹氾紝淇濈暀鐩綍鍐呭: {Path}", sessionId, workspacePath);
             return;
         }
 
-        // 临时目录：执行删除逻辑
+        // 涓存椂鐩綍锛氭墽琛屽垹闄ら€昏緫
         if (string.IsNullOrEmpty(workspacePath))
         {
             var workspaceRoot = GetEffectiveWorkspaceRoot();
@@ -2093,11 +2360,11 @@ public class CliExecutorService : ICliExecutorService
             var workspaceFullPath = Path.GetFullPath(workspacePath);
             var expectedTempWorkspacePath = Path.GetFullPath(Path.Combine(rootFullPath, sessionId));
 
-            // 防御：只允许删除 TempWorkspaceRoot 下的临时目录
+            // 闃插尽锛氬彧鍏佽鍒犻櫎 TempWorkspaceRoot 涓嬬殑涓存椂鐩綍
             if (!IsPathWithinDirectory(rootFullPath, workspaceFullPath) ||
                 !string.Equals(workspaceFullPath, expectedTempWorkspacePath, StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("跳过清理非临时目录: {SessionId}, {Path}", sessionId, workspaceFullPath);
+                _logger.LogWarning("璺宠繃娓呯悊闈炰复鏃剁洰褰? {SessionId}, {Path}", sessionId, workspaceFullPath);
                 return;
             }
 
@@ -2106,27 +2373,27 @@ public class CliExecutorService : ICliExecutorService
                 try
                 {
                     Directory.Delete(workspaceFullPath, recursive: true);
-                    _logger.LogInformation("已清理临时会话 {SessionId} 的工作目录: {Path}", sessionId, workspaceFullPath);
+                    _logger.LogInformation("宸叉竻鐞嗕复鏃朵細璇?{SessionId} 鐨勫伐浣滅洰褰? {Path}", sessionId, workspaceFullPath);
                 }
                 catch (Exception ex)
                 {
-                    // Windows 上常见原因：只读属性、被占用。
+                    // Windows 涓婂父瑙佸師鍥狅細鍙灞炴€с€佽鍗犵敤銆?
                     try
                     {
                         NormalizeDirectoryAttributes(workspaceFullPath);
                         Directory.Delete(workspaceFullPath, recursive: true);
-                        _logger.LogInformation("已清理临时会话 {SessionId} 的工作目录(重试成功): {Path}", sessionId, workspaceFullPath);
+                        _logger.LogInformation("宸叉竻鐞嗕复鏃朵細璇?{SessionId} 鐨勫伐浣滅洰褰?閲嶈瘯鎴愬姛): {Path}", sessionId, workspaceFullPath);
                     }
                     catch
                     {
-                        _logger.LogWarning(ex, "清理临时会话工作目录失败: {SessionId}, {Path}", sessionId, workspaceFullPath);
+                        _logger.LogWarning(ex, "娓呯悊涓存椂浼氳瘽宸ヤ綔鐩綍澶辫触: {SessionId}, {Path}", sessionId, workspaceFullPath);
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "清理临时会话工作目录失败(路径解析异常): {SessionId}", sessionId);
+            _logger.LogWarning(ex, "娓呯悊涓存椂浼氳瘽宸ヤ綔鐩綍澶辫触(璺緞瑙ｆ瀽寮傚父): {SessionId}", sessionId);
         }
     }
 
@@ -2134,7 +2401,7 @@ public class CliExecutorService : ICliExecutorService
     {
         try
         {
-            // 先处理文件
+            // 鍏堝鐞嗘枃浠?
             foreach (var file in Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories))
             {
                 try
@@ -2143,11 +2410,11 @@ public class CliExecutorService : ICliExecutorService
                 }
                 catch
                 {
-                    // 忽略单个文件失败
+                    // 蹇界暐鍗曚釜鏂囦欢澶辫触
                 }
             }
 
-            // 再处理目录
+            // 鍐嶅鐞嗙洰褰?
             foreach (var dir in Directory.EnumerateDirectories(directoryPath, "*", SearchOption.AllDirectories))
             {
                 try
@@ -2156,11 +2423,11 @@ public class CliExecutorService : ICliExecutorService
                 }
                 catch
                 {
-                    // 忽略单个目录失败
+                    // 蹇界暐鍗曚釜鐩綍澶辫触
                 }
             }
 
-            // 最后处理根目录
+            // 鏈€鍚庡鐞嗘牴鐩綍
             try
             {
                 new DirectoryInfo(directoryPath).Attributes = FileAttributes.Normal;
@@ -2177,7 +2444,7 @@ public class CliExecutorService : ICliExecutorService
     }
     
     /// <summary>
-    /// 使用适配器从CLI输出中解析thread id
+    /// 浣跨敤閫傞厤鍣ㄤ粠CLI杈撳嚭涓В鏋恡hread id
     /// </summary>
     private string? ParseCliThreadId(string output, ICliToolAdapter adapter)
     {
@@ -2192,31 +2459,31 @@ public class CliExecutorService : ICliExecutorService
                     continue;
                 }
 
-                // 使用适配器解析输出行
+                // 浣跨敤閫傞厤鍣ㄨВ鏋愯緭鍑鸿
                 var outputEvent = adapter.ParseOutputLine(trimmedLine);
                 if (outputEvent != null)
                 {
                     var sessionId = adapter.ExtractSessionId(outputEvent);
                     if (!string.IsNullOrWhiteSpace(sessionId))
                     {
-                        _logger.LogDebug("从输出中解析到CLI thread id: {ThreadId}", sessionId);
+                        _logger.LogDebug("浠庤緭鍑轰腑瑙ｆ瀽鍒癈LI thread id: {ThreadId}", sessionId);
                         return sessionId;
                     }
                 }
             }
 
-            _logger.LogDebug("未能从CLI输出中解析到thread id");
+            _logger.LogDebug("鏈兘浠嶤LI杈撳嚭涓В鏋愬埌thread id");
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "解析CLI thread id失败");
+            _logger.LogError(ex, "瑙ｆ瀽CLI thread id澶辫触");
             return null;
         }
     }
 
     /// <summary>
-    /// 从CLI输出中构建更具体的失败信息，优先返回适配器解析出的上游错误
+    /// 浠嶤LI杈撳嚭涓瀯寤烘洿鍏蜂綋鐨勫け璐ヤ俊鎭紝浼樺厛杩斿洖閫傞厤鍣ㄨВ鏋愬嚭鐨勪笂娓搁敊璇?
     /// </summary>
     private string BuildDetailedFailureMessage(string output, ICliToolAdapter? adapter, int exitCode)
     {
@@ -2229,11 +2496,11 @@ public class CliExecutorService : ICliExecutorService
             }
         }
 
-        return $"执行失败（退出码 {exitCode}）";
+        return $"Execution failed (exit code {exitCode}).";
     }
 
     /// <summary>
-    /// 使用适配器从CLI输出中解析失败原因
+    /// 浣跨敤閫傞厤鍣ㄤ粠CLI杈撳嚭涓В鏋愬け璐ュ師鍥?
     /// </summary>
     private string? ParseCliFailureMessage(string output, ICliToolAdapter adapter)
     {
@@ -2274,7 +2541,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "解析CLI失败信息失败");
+            _logger.LogDebug(ex, "瑙ｆ瀽CLI澶辫触淇℃伅澶辫触");
             return null;
         }
     }
@@ -2310,15 +2577,15 @@ public class CliExecutorService : ICliExecutorService
     private static bool IsTransientFailureMessage(string message)
     {
         return message.StartsWith("Reconnecting...", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(message, "本轮交互失败。", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(message, "发生未知错误。", StringComparison.OrdinalIgnoreCase);
+               string.Equals(message, "Current interaction failed.", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(message, "An unknown error occurred.", StringComparison.OrdinalIgnoreCase);
     }
     
     /// <summary>
-    /// 从Codex输出中解析thread id（兼容旧版session id格式）
-    /// 已废弃，保留用于向后兼容
+    /// 浠嶤odex杈撳嚭涓В鏋恡hread id锛堝吋瀹规棫鐗坰ession id鏍煎紡锛?
+    /// 宸插簾寮冿紝淇濈暀鐢ㄤ簬鍚戝悗鍏煎
     /// </summary>
-    [Obsolete("请使用 ParseCliThreadId 方法")]
+    [Obsolete("璇蜂娇鐢?ParseCliThreadId 鏂规硶")]
     private string? ParseCodexThreadId(string output)
     {
         try
@@ -2332,7 +2599,7 @@ public class CliExecutorService : ICliExecutorService
                     continue;
                 }
 
-                // 优先尝试解析JSONL格式
+                // 浼樺厛灏濊瘯瑙ｆ瀽JSONL鏍煎紡
                 if (trimmedLine.StartsWith("{", StringComparison.Ordinal))
                 {
                     try
@@ -2345,7 +2612,7 @@ public class CliExecutorService : ICliExecutorService
                             var threadId = threadIdElement.GetString();
                             if (!string.IsNullOrWhiteSpace(threadId))
                             {
-                                _logger.LogDebug("从JSONL输出中解析到thread id: {ThreadId}", threadId);
+                                _logger.LogDebug("浠嶫SONL杈撳嚭涓В鏋愬埌thread id: {ThreadId}", threadId);
                                 return threadId;
                             }
                         }
@@ -2357,18 +2624,18 @@ public class CliExecutorService : ICliExecutorService
                             var threadId = itemThreadId.GetString();
                             if (!string.IsNullOrWhiteSpace(threadId))
                             {
-                                _logger.LogDebug("从JSONL item中解析到thread id: {ThreadId}", threadId);
+                                _logger.LogDebug("浠嶫SONL item涓В鏋愬埌thread id: {ThreadId}", threadId);
                                 return threadId;
                             }
                         }
                     }
                     catch (JsonException jsonEx)
                     {
-                        _logger.LogDebug(jsonEx, "解析Codex JSONL行失败，将尝试旧格式");
+                        _logger.LogDebug(jsonEx, "瑙ｆ瀽Codex JSONL琛屽け璐ワ紝灏嗗皾璇曟棫鏍煎紡");
                     }
                 }
 
-                // 兼容旧版本session id文本格式
+                // 鍏煎鏃х増鏈瑂ession id鏂囨湰鏍煎紡
                 if (trimmedLine.StartsWith("session id:", StringComparison.OrdinalIgnoreCase))
                 {
                     var parts = trimmedLine.Split(':', 2);
@@ -2377,25 +2644,25 @@ public class CliExecutorService : ICliExecutorService
                         var legacyId = parts[1].Trim();
                         if (!string.IsNullOrWhiteSpace(legacyId))
                         {
-                            _logger.LogDebug("从旧格式输出中解析到thread id: {ThreadId}", legacyId);
+                            _logger.LogDebug("浠庢棫鏍煎紡杈撳嚭涓В鏋愬埌thread id: {ThreadId}", legacyId);
                             return legacyId;
                         }
                     }
                 }
             }
 
-            _logger.LogWarning("未能从Codex输出中解析到thread id");
+            _logger.LogWarning("鏈兘浠嶤odex杈撳嚭涓В鏋愬埌thread id");
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "解析Codex thread id失败");
+            _logger.LogError(ex, "瑙ｆ瀽Codex thread id澶辫触");
             return null;
         }
     }
     
     /// <summary>
-    /// 转义JSON字符串中的特殊字符
+    /// 杞箟JSON瀛楃涓蹭腑鐨勭壒娈婂瓧绗?
     /// </summary>
     private string EscapeJsonString(string input)
     {
@@ -2405,15 +2672,15 @@ public class CliExecutorService : ICliExecutorService
         }
         
         return input
-            .Replace("\\", "\\\\")  // 反斜杠
-            .Replace("\"", "\\\"")  // 双引号
-            .Replace("\n", "\\n")   // 换行
-            .Replace("\r", "\\r")   // 回车
-            .Replace("\t", "\\t");  // 制表符
+            .Replace("\\", "\\\\")  // 鍙嶆枩鏉?
+            .Replace("\"", "\\\"")  // 鍙屽紩鍙?
+            .Replace("\n", "\\n")   // 鎹㈣
+            .Replace("\r", "\\r")   // 鍥炶溅
+            .Replace("\t", "\\t");  // 鍒惰〃绗?
     }
 
     /// <summary>
-    /// 清理所有过期的会话工作区
+    /// 娓呯悊鎵€鏈夎繃鏈熺殑浼氳瘽宸ヤ綔鍖?
     /// </summary>
     public void CleanupExpiredWorkspaces()
     {
@@ -2428,7 +2695,7 @@ public class CliExecutorService : ICliExecutorService
             var expirationTime = DateTime.UtcNow.AddHours(-_options.WorkspaceExpirationHours);
             var directories = Directory.GetDirectories(workspaceRoot);
             
-            _logger.LogInformation("开始清理过期工作区,总共 {Count} 个目录", directories.Length);
+            _logger.LogInformation("Starting cleanup of expired workspaces. Total directories: {Count}", directories.Length);
 
             foreach (var dir in directories)
             {
@@ -2436,7 +2703,7 @@ public class CliExecutorService : ICliExecutorService
                 {
                     var markerFile = Path.Combine(dir, ".workspace_info");
                     
-                    // 检查标记文件的最后修改时间
+                    // 妫€鏌ユ爣璁版枃浠剁殑鏈€鍚庝慨鏀规椂闂?
                     DateTime lastAccessTime;
                     if (File.Exists(markerFile))
                     {
@@ -2444,7 +2711,7 @@ public class CliExecutorService : ICliExecutorService
                     }
                     else
                     {
-                        // 如果没有标记文件,使用目录的最后访问时间
+                        // 濡傛灉娌℃湁鏍囪鏂囦欢,浣跨敤鐩綍鐨勬渶鍚庤闂椂闂?
                         lastAccessTime = Directory.GetLastWriteTimeUtc(dir);
                     }
 
@@ -2458,23 +2725,23 @@ public class CliExecutorService : ICliExecutorService
                         }
                         
                         Directory.Delete(dir, recursive: true);
-                        _logger.LogInformation("已清理过期工作区: {Path}, 最后访问时间: {Time}", dir, lastAccessTime);
+                        _logger.LogInformation("宸叉竻鐞嗚繃鏈熷伐浣滃尯: {Path}, 鏈€鍚庤闂椂闂? {Time}", dir, lastAccessTime);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "清理目录失败: {Dir}", dir);
+                    _logger.LogWarning(ex, "娓呯悊鐩綍澶辫触: {Dir}", dir);
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "清理过期工作区失败");
+            _logger.LogError(ex, "Failed to clean up expired workspaces.");
         }
     }
 
     /// <summary>
-    /// 获取会话工作区路径
+    /// 鑾峰彇浼氳瘽宸ヤ綔鍖鸿矾寰?
     /// </summary>
     public string GetSessionWorkspacePath(string sessionId)
     {
@@ -2485,7 +2752,7 @@ public class CliExecutorService : ICliExecutorService
                 return path;
             }
 
-            // 缓存丢失时查询数据库获取会话绑定的工作目录
+            // 缂撳瓨涓㈠け鏃舵煡璇㈡暟鎹簱鑾峰彇浼氳瘽缁戝畾鐨勫伐浣滅洰褰?
             using var scope = _serviceProvider.CreateScope();
             var chatSessionRepository = scope.ServiceProvider.GetRequiredService<IChatSessionRepository>();
             var session = chatSessionRepository.GetByIdAsync(sessionId).GetAwaiter().GetResult();
@@ -2496,20 +2763,20 @@ public class CliExecutorService : ICliExecutorService
                 return session.WorkspacePath;
             }
 
-            // 会话不存在或工作目录无效，抛出异常（不自动创建临时目录）
-            throw new InvalidOperationException($"会话 {sessionId} 工作目录不存在或已被清理，请重新创建会话");
+            // 浼氳瘽涓嶅瓨鍦ㄦ垨宸ヤ綔鐩綍鏃犳晥锛屾姏鍑哄紓甯革紙涓嶈嚜鍔ㄥ垱寤轰复鏃剁洰褰曪級
+            throw new InvalidOperationException($"浼氳瘽 {sessionId} 宸ヤ綔鐩綍涓嶅瓨鍦ㄦ垨宸茶娓呯悊锛岃閲嶆柊鍒涘缓浼氳瘽");
         }
     }
     
     /// <summary>
-    /// 初始化会话工作区（可选择关联项目）
+    /// 鍒濆鍖栦細璇濆伐浣滃尯锛堝彲閫夋嫨鍏宠仈椤圭洰锛?
     /// </summary>
     public async Task<string> InitializeSessionWorkspaceAsync(string sessionId, string? projectId = null, bool includeGit = false)
     {
-        // 先创建基本工作区
+        // 鍏堝垱寤哄熀鏈伐浣滃尯
         var workspacePath = GetOrCreateSessionWorkspace(sessionId);
         
-        // 如果指定了项目ID，从项目复制代码
+        // 濡傛灉鎸囧畾浜嗛」鐩甀D锛屼粠椤圭洰澶嶅埗浠ｇ爜
         if (!string.IsNullOrEmpty(projectId))
         {
             try
@@ -2519,7 +2786,7 @@ public class CliExecutorService : ICliExecutorService
                 
                 if (projectService != null)
                 {
-                    // 检查工作区是否为空（只有空工作区才复制项目代码）
+                    // 妫€鏌ュ伐浣滃尯鏄惁涓虹┖锛堝彧鏈夌┖宸ヤ綔鍖烘墠澶嶅埗椤圭洰浠ｇ爜锛?
                     var workspaceIsEmpty = !Directory.Exists(workspacePath) || 
                                            !Directory.EnumerateFileSystemEntries(workspacePath)
                                                .Any(e => !Path.GetFileName(e).StartsWith(".workspace"));
@@ -2530,22 +2797,22 @@ public class CliExecutorService : ICliExecutorService
                         
                         if (success)
                         {
-                            _logger.LogInformation("已从项目 {ProjectId} 复制代码到会话工作区 {SessionId}", projectId, sessionId);
+                            _logger.LogInformation("宸蹭粠椤圭洰 {ProjectId} 澶嶅埗浠ｇ爜鍒颁細璇濆伐浣滃尯 {SessionId}", projectId, sessionId);
                         }
                         else
                         {
-                            _logger.LogWarning("从项目复制代码失败: {Error}", errorMessage);
+                            _logger.LogWarning("浠庨」鐩鍒朵唬鐮佸け璐? {Error}", errorMessage);
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("会话工作区已有内容，跳过项目代码复制: {SessionId}", sessionId);
+                        _logger.LogInformation("浼氳瘽宸ヤ綔鍖哄凡鏈夊唴瀹癸紝璺宠繃椤圭洰浠ｇ爜澶嶅埗: {SessionId}", sessionId);
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "初始化项目代码到工作区失败: {SessionId}, {ProjectId}", sessionId, projectId);
+                _logger.LogError(ex, "鍒濆鍖栭」鐩唬鐮佸埌宸ヤ綔鍖哄け璐? {SessionId}, {ProjectId}", sessionId, projectId);
             }
         }
         
@@ -2599,12 +2866,664 @@ public class CliExecutorService : ICliExecutorService
 
         if (IsCodexExecution(tool, adapter))
         {
-            return string.IsNullOrWhiteSpace(lowInterruptionPrompt)
-                ? LowInterruptionContinueDefaults.DefaultPrompt
-                : lowInterruptionPrompt.Trim();
+            return null;
         }
 
         return null;
+    }
+
+    private async IAsyncEnumerable<StreamOutputChunk> ExecuteCodexGoalRuntimeStreamAsync(
+        string sessionId,
+        CliToolConfig tool,
+        string userPrompt,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var launchBlockingMessage = await GetLaunchBlockingMessageAsync(tool.Id, sessionId, cancellationToken);
+        if (launchBlockingMessage != null)
+        {
+            yield return new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = launchBlockingMessage
+            };
+            yield break;
+        }
+
+        var sessionWorkspace = GetOrCreateSessionWorkspace(sessionId);
+        var workingDirectory = !string.IsNullOrWhiteSpace(tool.WorkingDirectory)
+            ? tool.WorkingDirectory
+            : sessionWorkspace;
+        var workingDirectoryError = GetWorkingDirectoryValidationError(workingDirectory, sessionId);
+        if (workingDirectoryError != null)
+        {
+            yield return new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = workingDirectoryError
+            };
+            yield break;
+        }
+
+        var managedSnapshotError = await EnsureManagedToolSessionSnapshotAsync(sessionId, tool.Id, sessionWorkspace, cancellationToken);
+        if (managedSnapshotError != null)
+        {
+            yield return new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = managedSnapshotError
+            };
+            yield break;
+        }
+
+        var environmentVariables = await GetToolEnvironmentVariablesAsync(tool.Id);
+        var sessionContext = await BuildCliSessionContextAsync(
+            sessionId,
+            tool.Id,
+            sessionWorkspace,
+            GetCliThreadId(sessionId),
+            environmentVariables,
+            cancellationToken);
+        sessionContext.WorkingDirectory = workingDirectory;
+
+        var resolvedCommand = ResolveCommandPath(tool.Command);
+        var existingThreadId = GetCliThreadId(sessionId);
+        string threadId = string.Empty;
+        StreamOutputChunk? terminalChunk = null;
+        AppServerTurnRun? turnRun = null;
+
+        try
+        {
+            threadId = await _codexAppServerSessionManager.EnsureThreadAsync(
+                sessionId,
+                resolvedCommand,
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                existingThreadId,
+                cancellationToken);
+            SetCliThreadId(sessionId, threadId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "启动 Codex app-server goal runtime 失败: Session={SessionId}", sessionId);
+            terminalChunk = new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = $"启动 Codex goal runtime 失败: {ex.Message}"
+            };
+        }
+
+        if (terminalChunk != null)
+        {
+            yield return terminalChunk;
+            yield break;
+        }
+
+        if (TryParseGoalRuntimeCommand(userPrompt, out var commandKind, out var goalObjective))
+        {
+            switch (commandKind)
+            {
+                case GoalRuntimeCommandKind.Status:
+                {
+                    AppServerGoalSnapshot? goal = null;
+
+                    try
+                    {
+                        goal = await _codexAppServerSessionManager.GetGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "查询 goal 状态失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"查询 goal 状态失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    yield return new StreamOutputChunk
+                    {
+                        Content = FormatGoalStatusMarkdown(goal),
+                        IsCompleted = true
+                    };
+                    yield break;
+                }
+                case GoalRuntimeCommandKind.Pause:
+                {
+                    AppServerGoalSnapshot? goal = null;
+
+                    try
+                    {
+                        goal = await _codexAppServerSessionManager.GetGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+
+                        await _codexAppServerSessionManager.InterruptActiveTurnAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+
+                        if (goal != null)
+                        {
+                            await _codexAppServerSessionManager.SetGoalAsync(
+                                sessionId,
+                                resolvedCommand,
+                                tool,
+                                workingDirectory,
+                                environmentVariables,
+                                sessionContext,
+                                goal.Objective,
+                                "paused",
+                                goal.TokenBudget,
+                                threadId,
+                                cancellationToken);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "暂停 goal 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"暂停 goal 失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    yield return new StreamOutputChunk
+                    {
+                        Content = goal == null
+                            ? "已停止当前 turn。当前线程没有活动 goal。"
+                            : "已暂停当前 goal，并中断正在执行的 turn。",
+                        IsCompleted = true
+                    };
+                    yield break;
+                }
+                case GoalRuntimeCommandKind.Clear:
+                {
+                    bool cleared = false;
+
+                    try
+                    {
+                        await _codexAppServerSessionManager.InterruptActiveTurnAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+
+                        cleared = await _codexAppServerSessionManager.ClearGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "清除 goal 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"清除 goal 失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    yield return new StreamOutputChunk
+                    {
+                        Content = cleared
+                            ? "已清除当前 goal。"
+                            : "当前线程没有可清除的 goal。",
+                        IsCompleted = true
+                    };
+                    yield break;
+                }
+                case GoalRuntimeCommandKind.Resume:
+                {
+                    AppServerGoalSnapshot? goal = null;
+
+                    try
+                    {
+                        goal = await _codexAppServerSessionManager.GetGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            threadId,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "恢复 goal 前查询状态失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"恢复 goal 失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    if (goal == null)
+                    {
+                        yield return new StreamOutputChunk
+                        {
+                            Content = "当前线程没有可恢复的 goal。",
+                            IsCompleted = true
+                        };
+                        yield break;
+                    }
+
+                    try
+                    {
+                        await _codexAppServerSessionManager.SetGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            goal.Objective,
+                            "active",
+                            goal.TokenBudget,
+                            threadId,
+                            cancellationToken);
+
+                        turnRun = await _codexAppServerSessionManager.StartTurnAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            GoalQuickActionDefaults.ResumePrompt,
+                            threadId,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "恢复 goal 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"恢复 goal 失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    if (turnRun != null)
+                    {
+                        yield return new StreamOutputChunk
+                        {
+                            Content = "已恢复 goal，正在继续推进...",
+                            IsCompleted = false
+                        };
+
+                        await foreach (var chunk in turnRun.Output.WithCancellation(cancellationToken))
+                        {
+                            yield return chunk;
+                        }
+                    }
+
+                    yield break;
+                }
+                case GoalRuntimeCommandKind.SetGoal:
+                {
+                    if (string.IsNullOrWhiteSpace(goalObjective))
+                    {
+                        yield return new StreamOutputChunk
+                        {
+                            Content = "goal 内容不能为空。",
+                            IsCompleted = true
+                        };
+                        yield break;
+                    }
+
+                    try
+                    {
+                        await _codexAppServerSessionManager.SetGoalAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            goalObjective,
+                            "active",
+                            null,
+                            threadId,
+                            cancellationToken);
+
+                        turnRun = await _codexAppServerSessionManager.StartTurnAsync(
+                            sessionId,
+                            resolvedCommand,
+                            tool,
+                            workingDirectory,
+                            environmentVariables,
+                            sessionContext,
+                            goalObjective,
+                            threadId,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "提交 goal 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                        terminalChunk = new StreamOutputChunk
+                        {
+                            IsError = true,
+                            IsCompleted = true,
+                            ErrorMessage = $"提交 goal 失败: {ex.Message}"
+                        };
+                    }
+
+                    if (terminalChunk != null)
+                    {
+                        yield return terminalChunk;
+                        yield break;
+                    }
+
+                    if (turnRun != null)
+                    {
+                        yield return new StreamOutputChunk
+                        {
+                            Content = $"已提交 goal：{goalObjective}{Environment.NewLine}正在围绕该目标持续推进...",
+                            IsCompleted = false
+                        };
+
+                        await foreach (var chunk in turnRun.Output.WithCancellation(cancellationToken))
+                        {
+                            yield return chunk;
+                        }
+                    }
+
+                    yield break;
+                }
+            }
+        }
+
+        try
+        {
+            turnRun = await _codexAppServerSessionManager.StartTurnAsync(
+                sessionId,
+                resolvedCommand,
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                userPrompt,
+                threadId,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "通过 Codex app-server 执行 turn 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+            terminalChunk = new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = $"Codex goal runtime 执行失败: {ex.Message}"
+            };
+        }
+
+        if (terminalChunk != null)
+        {
+            yield return terminalChunk;
+            yield break;
+        }
+
+        if (turnRun != null)
+        {
+            yield return new StreamOutputChunk
+            {
+                Content = "已启动 goal runtime，正在执行...",
+                IsCompleted = false
+            };
+
+            await foreach (var chunk in turnRun.Output.WithCancellation(cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+    }
+
+    private static bool TryParseGoalRuntimeCommand(
+        string? userPrompt,
+        out GoalRuntimeCommandKind commandKind,
+        out string? objective)
+    {
+        commandKind = GoalRuntimeCommandKind.None;
+        objective = null;
+
+        if (!IsGoalCommand(userPrompt))
+        {
+            return false;
+        }
+
+        var trimmed = userPrompt!.Trim();
+        if (string.Equals(trimmed, "/goal", StringComparison.OrdinalIgnoreCase))
+        {
+            commandKind = GoalRuntimeCommandKind.Status;
+            return true;
+        }
+
+        var suffix = trimmed["/goal".Length..].Trim();
+        if (string.IsNullOrWhiteSpace(suffix))
+        {
+            commandKind = GoalRuntimeCommandKind.Status;
+            return true;
+        }
+
+        if (string.Equals(suffix, "pause", StringComparison.OrdinalIgnoreCase))
+        {
+            commandKind = GoalRuntimeCommandKind.Pause;
+            return true;
+        }
+
+        if (string.Equals(suffix, "clear", StringComparison.OrdinalIgnoreCase))
+        {
+            commandKind = GoalRuntimeCommandKind.Clear;
+            return true;
+        }
+
+        if (string.Equals(suffix, "resume", StringComparison.OrdinalIgnoreCase))
+        {
+            commandKind = GoalRuntimeCommandKind.Resume;
+            return true;
+        }
+
+        if (string.Equals(suffix, "status", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(suffix, "get", StringComparison.OrdinalIgnoreCase))
+        {
+            commandKind = GoalRuntimeCommandKind.Status;
+            return true;
+        }
+
+        commandKind = GoalRuntimeCommandKind.SetGoal;
+        objective = suffix;
+        return true;
+    }
+
+    private static string FormatGoalStatusMarkdown(AppServerGoalSnapshot? goal)
+    {
+        if (goal == null)
+        {
+            return "Current thread has no active goal.";
+        }
+
+        var tokenText = goal.TokenBudget.HasValue
+            ? $"{goal.TokensUsed}/{goal.TokenBudget.Value}"
+            : goal.TokensUsed.ToString();
+
+        return string.Join(
+            Environment.NewLine,
+            $"Current goal: {goal.Objective}",
+            $"Status: {TranslateGoalStatus(goal.Status)}",
+            $"Tokens used: {tokenText}",
+            $"Time used: {goal.TimeUsedSeconds} seconds");
+    }
+
+    private static string TranslateGoalStatus(string? status)
+    {
+        return status?.Trim().ToLowerInvariant() switch
+        {
+            "active" => "running",
+            "paused" => "paused",
+            "budgetlimited" => "杈惧埌棰勭畻涓婇檺",
+            "complete" => "completed",
+            _ => string.IsNullOrWhiteSpace(status) ? "鏈煡" : status
+        };
+    }
+
+    private enum GoalRuntimeCommandKind
+    {
+        None,
+        Status,
+        Pause,
+        Clear,
+        Resume,
+        SetGoal
+    }
+
+    private static bool IsGoalCommand(string? userPrompt)
+    {
+        return !string.IsNullOrWhiteSpace(userPrompt)
+               && userPrompt.TrimStart().StartsWith("/goal", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TimeSpan? GetPersistentProcessNoOutputTimeout(
+        CliToolConfig tool,
+        string userPrompt,
+        ICliToolAdapter? adapter)
+    {
+        // /goal may intentionally stay quiet for a while; keep Codex streams open until turn.completed/failed or explicit stop.
+        if (IsGoalCommand(userPrompt) && IsCodexExecution(tool, adapter))
+        {
+            return null;
+        }
+
+        return TimeSpan.FromSeconds(2);
+    }
+
+    private static bool ShouldUseOneTimeExecutionDespitePersistentMode(
+        CliToolConfig tool,
+        ICliToolAdapter? adapter)
+    {
+        // Codex is driven by single exec/resume; stdin-based persistent reuse is unsupported.
+        return tool.UsePersistentProcess && adapter is CodexAdapter;
+    }
+
+    private async Task EnsureGoalExecutionRuntimeAsync(
+        string sessionId,
+        string toolId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var session = await TryGetChatSessionAsync(sessionId);
+        if (session == null)
+        {
+            return;
+        }
+
+        var effectiveToolId = SessionLaunchOverrideHelper.ResolveEffectiveToolId(toolId, session.CcSwitchSnapshotToolId);
+        if (!string.Equals(effectiveToolId, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var currentOverrides = SessionLaunchOverrideHelper.Deserialize(session.ToolLaunchOverridesJson);
+        var updatedOverrides = SessionLaunchOverrideHelper.ApplyGoalRuntimeOverride(
+            currentOverrides,
+            effectiveToolId,
+            true);
+
+        session.ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(updatedOverrides);
+        session.UpdatedAt = DateTime.Now;
+
+        using var scope = _serviceProvider.CreateScope();
+        var sessionRepository = scope.ServiceProvider.GetService<IChatSessionRepository>();
+        if (sessionRepository == null)
+        {
+            _logger.LogDebug("鏃犳硶淇濆瓨 goal runtime 浼氳瘽瑕嗙洊: Session={SessionId}, Tool={ToolId}", sessionId, effectiveToolId);
+            return;
+        }
+
+        try
+        {
+            await sessionRepository.InsertOrUpdateAsync(session);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "淇濆瓨 goal runtime 浼氳瘽瑕嗙洊澶辫触: Session={SessionId}, Tool={ToolId}", sessionId, effectiveToolId);
+        }
+    }
+
+    private static bool IsNativeCodexGoalRuntimeTool(CliToolConfig tool)
+    {
+        return string.Equals(NormalizeManagedToolId(tool.Id), "codex", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsCodexExecution(CliToolConfig tool, ICliToolAdapter? adapter)
@@ -2630,56 +3549,56 @@ public class CliExecutorService : ICliExecutorService
     /// </summary>
     private string ResolveCommandPath(string command)
     {
-        // 如果命令已经是绝对路径,直接返回
+        // 濡傛灉鍛戒护宸茬粡鏄粷瀵硅矾寰?鐩存帴杩斿洖
         if (Path.IsPathRooted(command))
         {
             return command;
         }
 
-        // Windows系统下,尝试解析npm安装的CLI工具
+        // Windows绯荤粺涓?灏濊瘯瑙ｆ瀽npm瀹夎鐨凜LI宸ュ叿
         if (OperatingSystem.IsWindows() && 
             (command.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || 
              command.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
-             !command.Contains("."))) // 没有扩展名的,也可能是npm工具
+             !command.Contains("."))) // 娌℃湁鎵╁睍鍚嶇殑,涔熷彲鑳芥槸npm宸ュ叿
         {
-            // 确保命令有.cmd扩展名
+            // 纭繚鍛戒护鏈?cmd鎵╁睍鍚?
             var cmdFileName = command.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || 
                               command.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)
                 ? command 
                 : command + ".cmd";
             
-            // 尝试从配置或自动检测获取npm全局路径
+            // 灏濊瘯浠庨厤缃垨鑷姩妫€娴嬭幏鍙杗pm鍏ㄥ眬璺緞
             var npmGlobalPath = GetNpmGlobalPath();
             
             if (!string.IsNullOrWhiteSpace(npmGlobalPath))
             {
                 var fullPath = Path.Combine(npmGlobalPath, cmdFileName);
                 
-                // 检查文件是否存在,如果存在则使用完整路径
+                // 妫€鏌ユ枃浠舵槸鍚﹀瓨鍦?濡傛灉瀛樺湪鍒欎娇鐢ㄥ畬鏁磋矾寰?
                 if (File.Exists(fullPath))
                 {
                     _logger.LogDebug("将相对命令 {Command} 解析为完整路径: {FullPath}", command, fullPath);
                     return fullPath;
                 }
                 
-                _logger.LogDebug("npm目录中未找到命令: {FullPath}, 尝试使用系统PATH", fullPath);
+                _logger.LogDebug("npm 目录中未找到命令: {FullPath}, 尝试使用系统 PATH", fullPath);
             }
         }
 
         var resolvedFromPath = ResolveCommandFromPathEnvironment(command);
         if (!string.IsNullOrWhiteSpace(resolvedFromPath))
         {
-            _logger.LogDebug("将系统PATH中的命令 {Command} 解析为完整路径: {FullPath}", command, resolvedFromPath);
+            _logger.LogDebug("将系统 PATH 中的命令 {Command} 解析为完整路径: {FullPath}", command, resolvedFromPath);
             return resolvedFromPath;
         }
 
-        // 否则返回原始命令(假设是系统PATH中的命令)
+        // 鍚﹀垯杩斿洖鍘熷鍛戒护(鍋囪鏄郴缁烶ATH涓殑鍛戒护)
         if (OperatingSystem.IsWindows())
         {
             var pathResolvedCommand = TryResolveWindowsCommandPathFromPath(command);
             if (!string.IsNullOrWhiteSpace(pathResolvedCommand))
             {
-                _logger.LogDebug("浠?PATH 瑙ｆ瀽鍛戒护 {Command} 鍒? {FullPath}", command, pathResolvedCommand);
+                _logger.LogDebug("Windows PATH 解析到命令 {Command}: {FullPath}", command, pathResolvedCommand);
                 return pathResolvedCommand;
             }
         }
@@ -2755,7 +3674,7 @@ public class CliExecutorService : ICliExecutorService
     {
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
-            return "工作目录为空，无法启动 CLI 进程。";
+            return "Working directory is empty; cannot start the CLI process.";
         }
 
         if (Directory.Exists(workingDirectory))
@@ -2763,11 +3682,11 @@ public class CliExecutorService : ICliExecutorService
             return null;
         }
 
-        return $"会话 {sessionId} 的工作目录不存在: {workingDirectory}。请确认目录存在，或重新创建会话。";
+        return $"工作目录不存在: {workingDirectory} (Session={sessionId})。请检查目录或重新创建会话。";
     }
 
     /// <summary>
-    /// 获取NPM全局安装路径（优先使用配置的路径，如果未配置则自动检测）
+    /// 鑾峰彇NPM鍏ㄥ眬瀹夎璺緞锛堜紭鍏堜娇鐢ㄩ厤缃殑璺緞锛屽鏋滄湭閰嶇疆鍒欒嚜鍔ㄦ娴嬶級
     /// </summary>
     private string? TryResolveWindowsCommandPathFromPath(string command)
     {
@@ -2815,17 +3734,17 @@ public class CliExecutorService : ICliExecutorService
 
     private string? GetNpmGlobalPath()
     {
-        // 如果配置中指定了路径,直接使用
+        // 濡傛灉閰嶇疆涓寚瀹氫簡璺緞,鐩存帴浣跨敤
         if (!string.IsNullOrWhiteSpace(_options.NpmGlobalPath))
         {
-            _logger.LogDebug("使用配置的NPM全局路径: {Path}", _options.NpmGlobalPath);
+            _logger.LogDebug("使用配置的 NPM 全局路径: {Path}", _options.NpmGlobalPath);
             return _options.NpmGlobalPath;
         }
 
-        // 尝试自动检测NPM全局路径
+        // Try to detect the global NPM path automatically.
         try
         {
-            // 方法1: 通过执行 npm config get prefix 获取
+            // Method 1: resolve via `npm config get prefix`.
             var startInfo = new ProcessStartInfo
             {
                 FileName = "npm",
@@ -2839,13 +3758,13 @@ public class CliExecutorService : ICliExecutorService
             using var process = Process.Start(startInfo);
             if (process != null)
             {
-                process.WaitForExit(5000); // 5秒超时
+                process.WaitForExit(5000); // 5-second timeout.
                 if (process.ExitCode == 0)
                 {
                     var prefix = process.StandardOutput.ReadToEnd().Trim();
                     if (!string.IsNullOrWhiteSpace(prefix) && Directory.Exists(prefix))
                     {
-                        _logger.LogInformation("自动检测到NPM全局路径: {Path}", prefix);
+                        _logger.LogInformation("自动检测到 NPM 全局路径: {Path}", prefix);
                         return prefix;
                     }
                 }
@@ -2853,10 +3772,10 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "自动检测NPM全局路径失败,尝试使用环境变量");
+            _logger.LogDebug(ex, "自动检测 NPM 全局路径失败，尝试使用环境变量。");
         }
 
-        // 方法2: 尝试从环境变量中获取常见的NPM路径
+        // Method 2: try common NPM paths from environment values.
         if (OperatingSystem.IsWindows())
         {
             var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -2864,13 +3783,13 @@ public class CliExecutorService : ICliExecutorService
             
             if (Directory.Exists(npmPath))
             {
-                _logger.LogInformation("通过AppData路径检测到NPM全局路径: {Path}", npmPath);
+                _logger.LogInformation("通过 AppData 路径检测到 NPM 全局路径: {Path}", npmPath);
                 return npmPath;
             }
         }
         else
         {
-            // Linux/Mac 通常在 /usr/local/bin 或 ~/.npm-global
+            // Linux/Mac commonly use /usr/local/bin or ~/.npm-global/bin.
             var possiblePaths = new[] 
             { 
                 "/usr/local/bin", 
@@ -2881,13 +3800,13 @@ public class CliExecutorService : ICliExecutorService
             {
                 if (Directory.Exists(path))
                 {
-                    _logger.LogInformation("检测到NPM全局路径: {Path}", path);
+                    _logger.LogInformation("检测到 NPM 全局路径: {Path}", path);
                     return path;
                 }
             }
         }
 
-        _logger.LogWarning("无法检测到NPM全局路径,将依赖系统PATH环境变量");
+        _logger.LogWarning("无法检测到 NPM 全局路径，将依赖 PATH 环境变量。");
         return null;
     }
 
@@ -2911,8 +3830,13 @@ public class CliExecutorService : ICliExecutorService
             : path + Path.DirectorySeparatorChar;
     }
 
+    private static string ResolveUserProfilePath()
+    {
+        return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    }
+
     /// <summary>
-    /// 将会话固定的 Provider 快照同步到当前 cc-switch 激活 Provider
+    /// 灏嗕細璇濆浐瀹氱殑 Provider 蹇収鍚屾鍒板綋鍓?cc-switch 婵€娲?Provider
     /// </summary>
     public async Task<CcSwitchSessionSnapshot?> SyncSessionCcSwitchSnapshotAsync(string sessionId, string? toolId = null, CancellationToken cancellationToken = default)
     {
@@ -2922,12 +3846,12 @@ public class CliExecutorService : ICliExecutorService
         var effectiveToolId = NormalizeManagedToolId(toolId ?? session?.ToolId);
         if (string.IsNullOrWhiteSpace(effectiveToolId))
         {
-            throw new InvalidOperationException("当前会话尚未绑定可同步的 CLI 工具。");
+            throw new InvalidOperationException("Current session is not bound to a synchronizable CLI tool.");
         }
 
         if (!_ccSwitchService.IsManagedTool(effectiveToolId))
         {
-            throw new InvalidOperationException("当前会话未绑定由 cc-switch 管理的 CLI 工具。");
+            throw new InvalidOperationException("Current session is not bound to a cc-switch managed CLI tool.");
         }
 
         var sessionWorkspace = GetOrCreateSessionWorkspace(sessionId);
@@ -2944,31 +3868,31 @@ public class CliExecutorService : ICliExecutorService
         var cliThreadId = GetCliThreadId(sessionId);
         if (string.IsNullOrWhiteSpace(cliThreadId))
         {
-            throw new InvalidOperationException("当前会话尚未绑定 CLI thread，无法同步 Codex provider。");
+            throw new InvalidOperationException("Current session has no CLI thread; cannot sync the Codex provider.");
         }
 
         var session = await TryGetChatSessionAsync(sessionId);
         var effectiveToolId = NormalizeManagedToolId(toolId ?? session?.ToolId);
         if (string.IsNullOrWhiteSpace(effectiveToolId))
         {
-            throw new InvalidOperationException("当前会话尚未绑定可同步的 CLI 工具。");
+            throw new InvalidOperationException("Current session is not bound to a synchronizable CLI tool.");
         }
 
         if (!_ccSwitchService.IsManagedTool(effectiveToolId))
         {
-            throw new InvalidOperationException("当前会话未绑定由 cc-switch 管理的 CLI 工具。");
+            throw new InvalidOperationException("Current session is not bound to a cc-switch managed CLI tool.");
         }
 
         var snapshot = await SyncSessionCcSwitchSnapshotAsync(sessionId, effectiveToolId, cancellationToken);
         if (string.IsNullOrWhiteSpace(snapshot?.ProviderId))
         {
-            throw new InvalidOperationException("当前 cc-switch 未激活可同步的 Provider。");
+            throw new InvalidOperationException("Current cc-switch provider is not available for synchronization.");
         }
 
         var sessionWorkspace = GetSessionWorkspacePath(sessionId);
         using var scope = _serviceProvider.CreateScope();
         var threadSyncService = scope.ServiceProvider.GetRequiredService<ICodexThreadProviderSyncService>();
-        return await threadSyncService.SyncThreadProviderAsync(
+        var result = await threadSyncService.SyncThreadProviderAsync(
             new CodexThreadProviderSyncRequest
             {
                 SessionWorkspacePath = sessionWorkspace,
@@ -2976,6 +3900,21 @@ public class CliExecutorService : ICliExecutorService
                 TargetProviderId = snapshot.ProviderId
             },
             cancellationToken);
+
+        var skillsSyncMessage = SyncGlobalCodexSkillsToWorkspace(sessionWorkspace, sessionId);
+        if (!string.IsNullOrWhiteSpace(skillsSyncMessage))
+        {
+            if (skillsSyncMessage.Contains("失败", StringComparison.Ordinal))
+            {
+                result.HasWarnings = true;
+            }
+
+            result.Message = string.IsNullOrWhiteSpace(result.Message)
+                ? skillsSyncMessage
+                : $"{result.Message}；{skillsSyncMessage}";
+        }
+
+        return result;
     }
 
     private async Task<string?> EnsureManagedToolSessionSnapshotAsync(
@@ -3003,7 +3942,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "同步会话 {SessionId} 的 cc-switch 快照失败: {ToolId}", sessionId, normalizedToolId);
+            _logger.LogWarning(ex, "鍚屾浼氳瘽 {SessionId} 鐨?cc-switch 蹇収澶辫触: {ToolId}", sessionId, normalizedToolId);
             return ex.Message;
         }
     }
@@ -3019,14 +3958,14 @@ public class CliExecutorService : ICliExecutorService
         {
             throw new InvalidOperationException(
                 string.IsNullOrWhiteSpace(status.StatusMessage)
-                    ? $"CLI 工具 '{ResolveManagedToolDisplayName(toolId)}' 依赖 cc-switch，但当前未就绪。"
+                    ? $"CLI tool {ResolveManagedToolDisplayName(toolId)} depends on cc-switch, but the current provider is not ready."
                     : status.StatusMessage);
         }
 
         if (string.IsNullOrWhiteSpace(status.LiveConfigPath) || !File.Exists(status.LiveConfigPath))
         {
             throw new InvalidOperationException(
-                $"未找到 {ResolveManagedToolDisplayName(toolId)} 当前激活 Provider 的 live 配置文件，请先在 cc-switch 中完成同步。");
+                $"Could not find the live config file for the active provider of {ResolveManagedToolDisplayName(toolId)}. Complete the sync in cc-switch first.");
         }
 
         var snapshotRelativePath = GetCcSwitchSnapshotRelativePath(toolId);
@@ -3104,7 +4043,7 @@ public class CliExecutorService : ICliExecutorService
         {
             SessionId = sessionId,
             Username = username,
-            Title = "新会话",
+            Title = "New Session",
             WorkspacePath = workspacePath,
             ToolId = toolId,
             CreatedAt = DateTime.Now,
@@ -3167,7 +4106,6 @@ public class CliExecutorService : ICliExecutorService
         {
             await PrepareManagedCodexLaunchConfigAsync(
                 sessionWorkspace,
-                environmentVariables,
                 launchOverride,
                 cancellationToken);
             await SyncCodexThreadArtifactsAsync(sessionWorkspace, cliThreadId, cancellationToken);
@@ -3185,9 +4123,37 @@ public class CliExecutorService : ICliExecutorService
         };
     }
 
+    private static CliToolConfig ApplySessionLaunchOverride(
+        CliToolConfig tool,
+        SessionToolLaunchOverride? launchOverride)
+    {
+        if (launchOverride?.UsePersistentProcess == null
+            || tool.UsePersistentProcess == launchOverride.UsePersistentProcess.Value)
+        {
+            return tool;
+        }
+
+        return new CliToolConfig
+        {
+            Id = tool.Id,
+            Name = tool.Name,
+            Description = tool.Description,
+            Command = tool.Command,
+            ArgumentTemplate = tool.ArgumentTemplate,
+            LowInterruptionArgumentTemplate = tool.LowInterruptionArgumentTemplate,
+            PersistentModeArguments = tool.PersistentModeArguments,
+            UsePersistentProcess = launchOverride.UsePersistentProcess.Value,
+            WorkingDirectory = tool.WorkingDirectory,
+            Enabled = tool.Enabled,
+            TimeoutSeconds = tool.TimeoutSeconds,
+            EnvironmentVariables = tool.EnvironmentVariables == null
+                ? null
+                : new Dictionary<string, string>(tool.EnvironmentVariables, StringComparer.OrdinalIgnoreCase)
+        };
+    }
+
     private async Task PrepareManagedCodexLaunchConfigAsync(
         string sessionWorkspace,
-        Dictionary<string, string> environmentVariables,
         SessionToolLaunchOverride? launchOverride,
         CancellationToken cancellationToken)
     {
@@ -3211,9 +4177,8 @@ public class CliExecutorService : ICliExecutorService
         }
         else
         {
-            baseContent = BuildCodexConfigContent(
-                environmentVariables,
-                enableGoalsFeature: await ShouldEnableCodexGoalsAsync(sessionWorkspace, cancellationToken));
+            throw new InvalidOperationException(
+                "Managed Codex launch requires a synchronized session config snapshot. WebCode will not generate config.toml.");
         }
 
         baseContent = StripUnsupportedProjectCodexConfigSections(baseContent);
@@ -3625,7 +4590,7 @@ public class CliExecutorService : ICliExecutorService
             "claude-code" => Path.Combine(".claude", "settings.json"),
             "codex" => Path.Combine(".codex", "config.toml"),
             "opencode" => "opencode.json",
-            _ => throw new InvalidOperationException($"工具 '{toolId}' 不支持 cc-switch 会话快照。")
+            _ => throw new InvalidOperationException($"Tool {toolId} does not support cc-switch session snapshots.")
         };
     }
 
@@ -3653,11 +4618,11 @@ public class CliExecutorService : ICliExecutorService
     private string BuildCcSwitchSnapshotSyncRequiredMessage(string toolId)
     {
         var toolName = ResolveManagedToolDisplayName(toolId);
-        return $"当前会话固定的 {toolName} Provider 快照已缺失或不可用。请点击“同步到当前 cc-switch Provider”后再继续。";
+        return $"当前会话固定的 {toolName} Provider 快照已缺失或不可用。请同步到当前 cc-switch Provider 后再继续。";
     }
 
     /// <summary>
-    /// 获取指定工具的环境变量配置
+    /// 鑾峰彇鎸囧畾宸ュ叿鐨勭幆澧冨彉閲忛厤缃?
     /// </summary>
     public async Task<Dictionary<string, string>> GetToolEnvironmentVariablesAsync(string toolId, string? username = null)
     {
@@ -3669,11 +4634,11 @@ public class CliExecutorService : ICliExecutorService
                 var status = await _ccSwitchService.GetToolStatusAsync(normalizedToolId);
                 if (!status.IsLaunchReady)
                 {
-                    _logger.LogWarning("cc-switch 受管工具 {ToolId} 当前未就绪，忽略 WebCode 本地环境变量。Reason={Reason}", normalizedToolId, status.StatusMessage);
+                    _logger.LogWarning("cc-switch 托管工具 {ToolId} 当前未就绪，忽略 WebCode 本地环境变量。Reason={Reason}", normalizedToolId, status.StatusMessage);
                 }
                 else
                 {
-                    _logger.LogInformation("cc-switch 受管工具 {ToolId} 通过会话快照或 live 配置驱动，WebCode 不再注入本地环境变量。", normalizedToolId);
+                    _logger.LogInformation("cc-switch managed tool {ToolId} is driven by a session snapshot or live config; WebCode will not inject local environment variables.", normalizedToolId);
                 }
             }
             catch (Exception ex)
@@ -3691,8 +4656,8 @@ public class CliExecutorService : ICliExecutorService
             var envService = scope.ServiceProvider.GetRequiredService<ICliToolEnvironmentService>();
             var dbEnvVars = await envService.GetEnvironmentVariablesAsync(toolId, resolvedUsername);
 
-            // 默认使用数据库配置
-            _logger.LogInformation("获取工具 {ToolId} 的环境变量，共 {Count} 个", toolId, dbEnvVars.Count);
+            // 榛樿浣跨敤鏁版嵁搴撻厤缃?
+            _logger.LogInformation("Loaded environment variables for tool {ToolId}; count={Count}", toolId, dbEnvVars.Count);
             foreach (var kvp in dbEnvVars)
             {
                 var maskedValue = kvp.Value.Length > 8
@@ -3705,9 +4670,9 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "获取工具 {ToolId} 的环境变量失败", toolId);
+            _logger.LogError(ex, "Failed to load environment variables for tool {ToolId}.", toolId);
 
-            // 降级到appsettings配置
+            // 闄嶇骇鍒癮ppsettings閰嶇疆
             var tool = GetTool(toolId, username);
             return tool?.EnvironmentVariables ?? new Dictionary<string, string>();
         }
@@ -3717,7 +4682,7 @@ public class CliExecutorService : ICliExecutorService
     {
         var isWindows = OperatingSystem.IsWindows();
         var isClaudeTool = IsClaudeTool(tool, commandPath);
-        _logger.LogInformation("Claude 启动重写检查: IsWindows={IsWindows}, IsClaudeTool={IsClaudeTool}, CommandPath={CommandPath}", isWindows, isClaudeTool, commandPath);
+        _logger.LogInformation("Claude 鍚姩閲嶅啓妫€鏌? IsWindows={IsWindows}, IsClaudeTool={IsClaudeTool}, CommandPath={CommandPath}", isWindows, isClaudeTool, commandPath);
 
         if (!isWindows || !isClaudeTool)
         {
@@ -3727,80 +4692,50 @@ public class CliExecutorService : ICliExecutorService
         var extension = Path.GetExtension(commandPath);
         if (!string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Claude 启动重写跳过：命令不是 .cmd，Extension={Extension}", extension);
+            _logger.LogInformation("Claude 鍚姩閲嶅啓璺宠繃锛氬懡浠や笉鏄?.cmd锛孍xtension={Extension}", extension);
             return;
         }
 
         var commandDirectory = Path.GetDirectoryName(commandPath);
         if (string.IsNullOrWhiteSpace(commandDirectory))
         {
-            _logger.LogWarning("Claude 启动重写跳过：无法获取命令目录，CommandPath={CommandPath}", commandPath);
+            _logger.LogWarning("Claude 鍚姩閲嶅啓璺宠繃锛氭棤娉曡幏鍙栧懡浠ょ洰褰曪紝CommandPath={CommandPath}", commandPath);
             return;
         }
 
         var cliJsPath = Path.Combine(commandDirectory, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
-        _logger.LogInformation("Claude 启动重写检查 cli.js 路径: {CliJsPath}, Exists={Exists}", cliJsPath, File.Exists(cliJsPath));
+        _logger.LogInformation("Claude 鍚姩閲嶅啓妫€鏌?cli.js 璺緞: {CliJsPath}, Exists={Exists}", cliJsPath, File.Exists(cliJsPath));
         if (!File.Exists(cliJsPath))
         {
             return;
         }
 
         var preferredNodePath = GetPreferredNodeExecutablePath();
-        _logger.LogInformation("Claude 启动重写检查 Node.js 路径: {NodePath}", preferredNodePath ?? "<null>");
+        _logger.LogInformation("Claude 鍚姩閲嶅啓妫€鏌?Node.js 璺緞: {NodePath}", preferredNodePath ?? "<null>");
         if (string.IsNullOrWhiteSpace(preferredNodePath) || !File.Exists(preferredNodePath))
         {
-            _logger.LogWarning("Claude 启动重写跳过：未找到可用的 Node.js");
+            _logger.LogWarning("Claude 鍚姩閲嶅啓璺宠繃锛氭湭鎵惧埌鍙敤鐨?Node.js");
             return;
         }
 
         startInfo.FileName = preferredNodePath;
         startInfo.Arguments = $"\"{cliJsPath}\" {originalArguments}";
-        _logger.LogInformation("Claude Code 改为直接使用 Node.js 启动: {NodePath}", preferredNodePath);
+        _logger.LogInformation("Claude Code 鏀逛负鐩存帴浣跨敤 Node.js 鍚姩: {NodePath}", preferredNodePath);
     }
 
     private void RewriteCodexLaunchToNode(ProcessStartInfo startInfo, CliToolConfig tool, string commandPath, string originalArguments)
     {
-        var isWindows = OperatingSystem.IsWindows();
-        var isCodexTool = IsCodexTool(tool, commandPath);
-        _logger.LogInformation("Codex 启动重写检查: IsWindows={IsWindows}, IsCodexTool={IsCodexTool}, CommandPath={CommandPath}", isWindows, isCodexTool, commandPath);
-
-        if (!isWindows || !isCodexTool)
+        if (!IsCodexTool(tool, commandPath))
         {
             return;
         }
 
-        var extension = Path.GetExtension(commandPath);
-        if (!string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogInformation("Codex 启动重写跳过：命令不是 .cmd，Extension={Extension}", extension);
-            return;
-        }
-
-        var commandDirectory = Path.GetDirectoryName(commandPath);
-        if (string.IsNullOrWhiteSpace(commandDirectory))
-        {
-            _logger.LogWarning("Codex 启动重写跳过：无法获取命令目录，CommandPath={CommandPath}", commandPath);
-            return;
-        }
-
-        var cliJsPath = Path.Combine(commandDirectory, "node_modules", "@openai", "codex", "bin", "codex.js");
-        _logger.LogInformation("Codex 启动重写检查 codex.js 路径: {CliJsPath}, Exists={Exists}", cliJsPath, File.Exists(cliJsPath));
-        if (!File.Exists(cliJsPath))
-        {
-            return;
-        }
-
-        var preferredNodePath = GetPreferredNodeExecutablePath();
-        _logger.LogInformation("Codex 启动重写检查 Node.js 路径: {NodePath}", preferredNodePath ?? "<null>");
-        if (string.IsNullOrWhiteSpace(preferredNodePath) || !File.Exists(preferredNodePath))
-        {
-            _logger.LogWarning("Codex 启动重写跳过：未找到可用的 Node.js");
-            return;
-        }
-
-        startInfo.FileName = preferredNodePath;
-        startInfo.Arguments = $"\"{cliJsPath}\" {originalArguments}";
-        _logger.LogInformation("Codex 改为直接使用 Node.js 启动: {NodePath}", preferredNodePath);
+        CodexLaunchCommandHelper.TryRewriteWindowsCodexCmdToNode(
+            startInfo,
+            commandPath,
+            originalArguments,
+            GetPreferredNodeExecutablePath,
+            _logger);
     }
 
     private void EnsurePreferredNodeForClaude(ProcessStartInfo startInfo, CliToolConfig tool, string commandPath)
@@ -3834,7 +4769,7 @@ public class CliExecutorService : ICliExecutorService
             Path.PathSeparator,
             new[] { preferredNodeDirectory }.Concat(reorderedEntries));
 
-        _logger.LogInformation("Claude Code 优先使用 Node.js: {NodePath}", preferredNodePath);
+        _logger.LogInformation("Claude Code 浼樺厛浣跨敤 Node.js: {NodePath}", preferredNodePath);
     }
 
     private string? GetPreferredNodeExecutablePath()
@@ -3845,42 +4780,18 @@ public class CliExecutorService : ICliExecutorService
             {
                 return _preferredNodeExecutablePath;
             }
+        }
 
-            try
-            {
-                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                var fnmRoot = Path.Combine(localAppData, "fnm_multishells");
-                if (Directory.Exists(fnmRoot))
-                {
-                    var fnmCandidate = Directory.GetDirectories(fnmRoot)
-                        .Select(directory => new FileInfo(Path.Combine(directory, "node.exe")))
-                        .Where(file => file.Exists)
-                        .OrderByDescending(file => file.LastWriteTimeUtc)
-                        .FirstOrDefault();
-
-                    if (fnmCandidate != null)
-                    {
-                        _preferredNodeExecutablePath = fnmCandidate.FullName;
-                        _logger.LogInformation("优先选择 fnm Node.js: {NodePath}", _preferredNodeExecutablePath);
-                        return _preferredNodeExecutablePath;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "扫描 fnm node.exe 路径失败");
-            }
-
-            var programFilesNode = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
-            if (File.Exists(programFilesNode))
-            {
-                _preferredNodeExecutablePath = programFilesNode;
-                _logger.LogInformation("回退使用系统 Node.js: {NodePath}", _preferredNodeExecutablePath);
-                return _preferredNodeExecutablePath;
-            }
-
-            _logger.LogWarning("未找到可用的 node.exe");
+        var resolved = CodexLaunchCommandHelper.ResolvePreferredNodeExecutablePath(_logger);
+        if (string.IsNullOrWhiteSpace(resolved))
+        {
             return null;
+        }
+
+        lock (_preferredNodeExecutableLock)
+        {
+            _preferredNodeExecutablePath ??= resolved;
+            return _preferredNodeExecutablePath;
         }
     }
 
@@ -3900,14 +4811,14 @@ public class CliExecutorService : ICliExecutorService
     }
 
     /// <summary>
-    /// 保存指定工具的环境变量配置到数据库
+    /// 淇濆瓨鎸囧畾宸ュ叿鐨勭幆澧冨彉閲忛厤缃埌鏁版嵁搴?
     /// </summary>
     public async Task<bool> SaveToolEnvironmentVariablesAsync(string toolId, Dictionary<string, string> envVars, string? username = null)
     {
         var normalizedToolId = NormalizeManagedToolId(toolId);
         if (_ccSwitchService.IsManagedTool(normalizedToolId))
         {
-            _logger.LogWarning("工具 {ToolId} 受 cc-switch 管理，拒绝保存 WebCode 本地环境变量", normalizedToolId);
+            _logger.LogWarning("工具 {ToolId} 由 cc-switch 管理，拒绝注入 WebCode 本地环境变量", normalizedToolId);
             return false;
         }
 
@@ -3920,7 +4831,7 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "保存工具 {ToolId} 的环境变量失败", toolId);
+            _logger.LogError(ex, "Failed to save environment variables for tool {ToolId}.", toolId);
             return false;
         }
     }
@@ -3951,62 +4862,6 @@ public class CliExecutorService : ICliExecutorService
         catch
         {
             return username;
-        }
-    }
-
-    /// <summary>
-    /// 为 Codex CLI 动态生成配置文件
-    /// Codex CLI 优先读取配置文件而非环境变量，因此需要在执行前根据数据库中的环境变量生成配置文件
-    /// 使用哈希值缓存，只在配置变化时才重新生成文件
-    /// </summary>
-    private void GenerateCodexConfigFile(Dictionary<string, string> envVars)
-    {
-        try
-        {
-            var configContent = BuildCodexConfigContent(
-                envVars,
-                enableGoalsFeature: ShouldEnableCodexGoalsSync());
-            var configHash = configContent.GetHashCode().ToString();
-            
-            // 检查配置是否变化
-            lock (_codexConfigLock)
-            {
-                if (_lastCodexConfigHash == configHash)
-                {
-                    _logger.LogDebug("Codex 配置未变化，跳过生成配置文件");
-                    return;
-                }
-                _lastCodexConfigHash = configHash;
-            }
-            
-            // 确定 Codex 配置目录
-            var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-            {
-                // 在 Docker 中可能需要使用 /home/appuser
-                var appUserHome = "/home/appuser";
-                if (Directory.Exists(appUserHome))
-                {
-                    homeDir = appUserHome;
-                }
-            }
-            
-            var codexConfigDir = Path.Combine(homeDir, ".codex");
-            var codexConfigFile = Path.Combine(codexConfigDir, "config.toml");
-            
-            // 确保目录存在
-            if (!Directory.Exists(codexConfigDir))
-            {
-                Directory.CreateDirectory(codexConfigDir);
-            }
-            
-            // 写入配置文件
-            File.WriteAllText(codexConfigFile, configContent);
-            _logger.LogInformation("已生成 Codex 配置文件: {Path}", codexConfigFile);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "生成 Codex 配置文件失败");
         }
     }
 
@@ -4056,13 +4911,13 @@ public class CliExecutorService : ICliExecutorService
             }
 
             return string.IsNullOrWhiteSpace(status.StatusMessage)
-                ? $"CLI 工具 '{status.ToolName}' 依赖 cc-switch，但当前未就绪。"
+                ? $"CLI tool {status.ToolName} depends on cc-switch, but the current provider is not ready."
                 : status.StatusMessage;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "读取 cc-switch 工具状态失败: {ToolId}", normalizedToolId);
-            return $"CLI 工具 '{normalizedToolId}' 依赖 cc-switch，但当前状态无法读取。";
+            _logger.LogWarning(ex, "璇诲彇 cc-switch 宸ュ叿鐘舵€佸け璐? {ToolId}", normalizedToolId);
+            return $"CLI tool {normalizedToolId} depends on cc-switch, but the current status could not be read.";
         }
     }
 
@@ -4103,15 +4958,15 @@ public class CliExecutorService : ICliExecutorService
 
                     var message = statuses.TryGetValue(normalizedToolId, out var blockedStatus)
                         ? blockedStatus.StatusMessage
-                        : "未能读取 cc-switch 状态。";
-                    _logger.LogInformation("过滤未就绪的 cc-switch 受管工具: {ToolId}, Reason={Reason}", normalizedToolId, message);
+                        : "Unable to read cc-switch status.";
+                    _logger.LogInformation("过滤未就绪的 cc-switch 托管工具: {ToolId}, Reason={Reason}", normalizedToolId, message);
                     return false;
                 })
                 .ToList();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "批量读取 cc-switch 状态失败，所有受管工具将被视为不可用");
+            _logger.LogWarning(ex, "鎵归噺璇诲彇 cc-switch 鐘舵€佸け璐ワ紝鎵€鏈夊彈绠″伐鍏峰皢琚涓轰笉鍙敤");
             return toolList
                 .Where(tool => !_ccSwitchService.IsManagedTool(NormalizeManagedToolId(tool.Id)))
                 .ToList();
@@ -4135,79 +4990,13 @@ public class CliExecutorService : ICliExecutorService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "检测 Codex /goal 能力失败，当前会话将不注入 goals feature");
+            _logger.LogDebug(ex, "妫€娴?Codex /goal 鑳藉姏澶辫触锛屽綋鍓嶄細璇濆皢涓嶆敞鍏?goals feature");
             return false;
         }
-    }
-
-    private bool ShouldEnableCodexGoalsSync()
-    {
-        try
-        {
-            var result = _goalCapabilityService.ProbeAsync(
-                new GoalCapabilityContext
-                {
-                    ToolId = "codex"
-                },
-                forceRefresh: false).GetAwaiter().GetResult();
-
-            return result.State == GoalCapabilityState.Available;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "检测 Codex /goal 能力失败，全局配置将不注入 goals feature");
-            return false;
-        }
-    }
-
-    private static string BuildCodexConfigContent(Dictionary<string, string> envVars, bool enableGoalsFeature)
-    {
-        var baseUrl = envVars.GetValueOrDefault("CODEX_BASE_URL", "https://api.routin.ai/v1");
-        var model = envVars.GetValueOrDefault("CODEX_MODEL", "gpt-5.4");
-        var providerName = envVars.GetValueOrDefault("CODEX_PROVIDER_NAME", "meteor-ai");
-        var providerId = envVars.GetValueOrDefault("CODEX_MODEL_PROVIDER", providerName);
-        var wireApi = envVars.GetValueOrDefault("CODEX_WIRE_API", "responses");
-        var approvalPolicy = envVars.GetValueOrDefault("CODEX_APPROVAL_POLICY", "never");
-        var reasoningEffort = envVars.GetValueOrDefault("CODEX_MODEL_REASONING_EFFORT", "xhigh");
-        var reasoningSummary = envVars.GetValueOrDefault("CODEX_MODEL_REASONING_SUMMARY", "detailed");
-        var modelVerbosity = envVars.GetValueOrDefault("CODEX_MODEL_VERBOSITY", "high");
-        var sandboxMode = envVars.GetValueOrDefault("CODEX_SANDBOX_MODE", "danger-full-access");
-        var maxContext = envVars.GetValueOrDefault("CODEX_MAX_CONTEXT", "1000000");
-        var contextCompactLimit = envVars.GetValueOrDefault("CODEX_CONTEXT_COMPACT_LIMIT", "800000");
-        var featureFlags = enableGoalsFeature
-            ? "[features]\ngoals = true\n\n"
-            : string.Empty;
-
-        return $@"# Codex CLI 配置文件（由 WebCode 动态生成）
-
-model = ""{model}""
-model_provider = ""{providerId}""
-disable_response_storage = true
-max_context = {maxContext}
-context_compact_limit = {contextCompactLimit}
-approval_policy = ""{approvalPolicy}""
-sandbox_mode = ""{sandboxMode}""
-
-model_reasoning_effort = ""{reasoningEffort}""
-model_reasoning_summary = ""{reasoningSummary}""
-model_verbosity = ""{modelVerbosity}""
-model_supports_reasoning_summaries = true
-
-[model_providers.""{providerId}""]
-name = ""{providerName}""
-base_url = ""{baseUrl}""
-requires_openai_auth = true
-wire_api = ""{wireApi}""
-
-{featureFlags}
-
-[windows]
-sandbox = ""elevated""
-";
     }
 
     /// <summary>
-    /// 获取会话工作区的文件内容
+    /// 鑾峰彇浼氳瘽宸ヤ綔鍖虹殑鏂囦欢鍐呭
     /// </summary>
     public byte[]? GetWorkspaceFile(string sessionId, string relativePath)
     {
@@ -4216,19 +5005,19 @@ sandbox = ""elevated""
             var workspacePath = GetSessionWorkspacePath(sessionId);
             var fullPath = Path.Combine(workspacePath, relativePath);
 
-            // 安全检查：确保文件在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚鏂囦欢鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedFile = Path.GetFullPath(fullPath);
 
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedFile))
             {
-                _logger.LogWarning("尝试访问工作区外的文件: {File}", relativePath);
+                _logger.LogWarning("灏濊瘯璁块棶宸ヤ綔鍖哄鐨勬枃浠? {File}", relativePath);
                 return null;
             }
 
             if (!File.Exists(fullPath))
             {
-                _logger.LogWarning("文件不存在: {File}", relativePath);
+                _logger.LogWarning("鏂囦欢涓嶅瓨鍦? {File}", relativePath);
                 return null;
             }
 
@@ -4236,13 +5025,13 @@ sandbox = ""elevated""
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "读取工作区文件失败: {SessionId}/{File}", sessionId, relativePath);
+            _logger.LogError(ex, "璇诲彇宸ヤ綔鍖烘枃浠跺け璐? {SessionId}/{File}", sessionId, relativePath);
             return null;
         }
     }
 
     /// <summary>
-    /// 获取会话工作区的所有文件（打包为ZIP）
+    /// 鑾峰彇浼氳瘽宸ヤ綔鍖虹殑鎵€鏈夋枃浠讹紙鎵撳寘涓篫IP锛?
     /// </summary>
     public byte[]? GetWorkspaceZip(string sessionId)
     {
@@ -4252,7 +5041,7 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return null;
             }
 
@@ -4267,13 +5056,13 @@ sandbox = ""elevated""
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "打包工作区失败: {SessionId}", sessionId);
+            _logger.LogError(ex, "鎵撳寘宸ヤ綔鍖哄け璐? {SessionId}", sessionId);
             return null;
         }
     }
 
     /// <summary>
-    /// 上传文件到会话工作区
+    /// 涓婁紶鏂囦欢鍒颁細璇濆伐浣滃尯
     /// </summary>
     public async Task<bool> UploadFileToWorkspaceAsync(string sessionId, string fileName, byte[] fileContent, string? relativePath = null)
     {
@@ -4281,23 +5070,23 @@ sandbox = ""elevated""
         {
             var workspacePath = GetSessionWorkspacePath(sessionId);
 
-            // 确保工作区存在
+            // 纭繚宸ヤ綔鍖哄瓨鍦?
             if (!Directory.Exists(workspacePath))
             {
                 Directory.CreateDirectory(workspacePath);
-                _logger.LogInformation("创建会话工作区: {SessionId}", sessionId);
+                _logger.LogInformation("鍒涘缓浼氳瘽宸ヤ綔鍖? {SessionId}", sessionId);
             }
 
-            // 构建目标路径
+            // 鏋勫缓鐩爣璺緞
             string targetPath;
             if (string.IsNullOrWhiteSpace(relativePath))
             {
-                // 直接放在工作区根目录
+                // 鐩存帴鏀惧湪宸ヤ綔鍖烘牴鐩綍
                 targetPath = Path.Combine(workspacePath, fileName);
             }
             else
             {
-                // 放在指定的子目录
+                // 鏀惧湪鎸囧畾鐨勫瓙鐩綍
                 var targetDir = Path.Combine(workspacePath, relativePath);
                 if (!Directory.Exists(targetDir))
                 {
@@ -4306,25 +5095,25 @@ sandbox = ""elevated""
                 targetPath = Path.Combine(targetDir, fileName);
             }
 
-            // 安全检查：确保文件在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚鏂囦欢鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedTarget = Path.GetFullPath(targetPath);
 
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedTarget))
             {
-                _logger.LogWarning("尝试上传文件到工作区外: {File}", targetPath);
+                _logger.LogWarning("灏濊瘯涓婁紶鏂囦欢鍒板伐浣滃尯澶? {File}", targetPath);
                 return false;
             }
 
-            // 写入文件
+            // 鍐欏叆鏂囦欢
             await File.WriteAllBytesAsync(targetPath, fileContent);
-            _logger.LogInformation("文件上传成功: {SessionId}/{File}, 大小: {Size} bytes", sessionId, Path.GetRelativePath(workspacePath, targetPath), fileContent.Length);
+            _logger.LogInformation("鏂囦欢涓婁紶鎴愬姛: {SessionId}/{File}, 澶у皬: {Size} bytes", sessionId, Path.GetRelativePath(workspacePath, targetPath), fileContent.Length);
             
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "上传文件到工作区失败: {SessionId}/{File}", sessionId, fileName);
+            _logger.LogError(ex, "涓婁紶鏂囦欢鍒板伐浣滃尯澶辫触: {SessionId}/{File}", sessionId, fileName);
             return false;
         }
     }
@@ -4335,57 +5124,57 @@ sandbox = ""elevated""
         {
             var workspacePath = GetSessionWorkspacePath(sessionId);
 
-            // 确保工作区存在
+            // 纭繚宸ヤ綔鍖哄瓨鍦?
             if (!Directory.Exists(workspacePath))
             {
                 Directory.CreateDirectory(workspacePath);
-                _logger.LogInformation("创建会话工作区: {SessionId}", sessionId);
+                _logger.LogInformation("鍒涘缓浼氳瘽宸ヤ綔鍖? {SessionId}", sessionId);
             }
 
-            // 移除前导和尾随斜杠
+            // 绉婚櫎鍓嶅鍜屽熬闅忔枩鏉?
             folderPath = folderPath.Trim('/', '\\');
 
             if (string.IsNullOrWhiteSpace(folderPath))
             {
-                _logger.LogWarning("文件夹路径为空");
+                _logger.LogWarning("Folder path is empty.");
                 return false;
             }
 
-            // 构建目标路径
+            // 鏋勫缓鐩爣璺緞
             var targetPath = Path.Combine(workspacePath, folderPath);
 
-            // 安全检查：确保文件夹在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚鏂囦欢澶瑰湪宸ヤ綔鍖哄唴
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedTarget = Path.GetFullPath(targetPath);
 
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedTarget))
             {
-                _logger.LogWarning("尝试在工作区外创建文件夹: {Folder}", targetPath);
+                _logger.LogWarning("灏濊瘯鍦ㄥ伐浣滃尯澶栧垱寤烘枃浠跺す: {Folder}", targetPath);
                 return false;
             }
 
-            // 检查文件夹是否已存在
+            // 妫€鏌ユ枃浠跺す鏄惁宸插瓨鍦?
             if (Directory.Exists(targetPath))
             {
-                _logger.LogInformation("文件夹已存在: {SessionId}/{Folder}", sessionId, folderPath);
+                _logger.LogInformation("鏂囦欢澶瑰凡瀛樺湪: {SessionId}/{Folder}", sessionId, folderPath);
                 return true;
             }
 
-            // 创建文件夹
+            // 鍒涘缓鏂囦欢澶?
             Directory.CreateDirectory(targetPath);
-            _logger.LogInformation("文件夹创建成功: {SessionId}/{Folder}", sessionId, folderPath);
+            _logger.LogInformation("鏂囦欢澶瑰垱寤烘垚鍔? {SessionId}/{Folder}", sessionId, folderPath);
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "创建文件夹失败: {SessionId}/{Folder}", sessionId, folderPath);
+            _logger.LogError(ex, "鍒涘缓鏂囦欢澶瑰け璐? {SessionId}/{Folder}", sessionId, folderPath);
             return false;
         }
     }
 
     /// <summary>
-    /// 删除会话工作区中的文件或文件夹
+    /// 鍒犻櫎浼氳瘽宸ヤ綔鍖轰腑鐨勬枃浠舵垨鏂囦欢澶?
     /// </summary>
     public async Task<bool> DeleteWorkspaceItemAsync(string sessionId, string relativePath, bool isDirectory)
     {
@@ -4395,67 +5184,67 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return false;
             }
 
-            // 移除前导和尾随斜杠
+            // 绉婚櫎鍓嶅鍜屽熬闅忔枩鏉?
             relativePath = relativePath.Trim('/', '\\');
 
             if (string.IsNullOrWhiteSpace(relativePath))
             {
-                _logger.LogWarning("路径为空");
+                _logger.LogWarning("璺緞涓虹┖");
                 return false;
             }
 
-            // 构建目标路径
+            // 鏋勫缓鐩爣璺緞
             var targetPath = Path.Combine(workspacePath, relativePath);
 
-            // 安全检查：确保路径在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚璺緞鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedTarget = Path.GetFullPath(targetPath);
 
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedTarget))
             {
-                _logger.LogWarning("尝试删除工作区外的项: {Path}", targetPath);
+                _logger.LogWarning("灏濊瘯鍒犻櫎宸ヤ綔鍖哄鐨勯」: {Path}", targetPath);
                 return false;
             }
 
-            // 删除文件或文件夹
+            // 鍒犻櫎鏂囦欢鎴栨枃浠跺す
             if (isDirectory)
             {
                 if (!Directory.Exists(targetPath))
                 {
-                    _logger.LogWarning("文件夹不存在: {SessionId}/{Path}", sessionId, relativePath);
+                    _logger.LogWarning("鏂囦欢澶逛笉瀛樺湪: {SessionId}/{Path}", sessionId, relativePath);
                     return false;
                 }
 
                 Directory.Delete(targetPath, recursive: true);
-                _logger.LogInformation("文件夹删除成功: {SessionId}/{Path}", sessionId, relativePath);
+                _logger.LogInformation("鏂囦欢澶瑰垹闄ゆ垚鍔? {SessionId}/{Path}", sessionId, relativePath);
             }
             else
             {
                 if (!File.Exists(targetPath))
                 {
-                    _logger.LogWarning("文件不存在: {SessionId}/{Path}", sessionId, relativePath);
+                    _logger.LogWarning("鏂囦欢涓嶅瓨鍦? {SessionId}/{Path}", sessionId, relativePath);
                     return false;
                 }
 
                 File.Delete(targetPath);
-                _logger.LogInformation("文件删除成功: {SessionId}/{Path}", sessionId, relativePath);
+                _logger.LogInformation("鏂囦欢鍒犻櫎鎴愬姛: {SessionId}/{Path}", sessionId, relativePath);
             }
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "删除失败: {SessionId}/{Path}, IsDirectory: {IsDirectory}", sessionId, relativePath, isDirectory);
+            _logger.LogError(ex, "鍒犻櫎澶辫触: {SessionId}/{Path}, IsDirectory: {IsDirectory}", sessionId, relativePath, isDirectory);
             return false;
         }
     }
 
     /// <summary>
-    /// 移动会话工作区中的文件或文件夹
+    /// 绉诲姩浼氳瘽宸ヤ綔鍖轰腑鐨勬枃浠舵垨鏂囦欢澶?
     /// </summary>
     public async Task<bool> MoveFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath)
     {
@@ -4465,25 +5254,25 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return false;
             }
 
-            // 移除前导和尾随斜杠
+            // 绉婚櫎鍓嶅鍜屽熬闅忔枩鏉?
             sourcePath = sourcePath.Trim('/', '\\');
             targetPath = targetPath.Trim('/', '\\');
 
             if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetPath))
             {
-                _logger.LogWarning("源路径或目标路径为空");
+                _logger.LogWarning("婧愯矾寰勬垨鐩爣璺緞涓虹┖");
                 return false;
             }
 
-            // 构建完整路径
+            // 鏋勫缓瀹屾暣璺緞
             var fullSourcePath = Path.Combine(workspacePath, sourcePath);
             var fullTargetPath = Path.Combine(workspacePath, targetPath);
 
-            // 安全检查：确保路径在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚璺緞鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedSource = Path.GetFullPath(fullSourcePath);
             var normalizedTarget = Path.GetFullPath(fullTargetPath);
@@ -4491,28 +5280,28 @@ sandbox = ""elevated""
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedSource) ||
                 !IsPathWithinDirectory(normalizedWorkspace, normalizedTarget))
             {
-                _logger.LogWarning("尝试移动工作区外的项");
+                _logger.LogWarning("灏濊瘯绉诲姩宸ヤ綔鍖哄鐨勯」");
                 return false;
             }
 
-            // 检查源是否存在
+            // 妫€鏌ユ簮鏄惁瀛樺湪
             bool isDirectory = Directory.Exists(fullSourcePath);
             bool isFile = File.Exists(fullSourcePath);
 
             if (!isDirectory && !isFile)
             {
-                _logger.LogWarning("源不存在: {SessionId}/{Source}", sessionId, sourcePath);
+                _logger.LogWarning("婧愪笉瀛樺湪: {SessionId}/{Source}", sessionId, sourcePath);
                 return false;
             }
 
-            // 确保目标目录存在
+            // 纭繚鐩爣鐩綍瀛樺湪
             var targetDirectory = Path.GetDirectoryName(fullTargetPath);
             if (!string.IsNullOrEmpty(targetDirectory) && !Directory.Exists(targetDirectory))
             {
                 Directory.CreateDirectory(targetDirectory);
             }
 
-            // 移动文件或文件夹
+            // 绉诲姩鏂囦欢鎴栨枃浠跺す
             if (isDirectory)
             {
                 Directory.Move(fullSourcePath, fullTargetPath);
@@ -4522,18 +5311,18 @@ sandbox = ""elevated""
                 File.Move(fullSourcePath, fullTargetPath, overwrite: true);
             }
 
-            _logger.LogInformation("移动成功: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
+            _logger.LogInformation("绉诲姩鎴愬姛: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "移动失败: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
+            _logger.LogError(ex, "绉诲姩澶辫触: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
             return false;
         }
     }
 
     /// <summary>
-    /// 复制会话工作区中的文件或文件夹
+    /// 澶嶅埗浼氳瘽宸ヤ綔鍖轰腑鐨勬枃浠舵垨鏂囦欢澶?
     /// </summary>
     public async Task<bool> CopyFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath)
     {
@@ -4543,25 +5332,25 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return false;
             }
 
-            // 移除前导和尾随斜杠
+            // 绉婚櫎鍓嶅鍜屽熬闅忔枩鏉?
             sourcePath = sourcePath.Trim('/', '\\');
             targetPath = targetPath.Trim('/', '\\');
 
             if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetPath))
             {
-                _logger.LogWarning("源路径或目标路径为空");
+                _logger.LogWarning("婧愯矾寰勬垨鐩爣璺緞涓虹┖");
                 return false;
             }
 
-            // 构建完整路径
+            // 鏋勫缓瀹屾暣璺緞
             var fullSourcePath = Path.Combine(workspacePath, sourcePath);
             var fullTargetPath = Path.Combine(workspacePath, targetPath);
 
-            // 安全检查：确保路径在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚璺緞鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedSource = Path.GetFullPath(fullSourcePath);
             var normalizedTarget = Path.GetFullPath(fullTargetPath);
@@ -4569,28 +5358,28 @@ sandbox = ""elevated""
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedSource) ||
                 !IsPathWithinDirectory(normalizedWorkspace, normalizedTarget))
             {
-                _logger.LogWarning("尝试复制工作区外的项");
+                _logger.LogWarning("灏濊瘯澶嶅埗宸ヤ綔鍖哄鐨勯」");
                 return false;
             }
 
-            // 检查源是否存在
+            // 妫€鏌ユ簮鏄惁瀛樺湪
             bool isDirectory = Directory.Exists(fullSourcePath);
             bool isFile = File.Exists(fullSourcePath);
 
             if (!isDirectory && !isFile)
             {
-                _logger.LogWarning("源不存在: {SessionId}/{Source}", sessionId, sourcePath);
+                _logger.LogWarning("婧愪笉瀛樺湪: {SessionId}/{Source}", sessionId, sourcePath);
                 return false;
             }
 
-            // 确保目标目录存在
+            // 纭繚鐩爣鐩綍瀛樺湪
             var targetDirectory = Path.GetDirectoryName(fullTargetPath);
             if (!string.IsNullOrEmpty(targetDirectory) && !Directory.Exists(targetDirectory))
             {
                 Directory.CreateDirectory(targetDirectory);
             }
 
-            // 复制文件或文件夹
+            // 澶嶅埗鏂囦欢鎴栨枃浠跺す
             if (isDirectory)
             {
                 CopyDirectory(fullSourcePath, fullTargetPath);
@@ -4600,18 +5389,18 @@ sandbox = ""elevated""
                 File.Copy(fullSourcePath, fullTargetPath, overwrite: true);
             }
 
-            _logger.LogInformation("复制成功: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
+            _logger.LogInformation("澶嶅埗鎴愬姛: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "复制失败: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
+            _logger.LogError(ex, "澶嶅埗澶辫触: {SessionId}/{Source} -> {Target}", sessionId, sourcePath, targetPath);
             return false;
         }
     }
 
     /// <summary>
-    /// 重命名会话工作区中的文件或文件夹
+    /// 閲嶅懡鍚嶄細璇濆伐浣滃尯涓殑鏂囦欢鎴栨枃浠跺す
     /// </summary>
     public async Task<bool> RenameFileInWorkspaceAsync(string sessionId, string oldPath, string newName)
     {
@@ -4621,33 +5410,33 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return false;
             }
 
-            // 移除前导和尾随斜杠
+            // 绉婚櫎鍓嶅鍜屽熬闅忔枩鏉?
             oldPath = oldPath.Trim('/', '\\');
             newName = newName.Trim('/', '\\');
 
             if (string.IsNullOrWhiteSpace(oldPath) || string.IsNullOrWhiteSpace(newName))
             {
-                _logger.LogWarning("旧路径或新名称为空");
+                _logger.LogWarning("Old path or new name is empty.");
                 return false;
             }
 
-            // 检查新名称是否包含路径分隔符（应该只是文件名）
+            // 妫€鏌ユ柊鍚嶇О鏄惁鍖呭惈璺緞鍒嗛殧绗︼紙搴旇鍙槸鏂囦欢鍚嶏級
             if (newName.Contains('/') || newName.Contains('\\'))
             {
-                _logger.LogWarning("新名称不应包含路径分隔符: {NewName}", newName);
+                _logger.LogWarning("鏂板悕绉颁笉搴斿寘鍚矾寰勫垎闅旂: {NewName}", newName);
                 return false;
             }
 
-            // 构建完整路径
+            // 鏋勫缓瀹屾暣璺緞
             var fullOldPath = Path.Combine(workspacePath, oldPath);
             var directory = Path.GetDirectoryName(fullOldPath);
             var fullNewPath = directory != null ? Path.Combine(directory, newName) : Path.Combine(workspacePath, newName);
 
-            // 安全检查：确保路径在工作区内
+            // 瀹夊叏妫€鏌ワ細纭繚璺緞鍦ㄥ伐浣滃尯鍐?
             var normalizedWorkspace = Path.GetFullPath(workspacePath);
             var normalizedOld = Path.GetFullPath(fullOldPath);
             var normalizedNew = Path.GetFullPath(fullNewPath);
@@ -4655,21 +5444,21 @@ sandbox = ""elevated""
             if (!IsPathWithinDirectory(normalizedWorkspace, normalizedOld) ||
                 !IsPathWithinDirectory(normalizedWorkspace, normalizedNew))
             {
-                _logger.LogWarning("尝试重命名工作区外的项");
+                _logger.LogWarning("Attempted to rename an item outside the workspace.");
                 return false;
             }
 
-            // 检查源是否存在
+            // 妫€鏌ユ簮鏄惁瀛樺湪
             bool isDirectory = Directory.Exists(fullOldPath);
             bool isFile = File.Exists(fullOldPath);
 
             if (!isDirectory && !isFile)
             {
-                _logger.LogWarning("源不存在: {SessionId}/{OldPath}", sessionId, oldPath);
+                _logger.LogWarning("婧愪笉瀛樺湪: {SessionId}/{OldPath}", sessionId, oldPath);
                 return false;
             }
 
-            // 重命名文件或文件夹
+            // 閲嶅懡鍚嶆枃浠舵垨鏂囦欢澶?
             if (isDirectory)
             {
                 Directory.Move(fullOldPath, fullNewPath);
@@ -4679,18 +5468,18 @@ sandbox = ""elevated""
                 File.Move(fullOldPath, fullNewPath, overwrite: true);
             }
 
-            _logger.LogInformation("重命名成功: {SessionId}/{OldPath} -> {NewName}", sessionId, oldPath, newName);
+            _logger.LogInformation("閲嶅懡鍚嶆垚鍔? {SessionId}/{OldPath} -> {NewName}", sessionId, oldPath, newName);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "重命名失败: {SessionId}/{OldPath} -> {NewName}", sessionId, oldPath, newName);
+            _logger.LogError(ex, "閲嶅懡鍚嶅け璐? {SessionId}/{OldPath} -> {NewName}", sessionId, oldPath, newName);
             return false;
         }
     }
 
     /// <summary>
-    /// 批量删除会话工作区中的文件
+    /// 鎵归噺鍒犻櫎浼氳瘽宸ヤ綔鍖轰腑鐨勬枃浠?
     /// </summary>
     public async Task<int> BatchDeleteFilesAsync(string sessionId, List<string> relativePaths)
     {
@@ -4702,7 +5491,7 @@ sandbox = ""elevated""
 
             if (!Directory.Exists(workspacePath))
             {
-                _logger.LogWarning("工作区不存在: {SessionId}", sessionId);
+                _logger.LogWarning("宸ヤ綔鍖轰笉瀛樺湪: {SessionId}", sessionId);
                 return 0;
             }
 
@@ -4718,17 +5507,17 @@ sandbox = ""elevated""
 
                     var fullPath = Path.Combine(workspacePath, cleanPath);
 
-                    // 安全检查：确保路径在工作区内
+                    // 瀹夊叏妫€鏌ワ細纭繚璺緞鍦ㄥ伐浣滃尯鍐?
                     var normalizedWorkspace = Path.GetFullPath(workspacePath);
                     var normalizedPath = Path.GetFullPath(fullPath);
 
                     if (!IsPathWithinDirectory(normalizedWorkspace, normalizedPath))
                     {
-                        _logger.LogWarning("尝试删除工作区外的项: {Path}", fullPath);
+                        _logger.LogWarning("灏濊瘯鍒犻櫎宸ヤ綔鍖哄鐨勯」: {Path}", fullPath);
                         continue;
                     }
 
-                    // 判断是文件还是文件夹
+                    // 鍒ゆ柇鏄枃浠惰繕鏄枃浠跺す
                     bool isDirectory = Directory.Exists(fullPath);
                     bool isFile = File.Exists(fullPath);
 
@@ -4745,29 +5534,73 @@ sandbox = ""elevated""
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "批量删除单个文件失败: {SessionId}/{Path}", sessionId, relativePath);
+                    _logger.LogWarning(ex, "鎵归噺鍒犻櫎鍗曚釜鏂囦欢澶辫触: {SessionId}/{Path}", sessionId, relativePath);
                 }
             }
 
-            _logger.LogInformation("批量删除完成: {SessionId}, 成功 {Count}/{Total}", sessionId, successCount, relativePaths.Count);
+            _logger.LogInformation("鎵归噺鍒犻櫎瀹屾垚: {SessionId}, 鎴愬姛 {Count}/{Total}", sessionId, successCount, relativePaths.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "批量删除失败: {SessionId}", sessionId);
+            _logger.LogError(ex, "鎵归噺鍒犻櫎澶辫触: {SessionId}", sessionId);
         }
 
         return successCount;
     }
 
+    private string SyncGlobalCodexSkillsToWorkspace(string sessionWorkspace, string sessionId)
+    {
+        var sourceSkillsDirectory = GetCodexGlobalSkillsDirectory();
+        if (!Directory.Exists(sourceSkillsDirectory))
+        {
+            return string.Empty;
+        }
+
+        var targetSkillsDirectory = ResolveWorkspaceCodexSkillsDirectory(sessionWorkspace);
+        try
+        {
+            CopyDirectory(sourceSkillsDirectory, targetSkillsDirectory);
+            _logger.LogInformation(
+                "已将全局 Codex skills 同步到会话工作区: {SessionId}, Source={SourceSkillsDirectory}, Target={TargetSkillsDirectory}",
+                sessionId,
+                sourceSkillsDirectory,
+                targetSkillsDirectory);
+            return "已将全局 Codex skills 同步到工作区";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "同步全局 Codex skills 到会话工作区失败: {SessionId}, Source={SourceSkillsDirectory}, Target={TargetSkillsDirectory}",
+                sessionId,
+                sourceSkillsDirectory,
+                targetSkillsDirectory);
+            return $"全局 Codex skills 同步失败: {ex.Message}";
+        }
+    }
+
+    private string GetCodexGlobalSkillsDirectory()
+    {
+        return Path.Combine(_userProfileResolver(), ".codex", "skills");
+    }
+
+    private static string ResolveWorkspaceCodexSkillsDirectory(string workspacePath)
+    {
+        var trimmedWorkspace = workspacePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(Path.GetFileName(trimmedWorkspace), ".codex", StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(trimmedWorkspace, "skills")
+            : Path.Combine(trimmedWorkspace, ".codex", "skills");
+    }
+
     /// <summary>
-    /// 递归复制目录
+    /// 閫掑綊澶嶅埗鐩綍
     /// </summary>
     private void CopyDirectory(string sourceDir, string targetDir)
     {
-        // 创建目标目录
+        // 鍒涘缓鐩爣鐩綍
         Directory.CreateDirectory(targetDir);
 
-        // 复制所有文件
+        // 澶嶅埗鎵€鏈夋枃浠?
         foreach (var file in Directory.GetFiles(sourceDir))
         {
             var fileName = Path.GetFileName(file);
@@ -4775,7 +5608,7 @@ sandbox = ""elevated""
             File.Copy(file, targetFile, overwrite: true);
         }
 
-        // 递归复制所有子目录
+        // 閫掑綊澶嶅埗鎵€鏈夊瓙鐩綍
         foreach (var subDir in Directory.GetDirectories(sourceDir))
         {
             var dirName = Path.GetFileName(subDir);
@@ -4784,4 +5617,10 @@ sandbox = ""elevated""
         }
     }
 }
+
+
+
+
+
+
 

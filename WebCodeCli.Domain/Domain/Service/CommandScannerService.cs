@@ -81,7 +81,8 @@ public class CommandScannerService : IDisposable
         AddScanDirectory(openCodeConfigPlugins, "plugins", "opencode");
 
         var projectClaudeSkills = FindProjectDirectory("skills", "claude");
-        var projectCodexSkills = FindProjectDirectory("skills", "codex");
+        var projectCodexSkills = FindProjectDirectory(".codex", "skills");
+        var legacyProjectCodexSkills = FindProjectDirectory("skills", "codex");
         var projectOpenCodeSkills = FindProjectDirectory(".opencode", "skills");
         var projectOpenCodeCommands = FindProjectDirectory(".opencode", "commands");
         var projectOpenCodePlugins = FindProjectDirectory(".opencode", "plugins");
@@ -94,6 +95,12 @@ public class CommandScannerService : IDisposable
         if (!string.IsNullOrWhiteSpace(projectCodexSkills))
         {
             AddScanDirectory(projectCodexSkills, "skills_project", "codex");
+        }
+
+        if (!string.IsNullOrWhiteSpace(legacyProjectCodexSkills)
+            && !string.Equals(legacyProjectCodexSkills, projectCodexSkills, StringComparison.OrdinalIgnoreCase))
+        {
+            AddScanDirectory(legacyProjectCodexSkills, "skills_project", "codex");
         }
 
         if (!string.IsNullOrWhiteSpace(projectOpenCodeSkills))

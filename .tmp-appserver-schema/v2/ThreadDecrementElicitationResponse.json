@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadDecrementElicitationResponse",
+  "description": "Response for `thread/decrement_elicitation`.",
+  "type": "object",
+  "required": [
+    "count",
+    "paused"
+  ],
+  "properties": {
+    "count": {
+      "description": "Current out-of-band elicitation count after the decrement.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "paused": {
+      "description": "Whether timeout accounting remains paused after applying the decrement.",
+      "type": "boolean"
+    }
+  }
+}

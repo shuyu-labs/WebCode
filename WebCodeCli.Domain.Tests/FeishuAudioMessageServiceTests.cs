@@ -160,6 +160,14 @@ public sealed class FeishuAudioMessageServiceTests
 
         public Task<string> ReplyRawCardAsync(string replyMessageId, string cardJson, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
             => throw new NotSupportedException();
+
+        public Task<(byte[] Content, string FileName, string MimeType)> DownloadMessageResourceAsync(
+            string messageId,
+            string fileKey,
+            string resourceType,
+            CancellationToken cancellationToken = default,
+            FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
     }
 
     private sealed class StubUserFeishuBotConfigService : IUserFeishuBotConfigService

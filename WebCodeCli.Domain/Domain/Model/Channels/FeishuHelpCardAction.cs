@@ -8,11 +8,19 @@ namespace WebCodeCli.Domain.Domain.Model.Channels;
 /// </summary>
 public class FeishuHelpCardAction
 {
+    public const string SubmitAttachmentPromptAction = "submit_attachment_prompt";
     public const string SubmitSuperpowersQuickInputAction = "submit_superpowers_quick_input";
     public const string SubmitGoalQuickInputAction = "submit_goal_quick_input";
+    public const string StatusGoalAction = "status_goal";
+    public const string PauseGoalAction = "pause_goal";
+    public const string ClearGoalAction = "clear_goal";
+    public const string ResumeGoalAction = "resume_goal";
     public const string ContinueSuperpowersAction = "continue_superpowers";
+    public const string StopStreamingExecutionAction = "stop_streaming_execution";
     public const string ExecuteSuperpowersPlanAction = "execute_superpowers_plan";
     public const string ExecuteSuperpowersSubagentPlanAction = "execute_superpowers_subagent_plan";
+    public const string ConfirmBoundSuperpowersAction = "confirm_bound_superpowers_action";
+    public const string ConfirmCurrentSuperpowersAction = "confirm_current_superpowers_action";
     public const string RetrySuperpowersCapabilityDetectionAction = "retry_superpowers_capability_detection";
     public const string ToggleReplyTtsAction = "toggle_reply_tts";
 
@@ -142,4 +150,16 @@ public class FeishuHelpCardAction
     /// </summary>
     [JsonPropertyName("send_as_new_card")]
     public bool SendAsNewCard { get; set; }
+
+    [JsonPropertyName("attachment_type")]
+    public string? AttachmentType { get; set; }
+
+    [JsonPropertyName("attachment_name")]
+    public string? AttachmentName { get; set; }
+
+    [JsonPropertyName("attachment_path")]
+    public string? AttachmentPath { get; set; }
+
+    [JsonPropertyName("attachment_mime_type")]
+    public string? AttachmentMimeType { get; set; }
 }

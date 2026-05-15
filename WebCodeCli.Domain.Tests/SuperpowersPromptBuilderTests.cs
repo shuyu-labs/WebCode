@@ -30,12 +30,20 @@ public class SuperpowersPromptBuilderTests
     }
 
     [Theory]
-    [InlineData("写一个执行步骤", "$superpowers ，使用superpowers技能，写一个执行步骤")]
-    [InlineData("$superpowers ，使用superpowers技能，写一个执行步骤", "$superpowers ，使用superpowers技能，写一个执行步骤")]
-    [InlineData("  写一个执行步骤  ", "$superpowers ，使用superpowers技能，写一个执行步骤")]
+    [InlineData("写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
+    [InlineData("$superpowers ，使用superpowers技能，写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
+    [InlineData("  写一个执行步骤  ", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
     public void BuildQuickSkillPrompt_AppliesPrefixOnlyWhenMissing(string input, string expected)
     {
         Assert.Equal(expected, SuperpowersPromptBuilder.BuildQuickSkillPrompt(input));
+    }
+
+    [Fact]
+    public void BuildQuickSkillPrompt_DoesNotDuplicateLanguagePolicy()
+    {
+        var input = "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.";
+
+        Assert.Equal(input, SuperpowersPromptBuilder.BuildQuickSkillPrompt(input));
     }
 
     [Theory]

@@ -31,6 +31,21 @@ public class FeishuIncomingMessage
     public string Content { get; set; } = string.Empty;
 
     /// <summary>
+    /// 飞书原始消息内容 JSON
+    /// </summary>
+    public string RawContent { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 飞书消息类型，例如 text/image/file/post
+    /// </summary>
+    public string MessageType { get; set; } = "text";
+
+    /// <summary>
+    /// 解析后的附件列表
+    /// </summary>
+    public List<FeishuIncomingAttachment> Attachments { get; set; } = new();
+
+    /// <summary>
     /// 发送者 ID
     /// </summary>
     public string SenderId { get; set; } = string.Empty;

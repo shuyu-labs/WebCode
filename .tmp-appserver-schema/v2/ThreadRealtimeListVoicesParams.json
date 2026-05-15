@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadRealtimeListVoicesParams",
+  "description": "EXPERIMENTAL - list voices supported by thread realtime.",
+  "type": "object"
+}

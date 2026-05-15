@@ -171,10 +171,36 @@ public class FeishuHelpCardBuilderTests
         Assert.Equal(
             FeishuHelpCardAction.SubmitGoalQuickInputAction,
             goalInput.GetProperty("behaviors")[0].GetProperty("value").GetProperty("action").GetString());
+        Assert.True(ContainsAction(elements, "status_goal"));
+        Assert.True(ContainsStringValue(elements, "/goal pause"));
+        Assert.True(ContainsStringValue(elements, "/goal clear"));
+        Assert.True(ContainsStringValue(elements, "/goal resume"));
+        Assert.True(ContainsAction(elements, "status_goal"));
+        Assert.True(ContainsAction(elements, "pause_goal"));
+        Assert.True(ContainsAction(elements, "clear_goal"));
+        Assert.True(ContainsAction(elements, "resume_goal"));
 
         Assert.True(
             GetInputIndexByName(elements, GoalQuickActionDefaults.QuickInputFieldName)
             > GetInputIndexByName(elements, SuperpowersQuickActionDefaults.QuickInputFieldName));
+    }
+
+    [Fact]
+    public void BuildCommandListCard_HidesGoalQuickActionButtons_WhenDisabled()
+    {
+        var cardJson = _builder.BuildCommandListCard(CreateCategories(), showGoalQuickActionButtons: false);
+        using var document = JsonDocument.Parse(cardJson);
+        var elements = document.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.Equal(1, CountInputsByName(elements, GoalQuickActionDefaults.QuickInputFieldName));
+        Assert.False(ContainsStringValue(elements, GoalQuickActionDefaults.StatusButtonText));
+        Assert.False(ContainsStringValue(elements, GoalQuickActionDefaults.PauseButtonText));
+        Assert.False(ContainsStringValue(elements, GoalQuickActionDefaults.ClearButtonText));
+        Assert.False(ContainsStringValue(elements, GoalQuickActionDefaults.ResumeButtonText));
+        Assert.False(ContainsAction(elements, "status_goal"));
+        Assert.False(ContainsAction(elements, "pause_goal"));
+        Assert.False(ContainsAction(elements, "clear_goal"));
+        Assert.False(ContainsAction(elements, "resume_goal"));
     }
 
     private static JsonElement GetActionValue(JsonElement elements, string action)

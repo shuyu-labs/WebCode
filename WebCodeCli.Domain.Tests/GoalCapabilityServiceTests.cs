@@ -87,6 +87,27 @@ public sealed class GoalCapabilityServiceTests
     }
 
     [Fact]
+    public async Task ProbeAsync_ReturnsAvailable_WhenCodexUsesOneTimeProcess()
+    {
+        var service = CreateService(
+            versionOutput: "codex-cli 0.128.0",
+            featureOutput: """
+            goals                               under development  false
+            multi_agent                         stable             true
+            """,
+            usePersistentProcess: false);
+
+        var result = await service.ProbeAsync(new GoalCapabilityContext
+        {
+            ToolId = "codex",
+            ProviderId = "provider-persistent"
+        });
+
+        Assert.Equal(GoalCapabilityState.Available, result.State);
+        Assert.Equal(GoalCapabilityProbeOutcome.Available, result.Outcome);
+    }
+
+    [Fact]
     public async Task ProbeAsync_UsesCache_UntilForceRefresh()
     {
         var service = CreateService(
@@ -113,7 +134,7 @@ public sealed class GoalCapabilityServiceTests
         Assert.Equal(GoalCapabilityState.Available, refreshed.State);
     }
 
-    private static TestGoalCapabilityService CreateService(string versionOutput, string featureOutput)
+    private static TestGoalCapabilityService CreateService(string versionOutput, string featureOutput, bool usePersistentProcess = true)
     {
         return new TestGoalCapabilityService(
             new StubCcSwitchService(),
@@ -125,7 +146,8 @@ public sealed class GoalCapabilityServiceTests
                     {
                         Id = "codex",
                         Name = "Codex",
-                        Command = "codex"
+                        Command = "codex",
+                        UsePersistentProcess = usePersistentProcess
                     }
                 ]
             }),

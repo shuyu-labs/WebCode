@@ -28,29 +28,35 @@ public static class FeishuPluginPathHelper
 
     /// <summary>
     /// 获取项目技能目录
-    /// 从应用基目录向上查找，直到找到skills文件夹或到达根目录
+    /// 从应用基目录向上查找，优先返回 .codex/skills，否则回退到旧的 skills/codex 结构
     /// </summary>
     /// <returns>项目技能目录路径</returns>
     public static string GetProjectSkillsDirectory()
     {
-        // 项目根目录下的 skills 文件夹
+        // 优先查找项目根目录下的 .codex/skills 文件夹
         var baseDir = AppContext.BaseDirectory;
 
-        // 向上查找直到找到 skills 文件夹或到达根目录
+        // 向上查找直到找到技能目录或到达根目录
         var currentDir = baseDir;
         while (!string.IsNullOrEmpty(currentDir))
         {
-            var skillsDir = Path.Combine(currentDir, "skills");
-            if (Directory.Exists(skillsDir))
+            var codexSkillsDir = Path.Combine(currentDir, ".codex", "skills");
+            if (Directory.Exists(codexSkillsDir))
             {
-                return skillsDir;
+                return codexSkillsDir;
+            }
+
+            var legacySkillsDir = Path.Combine(currentDir, "skills");
+            if (Directory.Exists(legacySkillsDir))
+            {
+                return legacySkillsDir;
             }
 
             var parent = Directory.GetParent(currentDir);
             currentDir = parent?.FullName ?? string.Empty;
         }
 
-        // 如果没找到，返回基目录下的skills（可能不存在）
-        return Path.Combine(baseDir, "skills");
+        // 如果没找到，返回基目录下的 .codex/skills（可能不存在）
+        return Path.Combine(baseDir, ".codex", "skills");
     }
 }

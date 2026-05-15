@@ -29,6 +29,47 @@ public class SessionLaunchOverrideHelperTests
     }
 
     [Fact]
+    public void ApplyPersistentProcessOverride_StoresProcessModeWithoutTouchingModelSettings()
+    {
+        var existingOverrides = new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { Model = "gpt-5.4", ReasoningEffort = "high" }
+        };
+
+        var updatedOverrides = SessionLaunchOverrideHelper.ApplyPersistentProcessOverride(
+            existingOverrides,
+            "codex",
+            true);
+
+        var codexOverride = Assert.Single(updatedOverrides);
+        Assert.Equal("codex", codexOverride.Key);
+        Assert.Equal("gpt-5.4", codexOverride.Value.Model);
+        Assert.Equal("high", codexOverride.Value.ReasoningEffort);
+        Assert.True(codexOverride.Value.UsePersistentProcess);
+    }
+
+    [Fact]
+    public void ApplyGoalRuntimeOverride_StoresGoalRuntimeWithoutTouchingLaunchSettings()
+    {
+        var existingOverrides = new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { Model = "gpt-5.4", ReasoningEffort = "high", UsePersistentProcess = false }
+        };
+
+        var updatedOverrides = SessionLaunchOverrideHelper.ApplyGoalRuntimeOverride(
+            existingOverrides,
+            "codex",
+            true);
+
+        var codexOverride = Assert.Single(updatedOverrides);
+        Assert.Equal("codex", codexOverride.Key);
+        Assert.Equal("gpt-5.4", codexOverride.Value.Model);
+        Assert.Equal("high", codexOverride.Value.ReasoningEffort);
+        Assert.False(codexOverride.Value.UsePersistentProcess);
+        Assert.True(codexOverride.Value.UseGoalRuntime);
+    }
+
+    [Fact]
     public void ApplyOverride_ClaudeReasoningOverride_Throws()
     {
         var exception = Assert.Throws<ArgumentException>(() => SessionLaunchOverrideHelper.ApplyOverride(
@@ -98,7 +139,7 @@ public class SessionLaunchOverrideHelperTests
     {
         var overrides = new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
         {
-            ["codex"] = new() { Model = "gpt-5.4", ReasoningEffort = "high" },
+            ["codex"] = new() { Model = "gpt-5.4", ReasoningEffort = "high", UsePersistentProcess = true, UseGoalRuntime = true },
             ["claude-code"] = new() { Model = "sonnet" }
         };
 
@@ -106,11 +147,15 @@ public class SessionLaunchOverrideHelperTests
 
         Assert.NotNull(json);
         Assert.Contains("\"reasoningEffort\":\"high\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"usePersistentProcess\":true", json, StringComparison.Ordinal);
+        Assert.Contains("\"useGoalRuntime\":true", json, StringComparison.Ordinal);
 
         var roundTrippedOverrides = SessionLaunchOverrideHelper.Deserialize(json);
 
         Assert.Equal("gpt-5.4", roundTrippedOverrides["codex"].Model);
         Assert.Equal("high", roundTrippedOverrides["codex"].ReasoningEffort);
+        Assert.True(roundTrippedOverrides["codex"].UsePersistentProcess);
+        Assert.True(roundTrippedOverrides["codex"].UseGoalRuntime);
         Assert.Equal("sonnet", roundTrippedOverrides["claude-code"].Model);
     }
 

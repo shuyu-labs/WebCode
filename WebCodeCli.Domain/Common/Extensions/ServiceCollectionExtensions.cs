@@ -9,6 +9,7 @@ using SqlSugar;
 using System.Reflection;
 using System;
 using WebCodeCli.Domain.Domain.Service;
+using WebCodeCli.Domain.Repositories.Base.ChatSession;
 
 namespace WebCodeCli.Domain.Common.Extensions
 {
@@ -53,7 +54,11 @@ namespace WebCodeCli.Domain.Common.Extensions
                 }
             }
 
-           return services;
+            services.AddScoped<IAttachmentStagingService, AttachmentStagingService>();
+            services.AddScoped<IMessageSubmissionService, MessageSubmissionService>();
+            services.AddScoped<IChatMessageAttachmentRepository, ChatMessageAttachmentRepository>();
+
+            return services;
         }
 
         /// <summary>
@@ -99,7 +104,9 @@ namespace WebCodeCli.Domain.Common.Extensions
             // 注册帮助功能服务
             services.AddSingleton<FeishuCommandService>();
             services.AddSingleton<FeishuHelpCardBuilder>();
+            services.AddSingleton<FeishuAttachmentDraftCardBuilder>();
             services.AddSingleton<FeishuCardActionService>();
+            services.AddSingleton<IFeishuAttachmentDraftService, FeishuAttachmentDraftService>();
             services.AddSingleton<ReplyTtsStorageRootResolver>();
 
             services.AddSingleton<IUserFeishuBotRuntimeService, UserFeishuBotRuntimeService>();

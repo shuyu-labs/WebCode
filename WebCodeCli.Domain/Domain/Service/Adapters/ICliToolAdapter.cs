@@ -25,6 +25,20 @@ public interface ICliToolAdapter
     /// </summary>
     bool SupportsStreamParsing { get; }
 
+    CliAttachmentCapabilities GetAttachmentCapabilities(CliToolConfig tool)
+        => CliAttachmentCapabilities.ReferenceOnly();
+
+    string BuildArguments(CliToolConfig tool, CliExecutionRequest request)
+    {
+        if (request.NativeAttachments.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Adapter for tool '{tool.Id}' must override request-based argument translation when native attachments are present.");
+        }
+
+        return BuildArguments(tool, request.BuildPromptText(), request.SessionContext);
+    }
+
     /// <summary>
     /// 构建命令行参数
     /// </summary>

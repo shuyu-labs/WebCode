@@ -6,6 +6,9 @@ namespace WebCodeCli.Domain.Domain.Service.Channels;
 
 internal static class GoalQuickActionCardHelper
 {
+    private const string GoalRow1 = "goal_row_1";
+    private const string GoalRow2 = "goal_row_2";
+
     public static FeishuStreamingCardBottomPrompt? CreateBottomPrompt(
         string sessionId,
         string chatKey,
@@ -26,14 +29,73 @@ internal static class GoalQuickActionCardHelper
             DefaultValue = string.Empty,
             ButtonText = GoalQuickActionDefaults.QuickSubmitButtonText,
             ButtonType = "primary",
-            Value = new
-            {
-                action = FeishuHelpCardAction.SubmitGoalQuickInputAction,
-                session_id = sessionId,
-                chat_key = chatKey,
-                tool_id = toolId
-            }
+            Value = BuildActionValue(
+                FeishuHelpCardAction.SubmitGoalQuickInputAction,
+                sessionId,
+                chatKey,
+                toolId)
         };
+    }
+
+    public static IReadOnlyList<FeishuStreamingCardBottomAction> CreateBottomActions(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        GoalCapabilitySnapshot? capabilityState = null,
+        bool showButtons = true)
+    {
+        if (!showButtons || capabilityState?.State == GoalCapabilityState.Unavailable)
+        {
+            return [];
+        }
+
+        return
+        [
+            new FeishuStreamingCardBottomAction
+            {
+                Text = GoalQuickActionDefaults.StatusButtonText,
+                Type = "default",
+                RowKey = GoalRow1,
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.StatusGoalAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = GoalQuickActionDefaults.PauseButtonText,
+                Type = "default",
+                RowKey = GoalRow1,
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.PauseGoalAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = GoalQuickActionDefaults.ClearButtonText,
+                Type = "default",
+                RowKey = GoalRow2,
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.ClearGoalAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            },
+            new FeishuStreamingCardBottomAction
+            {
+                Text = GoalQuickActionDefaults.ResumeButtonText,
+                Type = "primary",
+                RowKey = GoalRow2,
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.ResumeGoalAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            }
+        ];
     }
 
     public static string? MergeCapabilityStatusMarkdown(
@@ -50,5 +112,20 @@ internal static class GoalQuickActionCardHelper
         return string.IsNullOrWhiteSpace(statusMarkdown)
             ? capabilityMessage
             : $"{statusMarkdown}\n{capabilityMessage}";
+    }
+
+    private static object BuildActionValue(
+        string action,
+        string sessionId,
+        string chatKey,
+        string? toolId)
+    {
+        return new
+        {
+            action,
+            session_id = sessionId,
+            chat_key = chatKey,
+            tool_id = toolId
+        };
     }
 }

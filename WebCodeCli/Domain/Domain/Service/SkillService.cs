@@ -56,10 +56,17 @@ public class SkillService : ISkillService
             yield return (projectClaudeSkills, "claude");
         }
 
-        var projectCodexSkills = FindProjectDirectory("skills", "codex");
+        var projectCodexSkills = FindProjectDirectory(".codex", "skills");
         if (!string.IsNullOrWhiteSpace(projectCodexSkills))
         {
             yield return (projectCodexSkills, "codex");
+        }
+
+        var legacyProjectCodexSkills = FindProjectDirectory("skills", "codex");
+        if (!string.IsNullOrWhiteSpace(legacyProjectCodexSkills)
+            && !string.Equals(legacyProjectCodexSkills, projectCodexSkills, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return (legacyProjectCodexSkills, "codex");
         }
 
         var projectOpenCodeSkills = FindProjectDirectory(".opencode", "skills");

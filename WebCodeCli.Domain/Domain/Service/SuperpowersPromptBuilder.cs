@@ -4,6 +4,8 @@ namespace WebCodeCli.Domain.Domain.Service;
 
 public static class SuperpowersPromptBuilder
 {
+    private const string LegacyQuickSkillPrefix = "$superpowers ，使用superpowers技能，";
+
     public static string BuildContinuePrompt()
         => SuperpowersQuickActionDefaults.ContinuePrompt;
 
@@ -21,8 +23,14 @@ public static class SuperpowersPromptBuilder
             return null;
         }
 
-        return trimmed.StartsWith(SuperpowersQuickActionDefaults.QuickSkillPrefix, StringComparison.Ordinal)
+        var normalized = trimmed.StartsWith(SuperpowersQuickActionDefaults.QuickSkillPrefix, StringComparison.Ordinal)
             ? trimmed
-            : $"{SuperpowersQuickActionDefaults.QuickSkillPrefix}{trimmed}";
+            : trimmed.StartsWith(LegacyQuickSkillPrefix, StringComparison.Ordinal)
+                ? $"{SuperpowersQuickActionDefaults.QuickSkillPrefix}{trimmed[LegacyQuickSkillPrefix.Length..]}"
+                : $"{SuperpowersQuickActionDefaults.QuickSkillPrefix}{trimmed}";
+
+        return normalized.Contains(SuperpowersQuickActionDefaults.PromptLanguagePolicy, StringComparison.Ordinal)
+            ? normalized
+            : $"{normalized}\n\n{SuperpowersQuickActionDefaults.PromptLanguagePolicy}";
     }
 }

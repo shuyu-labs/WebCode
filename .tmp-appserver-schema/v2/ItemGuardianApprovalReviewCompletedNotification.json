@@ -1,0 +1,623 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ItemGuardianApprovalReviewCompletedNotification",
+  "description": "[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.",
+  "type": "object",
+  "required": [
+    "action",
+    "completedAtMs",
+    "decisionSource",
+    "review",
+    "reviewId",
+    "startedAtMs",
+    "threadId",
+    "turnId"
+  ],
+  "properties": {
+    "action": {
+      "$ref": "#/definitions/GuardianApprovalReviewAction"
+    },
+    "completedAtMs": {
+      "description": "Unix timestamp (in milliseconds) when this review completed.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "decisionSource": {
+      "$ref": "#/definitions/AutoReviewDecisionSource"
+    },
+    "review": {
+      "$ref": "#/definitions/GuardianApprovalReview"
+    },
+    "reviewId": {
+      "description": "Stable identifier for this review.",
+      "type": "string"
+    },
+    "startedAtMs": {
+      "description": "Unix timestamp (in milliseconds) when this review started.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "targetItemId": {
+      "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "AbsolutePathBuf": {
+      "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+      "type": "string"
+    },
+    "AdditionalFileSystemPermissions": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/FileSystemSandboxEntry"
+          }
+        },
+        "globScanMaxDepth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 1.0
+        },
+        "read": {
+          "description": "This will be removed in favor of `entries`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          }
+        },
+        "write": {
+          "description": "This will be removed in favor of `entries`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          }
+        }
+      }
+    },
+    "AdditionalNetworkPermissions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "AutoReviewDecisionSource": {
+      "description": "[UNSTABLE] Source that produced a terminal approval auto-review decision.",
+      "type": "string",
+      "enum": [
+        "agent"
+      ]
+    },
+    "FileSystemAccessMode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "none"
+      ]
+    },
+    "FileSystemPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "path"
+              ],
+              "title": "PathFileSystemPathType"
+            }
+          },
+          "title": "PathFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pattern",
+            "type"
+          ],
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "glob_pattern"
+              ],
+              "title": "GlobPatternFileSystemPathType"
+            }
+          },
+          "title": "GlobPatternFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "special"
+              ],
+              "title": "SpecialFileSystemPathType"
+            },
+            "value": {
+              "$ref": "#/definitions/FileSystemSpecialPath"
+            }
+          },
+          "title": "SpecialFileSystemPath"
+        }
+      ]
+    },
+    "FileSystemSandboxEntry": {
+      "type": "object",
+      "required": [
+        "access",
+        "path"
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/FileSystemAccessMode"
+        },
+        "path": {
+          "$ref": "#/definitions/FileSystemPath"
+        }
+      }
+    },
+    "FileSystemSpecialPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "root"
+              ]
+            }
+          },
+          "title": "RootFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "minimal"
+              ]
+            }
+          },
+          "title": "MinimalFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "project_roots"
+              ]
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "title": "KindFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "tmpdir"
+              ]
+            }
+          },
+          "title": "TmpdirFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "slash_tmp"
+              ]
+            }
+          },
+          "title": "SlashTmpFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unknown"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "GuardianApprovalReview": {
+      "description": "[UNSTABLE] Temporary approval auto-review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.",
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "rationale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "riskLevel": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GuardianRiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/GuardianApprovalReviewStatus"
+        },
+        "userAuthorization": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GuardianUserAuthorization"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "GuardianApprovalReviewAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "cwd",
+            "source",
+            "type"
+          ],
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "source": {
+              "$ref": "#/definitions/GuardianCommandSource"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "command"
+              ],
+              "title": "CommandGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "CommandGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "argv",
+            "cwd",
+            "program",
+            "source",
+            "type"
+          ],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cwd": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "program": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/GuardianCommandSource"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "execve"
+              ],
+              "title": "ExecveGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "ExecveGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "cwd",
+            "files",
+            "type"
+          ],
+          "properties": {
+            "cwd": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AbsolutePathBuf"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "applyPatch"
+              ],
+              "title": "ApplyPatchGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "ApplyPatchGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "host",
+            "port",
+            "protocol",
+            "target",
+            "type"
+          ],
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            },
+            "protocol": {
+              "$ref": "#/definitions/NetworkApprovalProtocol"
+            },
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "networkAccess"
+              ],
+              "title": "NetworkAccessGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "NetworkAccessGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "server",
+            "toolName",
+            "type"
+          ],
+          "properties": {
+            "connectorId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "connectorName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "server": {
+              "type": "string"
+            },
+            "toolName": {
+              "type": "string"
+            },
+            "toolTitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mcpToolCall"
+              ],
+              "title": "McpToolCallGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "McpToolCallGuardianApprovalReviewAction"
+        },
+        {
+          "type": "object",
+          "required": [
+            "permissions",
+            "type"
+          ],
+          "properties": {
+            "permissions": {
+              "$ref": "#/definitions/RequestPermissionProfile"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "requestPermissions"
+              ],
+              "title": "RequestPermissionsGuardianApprovalReviewActionType"
+            }
+          },
+          "title": "RequestPermissionsGuardianApprovalReviewAction"
+        }
+      ]
+    },
+    "GuardianApprovalReviewStatus": {
+      "description": "[UNSTABLE] Lifecycle state for an approval auto-review.",
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "approved",
+        "denied",
+        "timedOut",
+        "aborted"
+      ]
+    },
+    "GuardianCommandSource": {
+      "type": "string",
+      "enum": [
+        "shell",
+        "unifiedExec"
+      ]
+    },
+    "GuardianRiskLevel": {
+      "description": "[UNSTABLE] Risk level assigned by approval auto-review.",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "GuardianUserAuthorization": {
+      "description": "[UNSTABLE] Authorization level assigned by approval auto-review.",
+      "type": "string",
+      "enum": [
+        "unknown",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "NetworkApprovalProtocol": {
+      "type": "string",
+      "enum": [
+        "http",
+        "https",
+        "socks5Tcp",
+        "socks5Udp"
+      ]
+    },
+    "RequestPermissionProfile": {
+      "type": "object",
+      "properties": {
+        "fileSystem": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AdditionalFileSystemPermissions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AdditionalNetworkPermissions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

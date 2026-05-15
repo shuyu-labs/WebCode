@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Net.Http.Json;
 using WebCodeCli.Domain.Domain.Model;
+using WebCodeCli.Domain.Domain.Model.Channels;
 using WebCodeCli.Domain.Domain.Service;
 using WebCodeCli.Domain.Domain.Service.Adapters;
 using WebCodeCli.Components;
@@ -32,6 +33,7 @@ public class WorkspaceFileNode
 public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 {
     [Inject] private ICliExecutorService CliExecutorService { get; set; } = default!;
+    [Inject] private IMessageSubmissionService MessageSubmissionService { get; set; } = default!;
     [Inject] private IChatSessionService ChatSessionService { get; set; } = default!;
     [Inject] private ICliToolEnvironmentService CliToolEnvironmentService { get; set; } = default!;
     [Inject] private IAuthenticationService AuthenticationService { get; set; } = default!;
@@ -194,9 +196,12 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     
     // 文件上传
     private bool _isUploading = false;
+    private bool _isMessageAttachmentUploading = false;
     private const long MaxFileSize = 100 * 1024 * 1024; // 100MB
+    private const int MaxMessageAttachmentCount = 10;
     private string _selectedUploadFolder = string.Empty; // 选中的上传文件夹
     private List<string> _availableFolders = new(); // 可用的文件夹列表
+    private readonly MessageAttachmentComposerState _messageAttachmentComposer = new();
     
     // 创建文件夹
     private bool _showCreateFolderDialog = false;
@@ -1990,7 +1995,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 
     private async Task SendMessageCoreAsync(string? rawMessage, bool clearComposerInput)
     {
-        if (string.IsNullOrWhiteSpace(rawMessage) || _isLoading)
+        if (string.IsNullOrWhiteSpace(rawMessage) || _isLoading || _isMessageAttachmentUploading)
         {
             return;
         }
@@ -2023,7 +2028,6 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             // 忽略保存历史错误
         }
 
-        // 添加用户消息到会话
         var userMessage = new ChatMessage
         {
             Role = "user",
@@ -2057,12 +2061,29 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         };
 
         var contentBuilder = new StringBuilder();
+        var shouldClearPendingAttachments = false;
 
         try
         {
-            // 直接调用服务执行 CLI，使用流式处理
+            var preparedSubmission = await MessageSubmissionService.PrepareAsync(
+                new MessageDraft
+                {
+                    SessionId = _sessionId,
+                    ToolId = _selectedToolId,
+                    Channel = MessageSubmissionChannel.Web,
+                    Text = message,
+                    Attachments = [.. _messageAttachmentComposer.PendingAttachments],
+                    SubmittedBy = ResolveSubmittedBy()
+                });
+
+            userMessage.Content = preparedSubmission.UserMessage.Content;
+            userMessage.Attachments = preparedSubmission.UserMessage.Attachments;
+            userMessage.CliToolId = preparedSubmission.UserMessage.CliToolId;
+            StateHasChanged();
+
             await foreach (var chunk in CliExecutorService.ExecuteStreamAsync(
-                _sessionId, _selectedToolId, message, default))
+                preparedSubmission.ExecutionRequest,
+                default))
             {
                 if (chunk.IsError)
                 {
@@ -2096,6 +2117,8 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                     {
                         assistantMessage.Content = contentBuilder.ToString();
                     }
+
+                    shouldClearPendingAttachments = true;
                     
                     _messages.Add(assistantMessage);
                     ChatSessionService.AddMessage(_sessionId, assistantMessage);
@@ -2165,6 +2188,10 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             
             _isLoading = false;
             _currentAssistantMessage = string.Empty;
+            if (shouldClearPendingAttachments)
+            {
+                _messageAttachmentComposer.Clear();
+            }
             StateHasChanged();
             await ScrollToBottom();
             
@@ -2314,6 +2341,10 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 
             _isLoading = false;
             _currentAssistantMessage = string.Empty;
+            if (shouldClearPendingAttachments)
+            {
+                _messageAttachmentComposer.Clear();
+            }
             StateHasChanged();
             await ScrollToBottom();
             await SaveCurrentSessionAsync();
@@ -2340,6 +2371,17 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     private async Task OnExecuteSuperpowersSubagentPlanAsync(ChatMessage sourceMessage)
     {
         await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.ExecuteSubagentPlan);
+    }
+
+    private async Task OnStopSuperpowersActionAsync(ChatMessage sourceMessage)
+    {
+        var eligibility = CurrentSuperpowersQuickActionEligibility;
+        if (!_isLoading || !SuperpowersQuickActionHelper.IsMessageEligible(sourceMessage, eligibility))
+        {
+            return;
+        }
+
+        await CancelExecution();
     }
 
     private async Task SubmitSuperpowersQuickActionAsync(
@@ -2416,6 +2458,52 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         await SendMessageCoreAsync(message, clearComposerInput: false);
     }
 
+    private Task OnGoalStatusActionAsync(ChatMessage sourceMessage)
+        => SendGoalActionAsync(sourceMessage, FeishuHelpCardAction.StatusGoalAction);
+
+    private async Task OnGoalPauseActionAsync(ChatMessage sourceMessage)
+    {
+        var eligibility = CurrentGoalQuickActionEligibility;
+        if (!_isLoading || !SuperpowersQuickActionHelper.IsMessageEligible(sourceMessage, eligibility))
+        {
+            return;
+        }
+
+        await CancelExecution();
+    }
+
+    private Task OnGoalClearActionAsync(ChatMessage sourceMessage)
+        => SendGoalActionAsync(sourceMessage, FeishuHelpCardAction.ClearGoalAction);
+
+    private Task OnGoalResumeActionAsync(ChatMessage sourceMessage)
+        => SendGoalActionAsync(sourceMessage, FeishuHelpCardAction.ResumeGoalAction);
+
+    private async Task SendGoalActionAsync(ChatMessage sourceMessage, string action)
+    {
+        var eligibility = CurrentGoalQuickActionEligibility;
+        var viewState = CurrentGoalQuickActionViewState;
+        if (_isLoading
+            || viewState.IsDisabled
+            || !SuperpowersQuickActionHelper.IsMessageEligible(sourceMessage, eligibility))
+        {
+            return;
+        }
+
+        var message = GoalPromptBuilder.BuildPromptForAction(action, input: null);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        var capabilityAvailable = await EnsureGoalCapabilityAvailableAsync(forceRefresh: false);
+        if (!capabilityAvailable)
+        {
+            return;
+        }
+
+        await SendMessageCoreAsync(message, clearComposerInput: false);
+    }
+
     private async Task RetryGoalCapabilityAsync(ChatMessage sourceMessage)
     {
         var eligibility = CurrentGoalQuickActionEligibility;
@@ -2446,7 +2534,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 
         var probeResult = await SuperpowersCapabilityService.ProbeAsync(
             BuildSuperpowersCapabilityContext(),
-            forceRefresh: forceRefresh);
+            forceRefresh: forceRefresh || _superpowersCapabilityPresentation.State != SuperpowersCapabilityState.Available);
 
         _superpowersCapabilityPresentation = probeResult.Outcome switch
         {
@@ -4062,6 +4150,67 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         }
     }
 
+    private async Task HandleMessageAttachmentUpload(InputFileChangeEventArgs e)
+    {
+        if (_isMessageAttachmentUploading)
+        {
+            return;
+        }
+
+        var remainingSlots = MaxMessageAttachmentCount - _messageAttachmentComposer.PendingAttachments.Count;
+        if (remainingSlots <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _isMessageAttachmentUploading = true;
+            StateHasChanged();
+
+            var files = e.GetMultipleFiles(remainingSlots);
+            var updatedAttachments = _messageAttachmentComposer.PendingAttachments.ToList();
+
+            foreach (var file in files)
+            {
+                if (file.Size > MaxFileSize)
+                {
+                    Console.WriteLine($"消息附件过大: {file.Name} ({FormatFileSize(file.Size)}), 最大允许 {FormatFileSize(MaxFileSize)}");
+                    continue;
+                }
+
+                using var stream = file.OpenReadStream(MaxFileSize);
+                using var memoryStream = new MemoryStream();
+                await stream.CopyToAsync(memoryStream);
+
+                updatedAttachments.Add(new MessageDraftAttachmentInput
+                {
+                    FileName = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                    Content = memoryStream.ToArray()
+                });
+            }
+
+            _messageAttachmentComposer.Replace(updatedAttachments);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"处理消息附件失败: {ex.Message}");
+        }
+        finally
+        {
+            _isMessageAttachmentUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private Task RemovePendingMessageAttachment(string attachmentId)
+    {
+        _messageAttachmentComposer.Remove(attachmentId);
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
     private string FormatFileSize(long bytes)
     {
         string[] sizes = { "B", "KB", "MB", "GB" };
@@ -4073,6 +4222,16 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             len = len / 1024;
         }
         return $"{len:0.##} {sizes[order]}";
+    }
+
+    private string ResolveSubmittedBy()
+    {
+        if (!string.IsNullOrWhiteSpace(_currentUsername))
+        {
+            return _currentUsername;
+        }
+
+        return UserContextService.GetCurrentUsername();
     }
 
     private async Task HandleLogout()
@@ -4871,11 +5030,13 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             StateHasChanged();
 
             var session = await SessionHistoryManager.GetSessionAsync(_sessionToConfigureLaunch.SessionId) ?? _sessionToConfigureLaunch;
-            session.ToolLaunchOverrides = SessionLaunchOverrideHelper.ApplyOverride(
-                session.ToolLaunchOverrides,
-                toolId,
-                clearOverride ? null : _sessionLaunchOverrideModel,
-                clearOverride ? null : _sessionLaunchReasoningEffort);
+            session.ToolLaunchOverrides = clearOverride
+                ? SessionLaunchOverrideHelper.RemoveOverride(session.ToolLaunchOverrides, toolId)
+                : SessionLaunchOverrideHelper.ApplyOverride(
+                    session.ToolLaunchOverrides,
+                    toolId,
+                    _sessionLaunchOverrideModel,
+                    _sessionLaunchReasoningEffort);
 
             await SessionHistoryManager.SaveSessionImmediateAsync(session);
             await CliExecutorService.ResetSessionRuntimeAsync(session.SessionId, clearCliThreadId: false);
@@ -5399,6 +5560,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         {
             // 生成新的会话ID
             _sessionId = Guid.NewGuid().ToString();
+            _messageAttachmentComposer.Clear();
             
             // 清空当前会话
             _currentSession = null;
@@ -5512,6 +5674,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         try
         {
             _isLoadingSession = true;
+            _messageAttachmentComposer.Clear();
             StateHasChanged();
 
             var startTime = DateTime.Now;
@@ -6943,8 +7106,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     /// </summary>
     private Task CancelExecution()
     {
-        // 这里可以添加取消执行的逻辑
-        // 目前只是隐藏进度追踪器
+        _ = CliExecutorService.StopSessionExecutionAsync(_sessionId, _selectedToolId);
         _progressTracker?.Hide();
         _isLoading = false;
         StateHasChanged();

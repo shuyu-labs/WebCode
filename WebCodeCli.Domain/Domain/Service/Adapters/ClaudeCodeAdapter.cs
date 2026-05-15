@@ -34,6 +34,9 @@ public class ClaudeCodeAdapter : ICliToolAdapter
 
     public bool SupportsStreamParsing => true;
 
+    public CliAttachmentCapabilities GetAttachmentCapabilities(CliToolConfig tool)
+        => CliAttachmentCapabilities.ReferenceOnly();
+
     public bool CanHandle(CliToolConfig tool)
     {
         if (tool == null) return false;
@@ -42,6 +45,11 @@ public class ClaudeCodeAdapter : ICliToolAdapter
                string.Equals(tool.Id, "claude", StringComparison.OrdinalIgnoreCase) ||
                (tool.Command?.Contains("claude", StringComparison.OrdinalIgnoreCase) ?? false) &&
                !(tool.Command?.Contains("codex", StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    public string BuildArguments(CliToolConfig tool, CliExecutionRequest request)
+    {
+        return BuildArguments(tool, request.BuildPromptText(), request.SessionContext);
     }
 
     public string BuildArguments(CliToolConfig tool, string prompt, CliSessionContext context)

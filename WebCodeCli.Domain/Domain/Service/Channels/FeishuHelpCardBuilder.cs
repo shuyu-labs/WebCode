@@ -18,7 +18,11 @@ public class FeishuHelpCardBuilder
     /// <summary>
     /// 构建命令选择卡片（卡片1）- 使用 ElementsCardV2Dto
     /// </summary>
-    public ElementsCardV2Dto BuildCommandListCardV2(List<FeishuCommandCategory> categories, bool showRefreshButton = true, bool replyTtsEnabled = false)
+    public ElementsCardV2Dto BuildCommandListCardV2(
+        List<FeishuCommandCategory> categories,
+        bool showRefreshButton = true,
+        bool replyTtsEnabled = false,
+        bool showGoalQuickActionButtons = true)
     {
         var elements = new List<object>();
 
@@ -107,7 +111,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCategoryActionRow(category));
         }
 
-        AppendSuperpowersQuickActionElements(elements);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
 
         return new ElementsCardV2Dto
         {
@@ -131,7 +135,10 @@ public class FeishuHelpCardBuilder
     /// <summary>
     /// 构建过滤后的搜索卡片 - 使用 ElementsCardV2Dto
     /// </summary>
-    public ElementsCardV2Dto BuildFilteredCardV2(List<FeishuCommandCategory> categories, string keyword)
+    public ElementsCardV2Dto BuildFilteredCardV2(
+        List<FeishuCommandCategory> categories,
+        string keyword,
+        bool showGoalQuickActionButtons = true)
     {
         var elements = new List<object>
         {
@@ -203,7 +210,7 @@ public class FeishuHelpCardBuilder
             });
         }
 
-        AppendSuperpowersQuickActionElements(elements);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
 
         return new ElementsCardV2Dto
         {
@@ -227,7 +234,9 @@ public class FeishuHelpCardBuilder
     /// <summary>
     /// 构建分类命令卡片（卡片1-2）- 展示某个分类下的命令按钮
     /// </summary>
-    public ElementsCardV2Dto BuildCategoryCommandsCardV2(FeishuCommandCategory category)
+    public ElementsCardV2Dto BuildCategoryCommandsCardV2(
+        FeishuCommandCategory category,
+        bool showGoalQuickActionButtons = true)
     {
         var elements = new List<object>
         {
@@ -281,7 +290,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCommandActionRow(command));
         }
 
-        AppendSuperpowersQuickActionElements(elements);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
 
         return new ElementsCardV2Dto
         {
@@ -632,6 +641,80 @@ public class FeishuHelpCardBuilder
         return BuildCardActionResponseV2(null!, toastMessage, toastType);
     }
 
+    public ElementsCardV2Dto BuildSuperpowersSessionMismatchConfirmCardV2(
+        string boundSessionId,
+        string currentSessionId,
+        string chatKey,
+        string? toolId,
+        string action)
+    {
+        var elements = new List<object>
+        {
+            new
+            {
+                tag = "div",
+                text = new
+                {
+                    tag = "lark_md",
+                    content =
+                        "⚠️ 当前激活会话已经变化，已暂停直接执行。\n\n" +
+                        $"卡片绑定会话：`{boundSessionId}`\n" +
+                        $"当前激活会话：`{currentSessionId}`\n\n" +
+                        "请选择接下来要对哪个会话执行这次 Superpowers 操作。"
+                }
+            },
+            new { tag = "hr" },
+            new
+            {
+                tag = "column_set",
+                flex_mode = "none",
+                columns = new object[]
+                {
+                    BuildTopActionColumn(
+                        "继续原会话",
+                        "default",
+                        new
+                        {
+                            action = FeishuHelpCardAction.ConfirmBoundSuperpowersAction,
+                            session_id = boundSessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId,
+                            command = action
+                        }),
+                    BuildTopActionColumn(
+                        "改为当前会话",
+                        "primary",
+                        new
+                        {
+                            action = FeishuHelpCardAction.ConfirmCurrentSuperpowersAction,
+                            session_id = currentSessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId,
+                            command = action
+                        })
+                }
+            }
+        };
+
+        return new ElementsCardV2Dto
+        {
+            Header = new ElementsCardV2Dto.HeaderSuffix
+            {
+                Template = "orange",
+                Title = new HeaderTitleElement { Content = "确认 Superpowers 会话" }
+            },
+            Config = new ElementsCardV2Dto.ConfigSuffix
+            {
+                EnableForward = true,
+                UpdateMulti = true
+            },
+            Body = new ElementsCardV2Dto.BodySuffix
+            {
+                Elements = elements.ToArray()
+            }
+        };
+    }
+
     // ========== 原来的实现（用于初始发送卡片） ==========
 
     /// <summary>
@@ -640,7 +723,11 @@ public class FeishuHelpCardBuilder
     /// <param name="categories">命令分组列表</param>
     /// <param name="showRefreshButton">是否显示刷新按钮</param>
     /// <returns>飞书卡片JSON</returns>
-    public string BuildCommandListCard(List<FeishuCommandCategory> categories, bool showRefreshButton = true, bool replyTtsEnabled = false)
+    public string BuildCommandListCard(
+        List<FeishuCommandCategory> categories,
+        bool showRefreshButton = true,
+        bool replyTtsEnabled = false,
+        bool showGoalQuickActionButtons = true)
     {
         var elements = new List<object>();
 
@@ -729,7 +816,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCategoryActionRow(category));
         }
 
-        AppendSuperpowersQuickActionElements(elements);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
 
         var card = new
         {
@@ -924,7 +1011,7 @@ public class FeishuHelpCardBuilder
             });
         }
 
-        AppendSuperpowersQuickActionElements(elements);
+        AppendSuperpowersQuickActionElements(elements, true);
 
         var card = new
         {
@@ -948,11 +1035,15 @@ public class FeishuHelpCardBuilder
     /// <param name="toastMessage">toast消息</param>
     /// <param name="toastType">toast类型</param>
     /// <returns>飞书响应对象</returns>
-    private static void AppendSuperpowersQuickActionElements(List<object> elements)
+    private static void AppendSuperpowersQuickActionElements(List<object> elements, bool showGoalQuickActionButtons)
     {
         elements.Add(new { tag = "hr" });
         elements.Add(BuildSuperpowersQuickInput());
         elements.Add(BuildGoalQuickInput());
+        if (showGoalQuickActionButtons)
+        {
+            elements.Add(BuildGoalQuickActions());
+        }
     }
 
     private static object BuildSuperpowersQuickInput()
@@ -995,6 +1086,56 @@ public class FeishuHelpCardBuilder
                     value = new
                     {
                         action = FeishuHelpCardAction.SubmitGoalQuickInputAction
+                    }
+                }
+            }
+        };
+    }
+
+    private static object BuildGoalQuickActions()
+    {
+        return new
+        {
+            tag = "column_set",
+            flex_mode = "none",
+            columns = new object[]
+            {
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.StatusButtonText, FeishuHelpCardAction.StatusGoalAction),
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.PauseButtonText, FeishuHelpCardAction.PauseGoalAction),
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ClearButtonText, FeishuHelpCardAction.ClearGoalAction),
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ResumeButtonText, FeishuHelpCardAction.ResumeGoalAction)
+            }
+        };
+    }
+
+    private static object BuildGoalQuickActionColumn(string text, string action)
+    {
+        return new
+        {
+            tag = "column",
+            width = "weighted",
+            weight = 1,
+            elements = new object[]
+            {
+                new
+                {
+                    tag = "button",
+                    text = new
+                    {
+                        tag = "plain_text",
+                        content = text
+                    },
+                    type = "default",
+                    behaviors = new[]
+                    {
+                        new
+                        {
+                            type = "callback",
+                            value = new
+                            {
+                                action
+                            }
+                        }
                     }
                 }
             }

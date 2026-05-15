@@ -14,14 +14,19 @@ public class CodexAdapter : ICliToolAdapter
     /// 默认参数模板
     /// 支持的占位符:
     /// - {prompt}: 用户提示词
-    /// - {session}: 会话恢复参数（如果有，格式为 "resume session_id"）
+    /// - {session}: 会话恢复参数（兼容自定义模板，格式为 "resume session_id"）
+    /// - {cliThreadId}: 仅线程 ID，默认 resume 模板使用
     /// </summary>
     public const string DefaultArgumentTemplate = "exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {session} \"{prompt}\"";
+    public const string DefaultResumeArgumentTemplate = "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {cliThreadId} \"{prompt}\"";
     public const string DefaultLowInterruptionArgumentTemplate = "exec resume --skip-git-repo-check --json --full-auto {cliThreadId}";
 
     public string[] SupportedToolIds => new[] { "codex" };
 
     public bool SupportsStreamParsing => true;
+
+    public CliAttachmentCapabilities GetAttachmentCapabilities(CliToolConfig tool)
+        => CliAttachmentCapabilities.ForNativeKinds(MessageAttachmentKind.Image);
 
     public bool CanHandle(CliToolConfig tool)
     {
@@ -31,35 +36,41 @@ public class CodexAdapter : ICliToolAdapter
                (tool.Command?.Contains("codex", StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
-    public string BuildArguments(CliToolConfig tool, string prompt, CliSessionContext context)
+    public string BuildArguments(CliToolConfig tool, CliExecutionRequest request)
     {
-        var escapedPrompt = EscapeJsonString(prompt);
+        var context = request.SessionContext ?? new CliSessionContext();
+        var escapedPrompt = EscapeJsonString(request.BuildPromptText());
+        var useConfiguredTemplate = !string.IsNullOrWhiteSpace(tool.ArgumentTemplate);
+        var template = useConfiguredTemplate
+            ? tool.ArgumentTemplate
+            : context.IsResume && !string.IsNullOrEmpty(context.CliThreadId)
+                ? DefaultResumeArgumentTemplate
+                : DefaultArgumentTemplate;
 
-        // 获取参数模板：优先使用配置的 ArgumentTemplate，为空则使用默认值
-        var template = !string.IsNullOrWhiteSpace(tool.ArgumentTemplate) 
-            ? tool.ArgumentTemplate 
-            : DefaultArgumentTemplate;
-
-        // 构建会话恢复参数
         var sessionArg = string.Empty;
         if (context.IsResume && !string.IsNullOrEmpty(context.CliThreadId))
         {
             sessionArg = $"resume {context.CliThreadId}";
         }
 
-        // 替换模板占位符
-        var result = template
+        var nativeAttachmentArguments = BuildNativeAttachmentArguments(request.NativeAttachments);
+        var templateWithAttachments = InjectAttachmentArguments(template, nativeAttachmentArguments);
+
+        return NormalizeArguments(templateWithAttachments
             .Replace("{prompt}", escapedPrompt)
+            .Replace("{cliThreadId}", context.CliThreadId ?? string.Empty)
             .Replace("{session}", sessionArg)
-            .Trim();
+            .Replace("{attachments}", nativeAttachmentArguments));
+    }
 
-        // 清理多余空格
-        while (result.Contains("  "))
+    public string BuildArguments(CliToolConfig tool, string prompt, CliSessionContext context)
+    {
+        return BuildArguments(tool, new CliExecutionRequest
         {
-            result = result.Replace("  ", " ");
-        }
-
-        return result;
+            ToolId = tool.Id,
+            PromptText = prompt,
+            SessionContext = context
+        });
     }
 
     public string BuildLowInterruptionArguments(CliToolConfig tool, CliSessionContext context)
@@ -748,6 +759,62 @@ public class CodexAdapter : ICliToolAdapter
             .Replace("\n", "\\n")
             .Replace("\r", "\\r")
             .Replace("\t", "\\t");
+    }
+
+    private static string BuildNativeAttachmentArguments(IEnumerable<CliExecutionAttachment> attachments)
+    {
+        var builder = new StringBuilder();
+
+        foreach (var attachment in attachments)
+        {
+            if (attachment.Kind != MessageAttachmentKind.Image || string.IsNullOrWhiteSpace(attachment.AbsolutePath))
+            {
+                continue;
+            }
+
+            if (builder.Length > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append("-i \"")
+                .Append(EscapeCommandArgument(attachment.AbsolutePath))
+                .Append('"');
+        }
+
+        return builder.ToString();
+    }
+
+    private static string InjectAttachmentArguments(string template, string attachmentArguments)
+    {
+        if (template.Contains("{attachments}", StringComparison.Ordinal))
+        {
+            return template.Replace("{attachments}", attachmentArguments, StringComparison.Ordinal);
+        }
+
+        if (string.IsNullOrWhiteSpace(attachmentArguments))
+        {
+            return template;
+        }
+
+        if (template.Contains("\"{prompt}\"", StringComparison.Ordinal))
+        {
+            return template.Replace("\"{prompt}\"", $"{attachmentArguments} \"{{prompt}}\"", StringComparison.Ordinal);
+        }
+
+        if (template.Contains("{prompt}", StringComparison.Ordinal))
+        {
+            return template.Replace("{prompt}", $"{attachmentArguments} {{prompt}}", StringComparison.Ordinal);
+        }
+
+        return $"{template} {attachmentArguments}";
+    }
+
+    private static string EscapeCommandArgument(string input)
+    {
+        return string.IsNullOrEmpty(input)
+            ? input
+            : input.Replace("\"", "\\\"");
     }
 
     private static string NormalizeArguments(string arguments)

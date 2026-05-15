@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -32,6 +33,7 @@ public interface IExternalCliSessionHistoryService
 public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryService
 {
     private readonly ILogger<ExternalCliSessionHistoryService> _logger;
+    private static readonly ConcurrentDictionary<string, string> CodexRolloutPathCache = new(GetPathStringComparer());
 
     public ExternalCliSessionHistoryService(ILogger<ExternalCliSessionHistoryService> logger)
     {
@@ -249,6 +251,16 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
         try
         {
             var candidates = GetCodexSessionsRootCandidates(workspacePath).ToList();
+            if (TryGetCachedCodexRolloutPath(cliThreadId, workspacePath, candidates, out var cachedPath))
+            {
+                _logger.LogDebug(
+                    "[CodexHistory] Rollout cache hit: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}, RolloutPath={RolloutPath}",
+                    cliThreadId,
+                    workspacePath,
+                    cachedPath);
+                return cachedPath;
+            }
+
             _logger.LogInformation(
                 "[CodexHistory] Start resolving rollout: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}, Roots={Roots}",
                 cliThreadId,
@@ -265,6 +277,7 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                 if (directCandidates.Count > 0)
                 {
                     var rolloutPath = directCandidates[0];
+                    RememberCodexRolloutPath(cliThreadId, workspacePath, rolloutPath);
                     LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, rolloutPath, "filename", directCandidates.Count);
                     return rolloutPath;
                 }
@@ -291,6 +304,7 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                         var sessionId = GetString(payload, "id");
                         if (string.Equals(sessionId, cliThreadId, StringComparison.OrdinalIgnoreCase))
                         {
+                            RememberCodexRolloutPath(cliThreadId, workspacePath, file);
                             LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, file, "payload.id", directCandidateCount: 0);
                             return file;
                         }
@@ -318,6 +332,104 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
         }
 
         return null;
+    }
+
+    private static bool TryGetCachedCodexRolloutPath(
+        string cliThreadId,
+        string? workspacePath,
+        IReadOnlyCollection<CodexSessionsRootCandidate> candidates,
+        out string? cachedPath)
+    {
+        cachedPath = null;
+
+        var cacheKey = BuildCodexRolloutCacheKey(cliThreadId, workspacePath);
+        if (!CodexRolloutPathCache.TryGetValue(cacheKey, out var resolvedPath))
+        {
+            return false;
+        }
+
+        if (!File.Exists(resolvedPath) || !IsPathUnderAnyCandidateRoot(resolvedPath, candidates))
+        {
+            CodexRolloutPathCache.TryRemove(cacheKey, out _);
+            return false;
+        }
+
+        cachedPath = resolvedPath;
+        return true;
+    }
+
+    private static void RememberCodexRolloutPath(string cliThreadId, string? workspacePath, string rolloutPath)
+    {
+        var cacheKey = BuildCodexRolloutCacheKey(cliThreadId, workspacePath);
+        CodexRolloutPathCache[cacheKey] = rolloutPath;
+    }
+
+    private static string BuildCodexRolloutCacheKey(string cliThreadId, string? workspacePath)
+    {
+        var normalizedWorkspacePath = NormalizeWorkspacePathForCache(workspacePath);
+        return $"{normalizedWorkspacePath}\n{cliThreadId.Trim()}";
+    }
+
+    private static string NormalizeWorkspacePathForCache(string? workspacePath)
+    {
+        if (string.IsNullOrWhiteSpace(workspacePath))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Path.GetFullPath(workspacePath.Trim());
+        }
+        catch
+        {
+            return workspacePath.Trim();
+        }
+    }
+
+    private static bool IsPathUnderAnyCandidateRoot(string rolloutPath, IReadOnlyCollection<CodexSessionsRootCandidate> candidates)
+    {
+        return candidates.Any(candidate => IsPathUnderRoot(rolloutPath, candidate.Path));
+    }
+
+    private static bool IsPathUnderRoot(string path, string rootPath)
+    {
+        try
+        {
+            var normalizedPath = TrimTrailingDirectorySeparators(Path.GetFullPath(path));
+            var normalizedRoot = TrimTrailingDirectorySeparators(Path.GetFullPath(rootPath));
+            if (string.Equals(normalizedPath, normalizedRoot, GetPathStringComparison()))
+            {
+                return true;
+            }
+
+            return normalizedPath.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar,
+                GetPathStringComparison());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string TrimTrailingDirectorySeparators(string path)
+    {
+        return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static StringComparer GetPathStringComparer()
+    {
+        return OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+    }
+
+    private static StringComparison GetPathStringComparison()
+    {
+        return OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
     }
 
     private string? FindClaudeTranscriptFile(string cliThreadId, CancellationToken cancellationToken)

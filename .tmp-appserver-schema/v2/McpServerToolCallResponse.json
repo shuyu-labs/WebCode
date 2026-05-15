@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "McpServerToolCallResponse",
+  "type": "object",
+  "required": [
+    "content"
+  ],
+  "properties": {
+    "_meta": true,
+    "content": {
+      "type": "array",
+      "items": true
+    },
+    "isError": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "structuredContent": true
+  }
+}

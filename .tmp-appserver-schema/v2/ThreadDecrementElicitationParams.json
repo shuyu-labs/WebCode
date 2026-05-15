@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadDecrementElicitationParams",
+  "description": "Parameters for `thread/decrement_elicitation`.",
+  "type": "object",
+  "required": [
+    "threadId"
+  ],
+  "properties": {
+    "threadId": {
+      "description": "Thread whose out-of-band elicitation counter should be decremented.",
+      "type": "string"
+    }
+  }
+}

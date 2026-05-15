@@ -10,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Web.Extensions
 
 if (-not $ProjectPath) {
     $ProjectPath = Join-Path $PSScriptRoot "..\WebCodeCli\WebCodeCli.csproj"
@@ -44,6 +45,25 @@ function Get-BuildVersion {
     return $resolvedVersion.TrimStart("v")
 }
 
+function Read-JsonObject {
+    param([string]$Path)
+
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $raw = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    return $serializer.DeserializeObject($raw)
+}
+
+function Write-JsonObject {
+    param(
+        [string]$Path,
+        [object]$Value
+    )
+
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $json = $serializer.Serialize($Value)
+    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Update-PublishAppSettings {
     param([string]$PublishDirectory)
 
@@ -52,28 +72,42 @@ function Update-PublishAppSettings {
         throw "Published appsettings.json was not found at $settingsPath"
     }
 
-    $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
+    $settings = Read-JsonObject -Path $settingsPath
 
-    if ($settings.Logging -and $settings.Logging.LogLevel) {
-        $settings.Logging.LogLevel.Default = "Information"
+    if ($settings.ContainsKey("Logging")) {
+        $logging = $settings["Logging"]
+        if ($logging -and $logging.ContainsKey("LogLevel")) {
+            $logLevel = $logging["LogLevel"]
+            if ($logLevel) {
+                $logLevel["Default"] = "Information"
+            }
+        }
     }
 
-    if ($settings.DBConnection) {
-        $settings.DBConnection.ConnectionStrings = "Data Source=data/WebCodeCli.db"
-        $settings.DBConnection.VectorConnection = "data/WebCodeCliMem.db"
+    if ($settings.ContainsKey("DBConnection")) {
+        $dbConnection = $settings["DBConnection"]
+        if ($dbConnection) {
+            $dbConnection["ConnectionStrings"] = "Data Source=data/WebCodeCli.db"
+            $dbConnection["VectorConnection"] = "data/WebCodeCliMem.db"
+        }
     }
 
-    if ($settings.CliTools) {
-        $settings.CliTools.TempWorkspaceRoot = "workspaces"
+    if ($settings.ContainsKey("CliTools")) {
+        $cliTools = $settings["CliTools"]
+        if ($cliTools) {
+            $cliTools["TempWorkspaceRoot"] = "workspaces"
+        }
     }
 
-    if ($settings.Workspace) {
-        $settings.Workspace.AllowedRoots = @("workspaces")
-        $settings.Workspace.AutoCreateMissingDirectories = $true
+    if ($settings.ContainsKey("Workspace")) {
+        $workspace = $settings["Workspace"]
+        if ($workspace) {
+            $workspace["AllowedRoots"] = @("workspaces")
+            $workspace["AutoCreateMissingDirectories"] = $true
+        }
     }
 
-    $json = $settings | ConvertTo-Json -Depth 20
-    [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+    Write-JsonObject -Path $settingsPath -Value $settings
 }
 
 function Copy-ReplyTtsServiceAssets {
@@ -346,8 +380,8 @@ function Get-LaunchUrlForReleaseNotes {
         throw "Published appsettings.json was not found at $settingsPath"
     }
 
-    $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
-    $configuredUrls = $settings.urls
+    $settings = Read-JsonObject -Path $settingsPath
+    $configuredUrls = if ($settings.ContainsKey("urls")) { $settings["urls"] } else { $null }
     if (-not $configuredUrls) {
         return "http://localhost:5000"
     }

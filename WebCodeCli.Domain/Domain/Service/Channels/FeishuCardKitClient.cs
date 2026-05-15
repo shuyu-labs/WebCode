@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FeishuNetSdk.Im.Dtos;
@@ -17,6 +18,7 @@ namespace WebCodeCli.Domain.Domain.Service.Channels;
 [ServiceDescription(typeof(IFeishuCardKitClient), ServiceLifetime.Scoped)]
 public class FeishuCardKitClient : IFeishuCardKitClient
 {
+    private const int CardUpdateMaxAttempts = 2;
     private readonly FeishuOptions _defaultOptions;
     private readonly ILogger<FeishuCardKitClient> _logger;
     private readonly HttpClient _httpClient;
@@ -279,6 +281,99 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return ExtractMessageId(result, "reply text message");
     }
 
+    public async Task<(byte[] Content, string FileName, string MimeType)> DownloadMessageResourceAsync(
+        string messageId,
+        string fileKey,
+        string resourceType,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        if (string.IsNullOrWhiteSpace(messageId))
+        {
+            throw new ArgumentException("Message id is required.", nameof(messageId));
+        }
+
+        if (string.IsNullOrWhiteSpace(fileKey))
+        {
+            throw new ArgumentException("File key is required.", nameof(fileKey));
+        }
+
+        if (string.IsNullOrWhiteSpace(resourceType))
+        {
+            throw new ArgumentException("Resource type is required.", nameof(resourceType));
+        }
+
+        var effectiveOptions = GetEffectiveOptions(optionsOverride);
+        var token = await EnsureTokenAsync(effectiveOptions, cancellationToken);
+        var encodedMessageId = Uri.EscapeDataString(messageId);
+        var encodedFileKey = Uri.EscapeDataString(fileKey);
+        var encodedType = Uri.EscapeDataString(resourceType);
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"{_baseUrl}/open-apis/im/v1/messages/{encodedMessageId}/resources/{encodedFileKey}?type={encodedType}");
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await SendAsync(request, effectiveOptions, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError(
+                "Download Feishu message resource failed: Status={Status}, MessageId={MessageId}, FileKey={FileKey}, Type={Type}, Body={Body}",
+                response.StatusCode,
+                messageId,
+                fileKey,
+                resourceType,
+                body);
+            throw new HttpRequestException($"Download Feishu message resource failed: {response.StatusCode}");
+        }
+
+        var content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var mimeType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        var fileName = TryResolveDownloadFileName(response, fileKey, resourceType, mimeType);
+        return (content, fileName, mimeType);
+    }
+
+    public async Task<FeishuDownloadedAttachment> DownloadIncomingAttachmentAsync(
+        FeishuIncomingAttachment attachment,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(attachment);
+        ArgumentException.ThrowIfNullOrWhiteSpace(attachment.AttachmentKey);
+
+        var effectiveOptions = GetEffectiveOptions(optionsOverride);
+        var token = await EnsureTokenAsync(effectiveOptions, cancellationToken);
+        var path = string.Equals(attachment.MessageType, "image", StringComparison.OrdinalIgnoreCase)
+            ? $"/open-apis/im/v1/images/{attachment.AttachmentKey}"
+            : $"/open-apis/im/v1/files/{attachment.AttachmentKey}/download";
+
+        var response = await GetAsync(path, token, effectiveOptions, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError(
+                "Download attachment failed: Status={Status}, Key={AttachmentKey}, Content={Content}",
+                response.StatusCode,
+                attachment.AttachmentKey,
+                content);
+            throw new HttpRequestException($"Download attachment failed: {response.StatusCode}");
+        }
+
+        var contentBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+
+        return new FeishuDownloadedAttachment
+        {
+            DisplayName = string.IsNullOrWhiteSpace(attachment.DisplayName)
+                ? attachment.AttachmentKey
+                : attachment.DisplayName,
+            MimeType = string.IsNullOrWhiteSpace(contentType) ? attachment.MimeType : contentType,
+            Content = contentBytes,
+            SizeBytes = contentBytes.LongLength
+        };
+    }
+
     public async Task<FeishuStreamingHandle> CreateStreamingHandleAsync(
         string chatId,
         string? replyMessageId,
@@ -364,6 +459,7 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         {
             var token = await EnsureTokenAsync(effectiveOptions, cancellationToken);
             var cardData = BuildStreamingCardData(content, title, chrome, includeHeader: !string.IsNullOrWhiteSpace(title));
+            var updateUuid = CreateCardUpdateUuid(cardId, sequence);
 
             var payload = new
             {
@@ -372,23 +468,57 @@ public class FeishuCardKitClient : IFeishuCardKitClient
                     type = "card_json",
                     data = JsonSerializer.Serialize(cardData)
                 },
-                sequence
+                sequence,
+                uuid = updateUuid
             };
 
-            var response = await PutAsync($"/open-apis/cardkit/v1/cards/{cardId}", token, payload, effectiveOptions, cancellationToken);
-            var result = await ParseResponseAsync(response, cancellationToken);
-            EnsureBusinessSuccess(result, "Update CardKit card");
-
-            if (result.TryGetProperty("code", out var codeProp))
+            for (var attempt = 1; attempt <= CardUpdateMaxAttempts; attempt++)
             {
-                var code = codeProp.GetInt32();
-                if (code == 0) return true;
+                try
+                {
+                    var response = await PutAsync($"/open-apis/cardkit/v1/cards/{cardId}", token, payload, effectiveOptions, cancellationToken);
+                    var result = await ParseResponseAsync(response, cancellationToken);
+                    EnsureBusinessSuccess(result, "Update CardKit card");
 
-                _logger.LogWarning(
-                    "Update card failed (cardId={CardId}, seq={Sequence}): Code={Code}, Msg={Msg}",
-                    cardId, sequence, code,
-                    result.TryGetProperty("msg", out var msgProp) ? msgProp.GetString() : "Unknown");
-                return false;
+                    if (result.TryGetProperty("code", out var codeProp))
+                    {
+                        var code = codeProp.GetInt32();
+                        if (code == 0) return true;
+
+                        _logger.LogWarning(
+                            "Update card failed (cardId={CardId}, seq={Sequence}): Code={Code}, Msg={Msg}",
+                            cardId, sequence, code,
+                            result.TryGetProperty("msg", out var msgProp) ? msgProp.GetString() : "Unknown");
+                        return false;
+                    }
+
+                    return false;
+                }
+                catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    if (attempt < CardUpdateMaxAttempts)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "更新卡片超时，准备重试 (cardId={CardId}, seq={Sequence}, attempt={Attempt}/{MaxAttempts}, uuid={Uuid})",
+                            cardId,
+                            sequence,
+                            attempt,
+                            CardUpdateMaxAttempts,
+                            updateUuid);
+                        continue;
+                    }
+
+                    _logger.LogWarning(
+                        ex,
+                        "更新卡片超时，已跳过本次更新但保持流式卡片继续推送 (cardId={CardId}, seq={Sequence}, attempt={Attempt}/{MaxAttempts}, uuid={Uuid})",
+                        cardId,
+                        sequence,
+                        attempt,
+                        CardUpdateMaxAttempts,
+                        updateUuid);
+                    return true;
+                }
             }
 
             return false;
@@ -398,6 +528,12 @@ public class FeishuCardKitClient : IFeishuCardKitClient
             _logger.LogError(ex, "Update card failed (cardId={CardId}, seq={Sequence})", cardId, sequence);
             return false;
         }
+    }
+
+    private static string CreateCardUpdateUuid(string cardId, int sequence)
+    {
+        var input = Encoding.UTF8.GetBytes($"{cardId}:{sequence}");
+        return Convert.ToHexString(SHA256.HashData(input));
     }
 
     private object BuildStreamingCardData(
@@ -488,10 +624,12 @@ public class FeishuCardKitClient : IFeishuCardKitClient
             !string.IsNullOrWhiteSpace(group.SummaryMarkdown)
             || group.OverflowOptions.Count > 0
             || group.Items.Any(item => !string.IsNullOrWhiteSpace(item.Text)));
+        var hasToolSummary = !string.IsNullOrWhiteSpace(chrome.LatestToolCallMarkdown);
+        var hasBottomNotice = chrome.BottomNoticeMarkdowns.Any(markdown => !string.IsNullOrWhiteSpace(markdown));
         var allBottomPrompts = EnumerateBottomPrompts(chrome).ToArray();
         var hasBottomActions = chrome.BottomActions.Count > 0;
         var hasBottomPrompt = allBottomPrompts.Length > 0;
-        if (!hasStatusSection && !hasTopChipGroups && !hasBottomActions && !hasBottomPrompt)
+        if (!hasStatusSection && !hasTopChipGroups && !hasToolSummary && !hasBottomNotice && !hasBottomActions && !hasBottomPrompt)
         {
             return
             [
@@ -526,9 +664,19 @@ public class FeishuCardKitClient : IFeishuCardKitClient
             content
         });
 
-        if (hasBottomPrompt || hasBottomActions)
+        if (hasToolSummary)
+        {
+            elements.Add(BuildToolSummaryLine(chrome.LatestToolCallMarkdown!));
+        }
+
+        if (hasBottomNotice || hasBottomPrompt || hasBottomActions)
         {
             elements.Add(BuildSectionMarker("Superpowers 工作流"));
+
+            foreach (var markdown in chrome.BottomNoticeMarkdowns.Where(markdown => !string.IsNullOrWhiteSpace(markdown)))
+            {
+                elements.Add(BuildToolSummaryLine(markdown));
+            }
 
             foreach (var prompt in allBottomPrompts)
             {
@@ -537,17 +685,33 @@ public class FeishuCardKitClient : IFeishuCardKitClient
 
             if (hasBottomActions)
             {
-                elements.Add(new
+                foreach (var row in BuildBottomActionRows(chrome.BottomActions))
                 {
-                    tag = "column_set",
-                    flex_mode = "none",
-                    horizontal_spacing = "8px",
-                    columns = BuildBottomActionColumns(chrome.BottomActions)
-                });
+                    elements.Add(new
+                    {
+                        tag = "column_set",
+                        flex_mode = "none",
+                        horizontal_spacing = "8px",
+                        columns = BuildBottomActionColumns(row)
+                    });
+                }
             }
         }
 
         return elements.ToArray();
+    }
+
+    private static object BuildToolSummaryLine(string markdown)
+    {
+        return new
+        {
+            tag = "div",
+            text = new
+            {
+                tag = "lark_md",
+                content = markdown
+            }
+        };
     }
 
     private static object BuildStatusModule(FeishuStreamingCardChrome chrome)
@@ -717,6 +881,31 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return FeishuStreamingTopChipLayout.BuildButton(item);
     }
 
+    private static IReadOnlyList<List<FeishuStreamingCardBottomAction>> BuildBottomActionRows(
+        IEnumerable<FeishuStreamingCardBottomAction> actions)
+    {
+        var rows = new List<List<FeishuStreamingCardBottomAction>>();
+        var rowIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var action in actions.Where(action => !string.IsNullOrWhiteSpace(action.Text)))
+        {
+            var rowKey = string.IsNullOrWhiteSpace(action.RowKey)
+                ? "__default__"
+                : action.RowKey.Trim();
+
+            if (!rowIndexes.TryGetValue(rowKey, out var rowIndex))
+            {
+                rowIndex = rows.Count;
+                rowIndexes[rowKey] = rowIndex;
+                rows.Add([]);
+            }
+
+            rows[rowIndex].Add(action);
+        }
+
+        return rows;
+    }
+
     private static object[] BuildBottomActionColumns(IEnumerable<FeishuStreamingCardBottomAction> actions)
     {
         return actions
@@ -867,6 +1056,21 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return await SendAsync(request, options, cancellationToken);
     }
 
+    private async Task<HttpResponseMessage> GetAsync(
+        string path,
+        string token,
+        FeishuOptions options,
+        CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}{path}");
+        if (!string.IsNullOrEmpty(token))
+        {
+            request.Headers.Add("Authorization", $"Bearer {token}");
+        }
+
+        return await SendAsync(request, options, cancellationToken);
+    }
+
     private async Task<HttpResponseMessage> PutAsync(
         string path,
         string token,
@@ -921,6 +1125,61 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.HttpTimeoutSeconds));
         return await _httpClient.SendAsync(request, timeoutCts.Token);
+    }
+
+    private static string TryResolveDownloadFileName(
+        HttpResponseMessage response,
+        string fileKey,
+        string resourceType,
+        string mimeType)
+    {
+        var contentDisposition = response.Content.Headers.ContentDisposition;
+        var fileName = contentDisposition?.FileNameStar ?? contentDisposition?.FileName;
+        if (!string.IsNullOrWhiteSpace(fileName))
+        {
+            return fileName.Trim('"');
+        }
+
+        var extension = GuessFileExtension(resourceType, mimeType);
+        return $"{resourceType}-{fileKey}{extension}";
+    }
+
+    private static string GuessFileExtension(string resourceType, string mimeType)
+    {
+        if (mimeType.Contains("png", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".png";
+        }
+
+        if (mimeType.Contains("jpeg", StringComparison.OrdinalIgnoreCase) ||
+            mimeType.Contains("jpg", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".jpg";
+        }
+
+        if (mimeType.Contains("gif", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".gif";
+        }
+
+        if (mimeType.Contains("webp", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".webp";
+        }
+
+        if (mimeType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".pdf";
+        }
+
+        if (mimeType.Contains("plain", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".txt";
+        }
+
+        return string.Equals(resourceType, "image", StringComparison.OrdinalIgnoreCase)
+            ? ".png"
+            : string.Empty;
     }
 
     private async Task<JsonElement> ParseResponseAsync(

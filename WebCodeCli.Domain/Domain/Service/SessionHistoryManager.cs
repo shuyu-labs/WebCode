@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SqlSugar;
 using WebCodeCli.Domain.Common.Extensions;
 using WebCodeCli.Domain.Domain.Model;
 using WebCodeCli.Domain.Domain.Exceptions;
@@ -14,8 +15,12 @@ namespace WebCodeCli.Domain.Domain.Service;
 [ServiceDescription(typeof(ISessionHistoryManager), ServiceLifetime.Scoped)]
 public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> SessionSaveLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly SemaphoreSlim AnonymousSessionSaveLock = new(1, 1);
+
     private readonly IChatSessionRepository _sessionRepository;
     private readonly IChatMessageRepository _messageRepository;
+    private readonly IChatMessageAttachmentRepository _messageAttachmentRepository;
     private readonly IUserContextService _userContextService;
     private readonly ILogger<SessionHistoryManager> _logger;
     
@@ -38,11 +43,13 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
     public SessionHistoryManager(
         IChatSessionRepository sessionRepository,
         IChatMessageRepository messageRepository,
+        IChatMessageAttachmentRepository messageAttachmentRepository,
         IUserContextService userContextService,
         ILogger<SessionHistoryManager> logger)
     {
         _sessionRepository = sessionRepository;
         _messageRepository = messageRepository;
+        _messageAttachmentRepository = messageAttachmentRepository;
         _userContextService = userContextService;
         _logger = logger;
     }
@@ -53,9 +60,10 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
     public async Task<List<SessionHistory>> LoadSessionsAsync()
     {
         var startTime = DateTime.Now;
-        
+
         try
         {
+
             // 检查缓存是否有效
             if (_allSessionsCache != null && 
                 DateTime.Now - _cacheTimestamp < _cacheExpiration)
@@ -71,7 +79,8 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             foreach (var entity in sessionEntities)
             {
                 var messages = await _messageRepository.GetBySessionIdAndUsernameAsync(entity.SessionId, username);
-                sessions.Add(MapToSessionHistory(entity, messages));
+                var attachments = await _messageAttachmentRepository.GetBySessionIdAndUsernameAsync(entity.SessionId, username);
+                sessions.Add(MapToSessionHistory(entity, messages, attachments));
             }
 
             // 更新缓存
@@ -170,10 +179,13 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             throw new ArgumentNullException(nameof(session));
         }
 
-        var startTime = DateTime.Now;
+        var sessionSaveLock = GetSessionSaveLock(session.SessionId);
+        await sessionSaveLock.WaitAsync();
+        using var sessionSaveLockHandle = new SemaphoreReleaser(sessionSaveLock);
 
         try
         {
+            var startTime = DateTime.Now;
             // 限制消息数量
             TrimMessages(session);
 
@@ -186,8 +198,12 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             MergeManagedToolSnapshot(session, existingSession);
             
             // 保存会话实体
-            var sessionEntity = MapToSessionEntity(session, username);
-            var sessionSuccess = await _sessionRepository.InsertOrUpdateAsync(sessionEntity);
+            await ExecuteWithTransactionIfAvailableAsync(async () =>
+            {
+                var sessionEntity = MapToSessionEntity(session, username);
+            var sessionSuccess = existingSession == null
+                ? await _sessionRepository.InsertAsync(sessionEntity)
+                : await _sessionRepository.UpdateAsync(sessionEntity);
 
             if (!sessionSuccess)
             {
@@ -196,15 +212,45 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             }
 
             // 删除旧消息并保存新消息
+            await _messageAttachmentRepository.DeleteBySessionIdAndUsernameAsync(session.SessionId, username);
             await _messageRepository.DeleteBySessionIdAndUsernameAsync(session.SessionId, username);
             
             if (session.Messages != null && session.Messages.Count > 0)
             {
-                var messageEntities = session.Messages.Select(m => MapToMessageEntity(m, session.SessionId, username)).ToList();
-                await _messageRepository.InsertMessagesAsync(messageEntities);
+                var messageEntities = new List<ChatMessageEntity>(session.Messages.Count);
+                var attachmentEntities = new List<ChatMessageAttachmentEntity>();
+
+                foreach (var message in session.Messages)
+                {
+                    var messageEntity = MapToMessageEntity(message, session.SessionId, username);
+                    message.Id = messageEntity.MessageId;
+                    messageEntities.Add(messageEntity);
+
+                    if (message.Attachments.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    attachmentEntities.AddRange(message.Attachments.Select(attachment =>
+                        MapToAttachmentEntity(attachment, messageEntity.MessageId, session.SessionId, username)));
+                }
+
+                var messagesInserted = await _messageRepository.InsertMessagesAsync(messageEntities);
+                if (!messagesInserted)
+                {
+                    throw new InvalidOperationException("淇濆瓨浼氳瘽娑堟伅澶辫触锛岃绋嶅悗閲嶈瘯");
+                }
+
+                var attachmentsInserted = await _messageAttachmentRepository.InsertAttachmentsAsync(attachmentEntities);
+                if (!attachmentsInserted)
+                {
+                    throw new InvalidOperationException("淇濆瓨浼氳瘽闄勪欢澶辫触锛岃绋嶅悗閲嶈瘯");
+                }
             }
 
             // 更新缓存
+            });
+
             _sessionCache[session.SessionId] = session;
             
             // 更新全局缓存中的会话
@@ -244,30 +290,35 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
         try
         {
             var username = _userContextService.GetCurrentUsername();
-            
-            // 删除消息
-            await _messageRepository.DeleteBySessionIdAndUsernameAsync(sessionId, username);
-            
-            // 删除会话
-            var success = await _sessionRepository.DeleteByIdAndUsernameAsync(sessionId, username);
 
-            if (success)
+            try
             {
-                // 更新缓存
-                _sessionCache.TryRemove(sessionId, out _);
-                
-                // 从全局缓存中移除
-                if (_allSessionsCache != null)
+                await ExecuteWithTransactionIfAvailableAsync(async () =>
                 {
-                    _allSessionsCache.RemoveAll(s => s.SessionId == sessionId);
-                }
-                
-                _logger.LogInformation("会话 {SessionId} 已删除", sessionId);
+                    await _messageAttachmentRepository.DeleteBySessionIdAndUsernameAsync(sessionId, username);
+                    await _messageRepository.DeleteBySessionIdAndUsernameAsync(sessionId, username);
+
+                    var success = await _sessionRepository.DeleteByIdAndUsernameAsync(sessionId, username);
+                    if (!success)
+                    {
+                        throw new SessionDeleteNotFoundException(sessionId);
+                    }
+                });
             }
-            else
+            catch (SessionDeleteNotFoundException)
             {
                 _logger.LogWarning("会话 {SessionId} 不存在或删除失败", sessionId);
+                return;
             }
+
+            _sessionCache.TryRemove(sessionId, out _);
+
+            if (_allSessionsCache != null)
+            {
+                _allSessionsCache.RemoveAll(s => s.SessionId == sessionId);
+            }
+
+            _logger.LogInformation("会话 {SessionId} 已删除", sessionId);
         }
         catch (Exception ex)
         {
@@ -303,7 +354,8 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             }
 
             var messages = await _messageRepository.GetBySessionIdAndUsernameAsync(sessionId, username);
-            var session = MapToSessionHistory(sessionEntity, messages);
+            var attachments = await _messageAttachmentRepository.GetBySessionIdAndUsernameAsync(sessionId, username);
+            var session = MapToSessionHistory(sessionEntity, messages, attachments);
 
             _sessionCache[sessionId] = session;
 
@@ -478,8 +530,18 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
 
     #region 映射方法
 
-    private SessionHistory MapToSessionHistory(ChatSessionEntity entity, List<ChatMessageEntity> messageEntities)
+    private SessionHistory MapToSessionHistory(
+        ChatSessionEntity entity,
+        List<ChatMessageEntity> messageEntities,
+        List<ChatMessageAttachmentEntity> attachmentEntities)
     {
+        var attachmentsByMessageId = attachmentEntities
+            .GroupBy(x => x.MessageId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(MapToAttachment).ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
         return new SessionHistory
         {
             SessionId = entity.SessionId,
@@ -501,11 +563,19 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             IsWorkspaceValid = entity.IsWorkspaceValid,
             IsCustomWorkspace = entity.IsCustomWorkspace,
             ProjectId = entity.ProjectId,
-            Messages = messageEntities.Select(m => new ChatMessage
+            Messages = messageEntities.Select(m =>
             {
-                Role = m.Role,
-                Content = m.Content ?? string.Empty,
-                CreatedAt = m.CreatedAt
+                var logicalMessageId = ResolveLogicalMessageId(m);
+                return new ChatMessage
+                {
+                    Id = logicalMessageId,
+                    Role = m.Role,
+                    Content = m.Content ?? string.Empty,
+                    CreatedAt = m.CreatedAt,
+                    Attachments = attachmentsByMessageId.TryGetValue(logicalMessageId, out var attachments)
+                        ? attachments
+                        : new List<MessageAttachment>()
+                };
             }).ToList()
         };
     }
@@ -541,6 +611,7 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
     {
         return new ChatMessageEntity
         {
+            MessageId = string.IsNullOrWhiteSpace(message.Id) ? Guid.NewGuid().ToString("N") : message.Id,
             SessionId = sessionId,
             Username = username,
             Role = message.Role,
@@ -548,6 +619,116 @@ public class SessionHistoryManager : ISessionHistoryManager, IAsyncDisposable
             CreatedAt = message.CreatedAt
         };
     }
+
+    private static ChatMessageAttachmentEntity MapToAttachmentEntity(
+        MessageAttachment attachment,
+        string messageId,
+        string sessionId,
+        string username)
+    {
+        return new ChatMessageAttachmentEntity
+        {
+            MessageId = messageId,
+            SessionId = sessionId,
+            Username = username,
+            AttachmentId = attachment.Id,
+            DisplayName = attachment.DisplayName,
+            MimeType = attachment.MimeType,
+            Extension = attachment.Extension,
+            SizeBytes = attachment.SizeBytes,
+            Kind = attachment.Kind.ToString(),
+            WorkspaceRelativePath = attachment.WorkspaceRelativePath,
+            CreatedAt = attachment.CreatedAt
+        };
+    }
+
+    private static MessageAttachment MapToAttachment(ChatMessageAttachmentEntity attachmentEntity)
+    {
+        var kind = Enum.TryParse<MessageAttachmentKind>(attachmentEntity.Kind, true, out var parsedKind)
+            ? parsedKind
+            : MessageAttachmentKind.Text;
+
+        return new MessageAttachment
+        {
+            Id = attachmentEntity.AttachmentId,
+            DisplayName = attachmentEntity.DisplayName,
+            MimeType = attachmentEntity.MimeType,
+            Extension = attachmentEntity.Extension,
+            SizeBytes = attachmentEntity.SizeBytes,
+            Kind = kind,
+            WorkspaceRelativePath = attachmentEntity.WorkspaceRelativePath,
+            CreatedAt = attachmentEntity.CreatedAt
+        };
+    }
+
+    private async Task ExecuteWithTransactionIfAvailableAsync(Func<Task> action)
+    {
+        var db = TryGetTransactionDb();
+        if (db == null)
+        {
+            await action();
+            return;
+        }
+
+        await db.Ado.BeginTranAsync();
+        try
+        {
+            await action();
+            await db.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await db.Ado.RollbackTranAsync();
+            throw;
+        }
+    }
+
+    private SqlSugarScope? TryGetTransactionDb()
+    {
+        try
+        {
+            return _sessionRepository.GetDB();
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static SemaphoreSlim GetSessionSaveLock(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return AnonymousSessionSaveLock;
+        }
+
+        return SessionSaveLocks.GetOrAdd(sessionId.Trim(), static _ => new SemaphoreSlim(1, 1));
+    }
+
+    private static string ResolveLogicalMessageId(ChatMessageEntity messageEntity)
+    {
+        return string.IsNullOrWhiteSpace(messageEntity.MessageId)
+            ? $"legacy-msg-{messageEntity.Id}"
+            : messageEntity.MessageId;
+    }
+
+    private readonly struct SemaphoreReleaser : IDisposable
+    {
+        private readonly SemaphoreSlim _semaphore;
+
+        public SemaphoreReleaser(SemaphoreSlim semaphore)
+        {
+            _semaphore = semaphore;
+        }
+
+        public void Dispose()
+        {
+            _semaphore.Release();
+        }
+    }
+
+    private sealed class SessionDeleteNotFoundException(string sessionId)
+        : InvalidOperationException($"Session '{sessionId}' was not found during delete.");
 
     private static void MergeManagedToolSnapshot(SessionHistory session, ChatSessionEntity? existingEntity)
     {
