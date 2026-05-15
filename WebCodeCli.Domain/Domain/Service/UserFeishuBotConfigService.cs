@@ -82,6 +82,8 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
         existing.ThinkingMessage = config.ThinkingMessage;
         existing.HttpTimeoutSeconds = config.HttpTimeoutSeconds;
         existing.StreamingThrottleMs = config.StreamingThrottleMs;
+        existing.ReplyTtsEnabled = config.ReplyTtsEnabled;
+        existing.ReplyTtsVoiceId = config.ReplyTtsVoiceId;
         existing.UpdatedAt = now;
 
         return await _repository.UpdateAsync(existing)
@@ -181,6 +183,7 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
         config.VerificationToken = NormalizeValue(config.VerificationToken);
         config.DefaultCardTitle = NormalizeValue(config.DefaultCardTitle);
         config.ThinkingMessage = NormalizeValue(config.ThinkingMessage);
+        config.ReplyTtsVoiceId = NormalizeValue(config.ReplyTtsVoiceId);
     }
 
     private static string? NormalizeValue(string? value)

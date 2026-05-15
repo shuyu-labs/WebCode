@@ -50,6 +50,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     [Inject] private IUserContextService UserContextService { get; set; } = default!;
     [Inject] private ICcSwitchService CcSwitchService { get; set; } = default!;
     [Inject] private ISuperpowersCapabilityService SuperpowersCapabilityService { get; set; } = default!;
+    [Inject] private IGoalCapabilityService GoalCapabilityService { get; set; } = default!;
     [Inject] private HttpClient Http { get; set; } = default!;
     [Inject] private IVersionService VersionService { get; set; } = default!;
     
@@ -1899,11 +1900,18 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     private string _superpowersQuickInput = string.Empty;
     private SuperpowersCapabilityPresentationState _superpowersCapabilityPresentation = SuperpowersCapabilityPresentationState.Unknown;
     private string _superpowersCapabilityPresentationContextKey = string.Empty;
+    private string _goalQuickInput = string.Empty;
+    private GoalCapabilityPresentationState _goalCapabilityPresentation = GoalCapabilityPresentationState.Unknown;
+    private string _goalCapabilityPresentationContextKey = string.Empty;
 
     private const string SuperpowersCapabilityCheckingText = "正在检测 superpowers 能力...";
     private const string SuperpowersCapabilityUnavailableText = "当前 Provider 缺少 superpowers 能力";
     private const string SuperpowersCapabilityProbeFailedText = "检测 superpowers 能力失败，请重试";
     private const string SuperpowersCapabilityRetryText = "重新检测";
+    private const string GoalCapabilityCheckingText = GoalQuickActionDefaults.CapabilityCheckingText;
+    private const string GoalCapabilityUnavailableText = GoalQuickActionDefaults.CapabilityUnavailableText;
+    private const string GoalCapabilityProbeFailedText = GoalQuickActionDefaults.CapabilityProbeFailedText;
+    private const string GoalCapabilityRetryText = GoalQuickActionDefaults.CapabilityRetryButtonText;
 
     private SuperpowersQuickActionEligibility CurrentSuperpowersQuickActionEligibility =>
         SuperpowersQuickActionHelper.Evaluate(
@@ -1920,6 +1928,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                 MessageId: eligibility.MessageId,
                 ShowQuickInput: eligibility.ShowQuickInput,
                 ShowPlanActions: eligibility.ShowPlanActions,
+                ContinueActionDisabled: eligibility.IsDisabled,
                 IsDisabled: eligibility.IsDisabled
                             || _superpowersCapabilityPresentation.IsChecking
                             || _superpowersCapabilityPresentation.State == SuperpowersCapabilityState.Unavailable,
@@ -1927,6 +1936,28 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
                 ShowRetryAction: _superpowersCapabilityPresentation.ShowRetryAction,
                 RetryActionDisabled: eligibility.IsDisabled || _superpowersCapabilityPresentation.IsChecking,
                 RetryActionText: SuperpowersCapabilityRetryText);
+        }
+    }
+
+    private SuperpowersQuickActionEligibility CurrentGoalQuickActionEligibility =>
+        IsGoalQuickActionToolSupported()
+            ? CurrentSuperpowersQuickActionEligibility with { ShowPlanActions = false }
+            : SuperpowersQuickActionEligibility.Hidden;
+
+    private GoalQuickActionViewState CurrentGoalQuickActionViewState
+    {
+        get
+        {
+            var eligibility = CurrentGoalQuickActionEligibility;
+            return new GoalQuickActionViewState(
+                MessageId: eligibility.MessageId,
+                IsDisabled: eligibility.IsDisabled
+                            || _goalCapabilityPresentation.IsChecking
+                            || _goalCapabilityPresentation.State == GoalCapabilityState.Unavailable,
+                StatusMessage: _goalCapabilityPresentation.StatusMessage,
+                ShowRetryAction: _goalCapabilityPresentation.ShowRetryAction,
+                RetryActionDisabled: eligibility.IsDisabled || _goalCapabilityPresentation.IsChecking,
+                RetryActionText: GoalCapabilityRetryText);
         }
     }
 
@@ -2296,6 +2327,11 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.QuickInput);
     }
 
+    private async Task OnContinueSuperpowersActionAsync(ChatMessage sourceMessage)
+    {
+        await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.Continue);
+    }
+
     private async Task OnExecuteSuperpowersPlanAsync(ChatMessage sourceMessage)
     {
         await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.ExecutePlan);
@@ -2325,10 +2361,13 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             return;
         }
 
-        var capabilityAvailable = await EnsureSuperpowersCapabilityAvailableAsync(forceRefresh: false);
-        if (!capabilityAvailable)
+        if (requestType != SuperpowersQuickActionRequestType.Continue)
         {
-            return;
+            var capabilityAvailable = await EnsureSuperpowersCapabilityAvailableAsync(forceRefresh: false);
+            if (!capabilityAvailable)
+            {
+                return;
+            }
         }
 
         if (requestType == SuperpowersQuickActionRequestType.QuickInput)
@@ -2348,6 +2387,44 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         }
 
         await EnsureSuperpowersCapabilityAvailableAsync(forceRefresh: true);
+    }
+
+    private async Task OnSubmitGoalQuickInputAsync(ChatMessage sourceMessage)
+    {
+        var eligibility = CurrentGoalQuickActionEligibility;
+        var viewState = CurrentGoalQuickActionViewState;
+        if (_isLoading
+            || viewState.IsDisabled
+            || !SuperpowersQuickActionHelper.IsMessageEligible(sourceMessage, eligibility))
+        {
+            return;
+        }
+
+        var message = GoalQuickActionSubmissionHelper.BuildMessage(_goalQuickInput);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        var capabilityAvailable = await EnsureGoalCapabilityAvailableAsync(forceRefresh: false);
+        if (!capabilityAvailable)
+        {
+            return;
+        }
+
+        _goalQuickInput = string.Empty;
+        await SendMessageCoreAsync(message, clearComposerInput: false);
+    }
+
+    private async Task RetryGoalCapabilityAsync(ChatMessage sourceMessage)
+    {
+        var eligibility = CurrentGoalQuickActionEligibility;
+        if (_isLoading || !SuperpowersQuickActionHelper.IsMessageEligible(sourceMessage, eligibility))
+        {
+            return;
+        }
+
+        await EnsureGoalCapabilityAvailableAsync(forceRefresh: true);
     }
 
     private async Task<bool> EnsureSuperpowersCapabilityAvailableAsync(bool forceRefresh)
@@ -2388,6 +2465,46 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         return _superpowersCapabilityPresentation.State == SuperpowersCapabilityState.Available;
     }
 
+    private async Task<bool> EnsureGoalCapabilityAvailableAsync(bool forceRefresh)
+    {
+        await RefreshGoalCapabilityPresentationContextAsync();
+
+        if (_goalCapabilityPresentation.IsChecking)
+        {
+            return false;
+        }
+
+        if (!forceRefresh && _goalCapabilityPresentation.State == GoalCapabilityState.Available)
+        {
+            return true;
+        }
+
+        _goalCapabilityPresentation = GoalCapabilityPresentationState.Checking(GoalCapabilityCheckingText);
+        await InvokeAsync(StateHasChanged);
+
+        var probeResult = await GoalCapabilityService.ProbeAsync(
+            BuildGoalCapabilityContext(),
+            forceRefresh: forceRefresh);
+
+        _goalCapabilityPresentation = probeResult.Outcome switch
+        {
+            GoalCapabilityProbeOutcome.Available => GoalCapabilityPresentationState.Available,
+            GoalCapabilityProbeOutcome.UnsupportedTool or
+            GoalCapabilityProbeOutcome.UnsupportedVersion or
+            GoalCapabilityProbeOutcome.MissingFeature => GoalCapabilityPresentationState.Unavailable(
+                string.IsNullOrWhiteSpace(probeResult.Message)
+                    ? GoalCapabilityUnavailableText
+                    : probeResult.Message),
+            _ => GoalCapabilityPresentationState.ProbeFailed(
+                string.IsNullOrWhiteSpace(probeResult.Message)
+                    ? GoalCapabilityProbeFailedText
+                    : probeResult.Message)
+        };
+
+        await InvokeAsync(StateHasChanged);
+        return _goalCapabilityPresentation.State == GoalCapabilityState.Available;
+    }
+
     private SuperpowersCapabilityContext BuildSuperpowersCapabilityContext()
     {
         return new SuperpowersCapabilityContext
@@ -2395,6 +2512,16 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             ToolId = _selectedToolId,
             ProviderId = GetCurrentPinnedProviderIdForSuperpowers(),
             WorkspacePath = GetCurrentSuperpowersWorkspacePath()
+        };
+    }
+
+    private GoalCapabilityContext BuildGoalCapabilityContext()
+    {
+        return new GoalCapabilityContext
+        {
+            ToolId = _selectedToolId,
+            ProviderId = GetCurrentPinnedProviderIdForGoal(),
+            WorkspacePath = GetCurrentGoalWorkspacePath()
         };
     }
 
@@ -2416,6 +2543,36 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
     }
 
     private string? GetCurrentSuperpowersWorkspacePath()
+    {
+        try
+        {
+            return CliExecutorService.GetSessionWorkspacePath(_sessionId)
+                   ?? _currentSession?.WorkspacePath;
+        }
+        catch
+        {
+            return _currentSession?.WorkspacePath;
+        }
+    }
+
+    private string? GetCurrentPinnedProviderIdForGoal()
+    {
+        if (_currentSession == null || string.IsNullOrWhiteSpace(_currentSession.CcSwitchProviderId))
+        {
+            return null;
+        }
+
+        var selectedToolId = NormalizeSuperpowersCapabilityToolId(_selectedToolId);
+        var sessionToolId = NormalizeSuperpowersCapabilityToolId(_currentSession.CcSwitchSnapshotToolId ?? _currentSession.ToolId);
+        if (!string.Equals(selectedToolId, sessionToolId, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return _currentSession.CcSwitchProviderId;
+    }
+
+    private string? GetCurrentGoalWorkspacePath()
     {
         try
         {
@@ -2457,15 +2614,63 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         return BuildFallbackSuperpowersCapabilityPresentationContextKey();
     }
 
+    private async Task RefreshGoalCapabilityPresentationContextAsync()
+    {
+        var nextContextKey = await ResolveGoalCapabilityPresentationContextKeyAsync();
+        if (string.Equals(_goalCapabilityPresentationContextKey, nextContextKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _goalCapabilityPresentationContextKey = nextContextKey;
+        _goalCapabilityPresentation = GoalCapabilityPresentationState.Unknown;
+    }
+
+    private async Task<string> ResolveGoalCapabilityPresentationContextKeyAsync()
+    {
+        try
+        {
+            var snapshot = await GoalCapabilityService.GetStateAsync(BuildGoalCapabilityContext());
+            if (!string.IsNullOrWhiteSpace(snapshot.CacheKey))
+            {
+                return snapshot.CacheKey;
+            }
+        }
+        catch
+        {
+        }
+
+        return BuildFallbackGoalCapabilityPresentationContextKey();
+    }
+
     private void InvalidateSuperpowersCapabilityPresentation()
     {
         _superpowersCapabilityPresentationContextKey = string.Empty;
         _superpowersCapabilityPresentation = SuperpowersCapabilityPresentationState.Unknown;
+        _goalCapabilityPresentationContextKey = string.Empty;
+        _goalCapabilityPresentation = GoalCapabilityPresentationState.Unknown;
     }
 
     private string BuildFallbackSuperpowersCapabilityPresentationContextKey()
     {
         return $"{NormalizeSuperpowersCapabilityToolId(_selectedToolId) ?? string.Empty}::{GetCurrentPinnedProviderIdForSuperpowers() ?? string.Empty}";
+    }
+
+    private string BuildFallbackGoalCapabilityPresentationContextKey()
+    {
+        return $"{NormalizeSuperpowersCapabilityToolId(_selectedToolId) ?? string.Empty}::{GetCurrentPinnedProviderIdForGoal() ?? string.Empty}";
+    }
+
+    private bool IsGoalQuickActionToolSupported()
+    {
+        var selectedToolId = NormalizeSuperpowersCapabilityToolId(_selectedToolId);
+        if (string.Equals(selectedToolId, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var sessionToolId = NormalizeSuperpowersCapabilityToolId(_currentSession?.CcSwitchSnapshotToolId ?? _currentSession?.ToolId);
+        return string.Equals(sessionToolId, "codex", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? NormalizeSuperpowersCapabilityToolId(string? toolId)
@@ -2492,6 +2697,7 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         string? MessageId,
         bool ShowQuickInput,
         bool ShowPlanActions,
+        bool ContinueActionDisabled,
         bool IsDisabled,
         string? StatusMessage,
         bool ShowRetryAction,
@@ -2530,6 +2736,51 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
 
         public static SuperpowersCapabilityPresentationState ProbeFailed(string statusMessage) => new(
             SuperpowersCapabilityState.Unknown,
+            IsChecking: false,
+            StatusMessage: statusMessage,
+            ShowRetryAction: true);
+    }
+
+    private readonly record struct GoalQuickActionViewState(
+        string? MessageId,
+        bool IsDisabled,
+        string? StatusMessage,
+        bool ShowRetryAction,
+        bool RetryActionDisabled,
+        string RetryActionText);
+
+    private readonly record struct GoalCapabilityPresentationState(
+        GoalCapabilityState State,
+        bool IsChecking,
+        string? StatusMessage,
+        bool ShowRetryAction)
+    {
+        public static GoalCapabilityPresentationState Unknown => new(
+            GoalCapabilityState.Unknown,
+            IsChecking: false,
+            StatusMessage: null,
+            ShowRetryAction: false);
+
+        public static GoalCapabilityPresentationState Available => new(
+            GoalCapabilityState.Available,
+            IsChecking: false,
+            StatusMessage: null,
+            ShowRetryAction: false);
+
+        public static GoalCapabilityPresentationState Checking(string statusMessage) => new(
+            GoalCapabilityState.Unknown,
+            IsChecking: true,
+            StatusMessage: statusMessage,
+            ShowRetryAction: false);
+
+        public static GoalCapabilityPresentationState Unavailable(string statusMessage) => new(
+            GoalCapabilityState.Unavailable,
+            IsChecking: false,
+            StatusMessage: statusMessage,
+            ShowRetryAction: true);
+
+        public static GoalCapabilityPresentationState ProbeFailed(string statusMessage) => new(
+            GoalCapabilityState.Unknown,
             IsChecking: false,
             StatusMessage: statusMessage,
             ShowRetryAction: true);
@@ -2608,12 +2859,18 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
             }
             else
             {
-                var historyMessages = await ExternalCliSessionHistoryService.GetRecentMessagesAsync(
+                var history = await ExternalCliSessionHistoryService.GetRecentHistoryAsync(
                     toolId,
                     cliThreadId,
                     maxCount: historyLimit,
                     workspacePath: workspacePath);
-                assistantMessage.Content = BuildExternalCliHistoryText(historyMessages, toolLabel, workspacePath);
+                assistantMessage.Content = ExternalCliHistoryTextBuilder.Build(
+                    "当前 CLI 会话历史",
+                    history.Messages,
+                    toolLabel,
+                    workspacePath,
+                    cliThreadId,
+                    history.SourcePath);
             }
         }
         catch (Exception ex)
@@ -2681,55 +2938,6 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         return int.TryParse(requestedLimit, out var parsedLimit)
             ? Math.Clamp(parsedLimit, 1, maxLimit)
             : defaultLimit;
-    }
-
-    private static string BuildExternalCliHistoryText(
-        IReadOnlyList<ExternalCliHistoryMessage> messages,
-        string toolLabel,
-        string? workspacePath)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine("当前 CLI 会话历史");
-        builder.AppendLine($"CLI 工具: {toolLabel}");
-        builder.AppendLine($"工作目录: {workspacePath ?? "(工作区未初始化或已失效)"}");
-        builder.AppendLine();
-
-        if (messages.Count == 0)
-        {
-            builder.AppendLine("该 CLI 会话暂无可解析的历史消息。");
-            return builder.ToString().TrimEnd();
-        }
-
-        builder.AppendLine($"显示条数: 最近 {messages.Count} 条");
-        builder.AppendLine();
-
-        foreach (var message in messages)
-        {
-            var roleLabel = string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase) ? "用户" : "助手";
-            if (message.CreatedAt.HasValue)
-            {
-                builder.AppendLine($"[{roleLabel}] {message.CreatedAt:HH:mm}");
-            }
-            else
-            {
-                builder.AppendLine($"[{roleLabel}]");
-            }
-
-            builder.AppendLine(NormalizeHistoryContent(message.Content));
-            builder.AppendLine();
-        }
-
-        return builder.ToString().TrimEnd();
-    }
-
-    private static string NormalizeHistoryContent(string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return string.Empty;
-        }
-
-        return content.Replace("\r\n", "\n").Trim();
     }
 
     private void QueueSaveOutputState(bool forceImmediate = false)

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using WebCodeCli.Domain.Domain.Service;
 
@@ -98,10 +99,10 @@ public class ExternalCliSessionHistoryServiceTests
         var service = new TestExternalCliSessionHistoryService(
             codexSessionsRootPath: Path.GetDirectoryName(globalRolloutPath)!);
 
-        var messages = await service.GetRecentMessagesAsync("codex", threadId, workspacePath: workspacePath);
+        var history = await service.GetRecentHistoryAsync("codex", threadId, workspacePath: workspacePath);
 
         Assert.Collection(
-            messages,
+            history.Messages,
             message =>
             {
                 Assert.Equal("user", message.Role);
@@ -112,6 +113,46 @@ public class ExternalCliSessionHistoryServiceTests
                 Assert.Equal("assistant", message.Role);
                 Assert.Equal("workspace assistant", message.Content);
             });
+        Assert.Contains($@"workspace\.codex\sessions\2026\04\28\rollout-2026-04-28T09-12-00-{threadId}.jsonl", history.SourcePath ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetRecentMessagesAsync_ForCodex_LogsResolvedWorkspaceRolloutDiagnostics()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-diagnostic";
+        var globalRolloutPath = sandbox.WriteFile(
+            Path.Combine("global-codex", "sessions", "2026", "04", "23", $"rollout-2026-04-23T17-19-27-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-03-23T01:00:00Z","type":"session_meta","payload":{"id":"codex-thread-diagnostic","cwd":"D:\\legacy","model_provider":"global-provider"}}
+            {"timestamp":"2026-03-23T01:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"global assistant"}]}}
+            """);
+        var workspacePath = sandbox.CreateDirectory("workspace");
+        var workspaceRolloutPath = sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "04", "28", $"rollout-2026-04-28T09-12-00-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-04-28T09:12:00Z","type":"session_meta","payload":{"id":"codex-thread-diagnostic","cwd":"D:\\workspace","model_provider":"project-provider"}}
+            {"timestamp":"2026-04-28T09:12:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"workspace assistant"}]}}
+            """);
+        var logger = new RecordingLogger<ExternalCliSessionHistoryService>();
+        var service = new TestExternalCliSessionHistoryService(
+            codexSessionsRootPath: Path.GetDirectoryName(globalRolloutPath)!,
+            logger: logger);
+
+        var messages = await service.GetRecentMessagesAsync("codex", threadId, workspacePath: workspacePath);
+
+        Assert.Collection(
+            messages,
+            message => Assert.Equal("workspace assistant", message.Content));
+
+        var logText = string.Join("\n", logger.Entries.Select(entry => entry.Message));
+        Assert.Contains("[CodexHistory] Start resolving rollout", logText);
+        Assert.Contains("[CodexHistory] Rollout resolved", logText);
+        Assert.Contains("Scope=workspace", logText);
+        Assert.Contains("MatchKind=filename", logText);
+        Assert.Contains(workspaceRolloutPath, logText);
+        Assert.Contains("FirstLineThreadId=codex-thread-diagnostic", logText);
+        Assert.Contains("FirstLineModelProvider=project-provider", logText);
     }
 
     [Fact]
@@ -328,8 +369,9 @@ public class ExternalCliSessionHistoryServiceTests
         public TestExternalCliSessionHistoryService(
             string? codexSessionsRootPath = null,
             string? claudeProjectsRootPath = null,
-            Func<string, string, CancellationToken, Task<(int ExitCode, string Stdout, string Stderr)>>? processHandler = null)
-            : base(NullLogger<ExternalCliSessionHistoryService>.Instance)
+            Func<string, string, CancellationToken, Task<(int ExitCode, string Stdout, string Stderr)>>? processHandler = null,
+            ILogger<ExternalCliSessionHistoryService>? logger = null)
+            : base(logger ?? NullLogger<ExternalCliSessionHistoryService>.Instance)
         {
             _codexConfigRootPath = codexSessionsRootPath;
             _claudeProjectsRootPath = claudeProjectsRootPath;
@@ -352,6 +394,36 @@ public class ExternalCliSessionHistoryServiceTests
             }
 
             return _processHandler(fileName, arguments, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
+        }
+    }
+
+    private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
+
+    private sealed class NullScope : IDisposable
+    {
+        public static NullScope Instance { get; } = new();
+
+        public void Dispose()
+        {
         }
     }
 

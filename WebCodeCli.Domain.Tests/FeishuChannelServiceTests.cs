@@ -407,7 +407,10 @@ public class FeishuChannelServiceTests
             });
 
             var call = Assert.Single(cliExecutor.ExecuteCalls);
-            Assert.Equal(expectedPrompt.Replace("\n", Environment.NewLine, StringComparison.Ordinal), call.Prompt);
+            var normalizedExpectedPrompt = expectedPrompt
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace("\n", Environment.NewLine, StringComparison.Ordinal);
+            Assert.Equal(normalizedExpectedPrompt, call.Prompt);
             Assert.Contains(chatSessionService.Messages[sessionId], message => message.Role == "user" && message.Content == call.Prompt);
         }
         finally
@@ -772,6 +775,214 @@ public class FeishuChannelServiceTests
     }
 
     [Fact]
+    public async Task HandleIncomingMessageAsync_QueuesReplyTtsAfterSuccessfulCompletionAndAssistantPersistence()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-success-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath);
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService,
+            replyTtsOrchestrator);
+
+        try
+        {
+            var sessionId = service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_reply_tts_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            replyTtsOrchestrator.OnQueued = request =>
+            {
+                Assert.Equal("补充完成", request.Output);
+                Assert.Contains(
+                    chatSessionService.Messages[sessionId],
+                    message => message.Role == "assistant" && message.Content == "补充完成" && message.IsCompleted);
+                Assert.Equal("补充完成", Assert.Single(cardKit.Handles).FinalContent);
+                return Task.CompletedTask;
+            };
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_reply_tts_chat",
+                SenderName = "luhaiyan",
+                AppId = "cli_test",
+                MessageId = "msg-reply-tts",
+                Content = "继续"
+            });
+
+            var queued = await replyTtsOrchestrator.WhenQueued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("oc_reply_tts_chat", queued.ChatId);
+            Assert.Equal("luhaiyan", queued.Username);
+            Assert.Equal("cli_test", queued.AppId);
+            Assert.Equal("补充完成", queued.Output);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyTtsWhenExecutionErrors()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-error-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+        var cliExecutor = new ErrorCliExecutor(workspacePath);
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService,
+            replyTtsOrchestrator);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_reply_tts_error_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_reply_tts_error_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-reply-tts-error",
+                Content = "继续"
+            });
+
+            Assert.Empty(replyTtsOrchestrator.Requests);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyTtsForSupersededExecution()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-superseded-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+        var cliExecutor = new TakeoverCliExecutor(workspacePath);
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService,
+            replyTtsOrchestrator);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_reply_tts_superseded_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            var firstTask = service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_reply_tts_superseded_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-reply-tts-superseded-1",
+                Content = "先查一下 superpowers 计划文件"
+            });
+
+            await cliExecutor.ThreadIdPersisted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var secondTask = service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_reply_tts_superseded_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-reply-tts-superseded-2",
+                Content = @"补充：D:\MMIS\Base\Docs\superpowers"
+            });
+
+            await Task.WhenAll(firstTask, secondTask);
+
+            var queued = Assert.Single(replyTtsOrchestrator.Requests);
+            Assert.Equal("补充完成", queued.Output);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task HandleIncomingMessageAsync_AttachesSuperpowersQuickActions_WhenPlanFilesExistAndSessionHistoryContainsSuperpowers()
     {
         var repository = CreateRepository(out var repositoryProxy);
@@ -856,9 +1067,24 @@ public class FeishuChannelServiceTests
             Assert.Contains("\"chat_key\":\"oc_low_interrupt_chat\"", quickInputJson);
             Assert.Contains("\"tool_id\":\"codex\"", quickInputJson);
 
-            Assert.Equal(2, chrome.BottomActions.Count);
+            var goalPrompt = Assert.Single(chrome.AdditionalBottomPrompts);
+            Assert.Equal(GoalQuickActionDefaults.QuickInputFieldName, goalPrompt.InputName);
+            Assert.Equal(GoalQuickActionDefaults.InstructionText, goalPrompt.InputLabel);
+            var goalInputJson = JsonSerializer.Serialize(goalPrompt.Value);
+            Assert.Contains($"\"action\":\"{FeishuHelpCardAction.SubmitGoalQuickInputAction}\"", goalInputJson);
+            Assert.Contains($"\"session_id\":\"{sessionId}\"", goalInputJson);
+            Assert.Contains("\"chat_key\":\"oc_low_interrupt_chat\"", goalInputJson);
+            Assert.Contains("\"tool_id\":\"codex\"", goalInputJson);
+
+            Assert.Equal(3, chrome.BottomActions.Count);
+            Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecutePlanButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText);
+            Assert.Contains(
+                $"\"action\":\"{FeishuHelpCardAction.ContinueSuperpowersAction}\"",
+                JsonSerializer.Serialize(
+                    Assert.Single(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText).Value),
+                StringComparison.Ordinal);
             Assert.Contains(
                 $"\"action\":\"{FeishuHelpCardAction.ExecuteSuperpowersPlanAction}\"",
                 JsonSerializer.Serialize(
@@ -877,7 +1103,7 @@ public class FeishuChannelServiceTests
     }
 
     [Fact]
-    public async Task HandleIncomingMessageAsync_AttachesQuickInputButHidesPlanActions_WhenWorkspaceHasNoPlanFiles()
+    public async Task HandleIncomingMessageAsync_AttachesQuickInputAndKeepsContinueAction_WhenWorkspaceHasNoPlanFiles()
     {
         var repository = CreateRepository(out var repositoryProxy);
         var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
@@ -949,7 +1175,8 @@ public class FeishuChannelServiceTests
             Assert.NotNull(handle.Chrome);
             Assert.NotNull(handle.Chrome!.BottomPrompt);
             Assert.Equal(SuperpowersQuickActionDefaults.QuickInputFieldName, handle.Chrome.BottomPrompt!.InputName);
-            Assert.Empty(handle.Chrome.BottomActions);
+            var continueAction = Assert.Single(handle.Chrome.BottomActions);
+            Assert.Equal(SuperpowersQuickActionDefaults.ContinueButtonText, continueAction.Text);
         }
         finally
         {
@@ -1091,9 +1318,11 @@ public class FeishuChannelServiceTests
         IFeishuUserBindingService feishuUserBindingService,
         IUserFeishuBotConfigService userFeishuBotConfigService,
         IUserContextService userContextService,
-        ISuperpowersCapabilityService? superpowersCapabilityService = null) : IServiceProvider, IServiceScopeFactory, IServiceScope
+        ISuperpowersCapabilityService? superpowersCapabilityService = null,
+        IGoalCapabilityService? goalCapabilityService = null) : IServiceProvider, IServiceScopeFactory, IServiceScope
     {
         private readonly ISuperpowersCapabilityService _superpowersCapabilityService = superpowersCapabilityService ?? new StubSuperpowersCapabilityService();
+        private readonly IGoalCapabilityService _goalCapabilityService = goalCapabilityService ?? new StubGoalCapabilityService();
 
         public object? GetService(Type serviceType)
         {
@@ -1130,6 +1359,11 @@ public class FeishuChannelServiceTests
             if (serviceType == typeof(ISuperpowersCapabilityService))
             {
                 return _superpowersCapabilityService;
+            }
+
+            if (serviceType == typeof(IGoalCapabilityService))
+            {
+                return _goalCapabilityService;
             }
 
             return null;
@@ -1178,6 +1412,44 @@ public class FeishuChannelServiceTests
                 CacheKey = $"{context.ToolId}::{context.ProviderId ?? SuperpowersCapabilityService.UnscopedProviderId}",
                 State = SuperpowersCapabilityState.Available,
                 Outcome = SuperpowersCapabilityProbeOutcome.Available
+            });
+        }
+    }
+
+    private sealed class StubGoalCapabilityService : IGoalCapabilityService
+    {
+        public GoalCapabilityState CachedState { get; set; } = GoalCapabilityState.Unknown;
+
+        public string? CachedMessage { get; set; }
+
+        public Task<GoalCapabilitySnapshot> GetStateAsync(
+            GoalCapabilityContext context,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<GoalCapabilitySnapshot>(new GoalCapabilitySnapshot
+            {
+                ToolId = context.ToolId,
+                ProviderId = context.ProviderId ?? GoalCapabilityService.UnscopedProviderId,
+                CacheKey = $"{context.ToolId}::{context.ProviderId ?? GoalCapabilityService.UnscopedProviderId}",
+                State = CachedState,
+                Message = CachedMessage
+            });
+        }
+
+        public Task<GoalCapabilityProbeResult> ProbeAsync(
+            GoalCapabilityContext context,
+            bool forceRefresh = false,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new GoalCapabilityProbeResult
+            {
+                ToolId = context.ToolId,
+                ProviderId = context.ProviderId ?? GoalCapabilityService.UnscopedProviderId,
+                CacheKey = $"{context.ToolId}::{context.ProviderId ?? GoalCapabilityService.UnscopedProviderId}",
+                State = GoalCapabilityState.Available,
+                Outcome = GoalCapabilityProbeOutcome.Available
             });
         }
     }
@@ -1253,6 +1525,25 @@ public class FeishuChannelServiceTests
                     DefaultCardTitle = "AI助手",
                     ThinkingMessage = "思考中..."
                 });
+    }
+
+    private sealed class RecordingReplyTtsOrchestrator : IReplyTtsOrchestrator
+    {
+        public List<FeishuCompletedReplyTtsRequest> Requests { get; } = new();
+
+        public TaskCompletionSource<FeishuCompletedReplyTtsRequest> WhenQueued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Func<FeishuCompletedReplyTtsRequest, Task>? OnQueued { get; set; }
+
+        public async Task QueueCompletedReplyAsync(FeishuCompletedReplyTtsRequest request)
+        {
+            Requests.Add(request);
+            WhenQueued.TrySetResult(request);
+            if (OnQueued != null)
+            {
+                await OnQueued(request);
+            }
+        }
     }
 
     private sealed class RecordingFeishuCardKitClient : IFeishuCardKitClient
@@ -1460,7 +1751,20 @@ public class FeishuChannelServiceTests
                         ButtonText = chrome.BottomPrompt.ButtonText,
                         ButtonType = chrome.BottomPrompt.ButtonType,
                         Value = chrome.BottomPrompt.Value
-                    }
+                    },
+                AdditionalBottomPrompts = chrome.AdditionalBottomPrompts
+                    .Select(prompt => new FeishuStreamingCardBottomPrompt
+                    {
+                        FormName = prompt.FormName,
+                        InputName = prompt.InputName,
+                        InputLabel = prompt.InputLabel,
+                        Placeholder = prompt.Placeholder,
+                        DefaultValue = prompt.DefaultValue,
+                        ButtonText = prompt.ButtonText,
+                        ButtonType = prompt.ButtonType,
+                        Value = prompt.Value
+                    })
+                    .ToList()
             };
         }
     }
@@ -1874,6 +2178,134 @@ public class FeishuChannelServiceTests
 
         public Task<string> InitializeSessionWorkspaceAsync(string sessionId, string? projectId = null, bool includeGit = false)
             => Task.FromResult(workspacePath);
+
+        public void RefreshWorkspaceRootCache()
+        {
+        }
+    }
+
+    private sealed class ErrorCliExecutor(string workspacePath) : ICliExecutorService
+    {
+        public ICliToolAdapter? GetAdapter(CliToolConfig tool) => null;
+
+        public ICliToolAdapter? GetAdapterById(string toolId) => null;
+
+        public bool SupportsStreamParsing(CliToolConfig tool) => false;
+
+        public string? GetCliThreadId(string sessionId) => null;
+
+        public void SetCliThreadId(string sessionId, string threadId)
+        {
+        }
+
+        public Task ResetSessionRuntimeAsync(string sessionId, bool clearCliThreadId = true, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public async IAsyncEnumerable<StreamOutputChunk> ExecuteStreamAsync(
+            string sessionId,
+            string toolId,
+            string userPrompt,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = "执行失败"
+            };
+
+            await Task.CompletedTask;
+        }
+
+        public bool SupportsLowInterruptionContinue(string toolId) => false;
+
+        public bool CanStartLowInterruptionContinue(string sessionId, string toolId) => false;
+
+        public async IAsyncEnumerable<StreamOutputChunk> ExecuteLowInterruptionContinueStreamAsync(
+            string sessionId,
+            string toolId,
+            string? prompt = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new StreamOutputChunk
+            {
+                IsError = true,
+                IsCompleted = true,
+                ErrorMessage = "not implemented in test double"
+            };
+
+            await Task.CompletedTask;
+        }
+
+        public List<CliToolConfig> GetAvailableTools(string? username = null)
+            => new() { GetTool("codex", username)! };
+
+        public CliToolConfig? GetTool(string toolId, string? username = null)
+            => string.Equals(toolId, "codex", StringComparison.OrdinalIgnoreCase)
+                ? new CliToolConfig
+                {
+                    Id = "codex",
+                    Name = "Codex",
+                    Description = "Codex",
+                    Command = "codex",
+                    Enabled = true
+                }
+                : null;
+
+        public bool ValidateTool(string toolId, string? username = null) => true;
+
+        public void CleanupSessionWorkspace(string sessionId)
+        {
+        }
+
+        public void CleanupExpiredWorkspaces()
+        {
+        }
+
+        public string GetSessionWorkspacePath(string sessionId) => workspacePath;
+
+        public Task<Dictionary<string, string>> GetToolEnvironmentVariablesAsync(string toolId, string? username = null)
+            => Task.FromResult(new Dictionary<string, string>());
+
+        public Task<CcSwitchSessionSnapshot?> SyncSessionCcSwitchSnapshotAsync(string sessionId, string? toolId = null, CancellationToken cancellationToken = default)
+            => Task.FromResult<CcSwitchSessionSnapshot?>(null);
+
+        public Task<CodexThreadProviderSyncResult> SyncCodexThreadProviderAsync(string sessionId, string? toolId = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(new CodexThreadProviderSyncResult
+            {
+                Message = "thread sync complete"
+            });
+
+        public Task<bool> SaveToolEnvironmentVariablesAsync(string toolId, Dictionary<string, string> envVars, string? username = null)
+            => Task.FromResult(true);
+
+        public byte[]? GetWorkspaceFile(string sessionId, string relativePath) => null;
+
+        public byte[]? GetWorkspaceZip(string sessionId) => null;
+
+        public Task<bool> UploadFileToWorkspaceAsync(string sessionId, string fileName, byte[] fileContent, string? relativePath = null)
+            => Task.FromResult(true);
+
+        public Task<bool> CreateFolderInWorkspaceAsync(string sessionId, string folderPath)
+            => Task.FromResult(true);
+
+        public Task<bool> DeleteWorkspaceItemAsync(string sessionId, string relativePath, bool isDirectory)
+            => Task.FromResult(true);
+
+        public Task<bool> MoveFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath)
+            => Task.FromResult(true);
+
+        public Task<bool> CopyFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath)
+            => Task.FromResult(true);
+
+        public Task<bool> RenameFileInWorkspaceAsync(string sessionId, string oldPath, string newName)
+            => Task.FromResult(true);
+
+        public Task<int> BatchDeleteFilesAsync(string sessionId, List<string> relativePaths)
+            => Task.FromResult(0);
+
+        public Task<string> InitializeSessionWorkspaceAsync(string sessionId, string? projectId = null, bool includeGit = false)
+            => Task.FromResult(Path.Combine(Path.GetTempPath(), sessionId));
 
         public void RefreshWorkspaceRootCache()
         {

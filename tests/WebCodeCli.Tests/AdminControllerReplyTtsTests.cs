@@ -1,0 +1,413 @@
+using Microsoft.AspNetCore.Mvc;
+using WebCodeCli.Controllers;
+using WebCodeCli.Domain.Common.Options;
+using WebCodeCli.Domain.Domain.Model;
+using WebCodeCli.Domain.Domain.Model.Channels;
+using WebCodeCli.Domain.Domain.Service;
+using WebCodeCli.Domain.Domain.Service.Adapters;
+using WebCodeCli.Domain.Domain.Service.Channels;
+using WebCodeCli.Domain.Repositories.Base.UserAccount;
+using WebCodeCli.Domain.Repositories.Base.UserFeishuBotConfig;
+using Xunit;
+
+namespace WebCodeCli.Tests;
+
+public sealed class AdminControllerReplyTtsTests
+{
+    [Fact]
+    public async Task GetFeishuBotConfig_ReturnsReplyTtsFields()
+    {
+        var configService = new StubUserFeishuBotConfigService
+        {
+            ConfigsByUsername =
+            {
+                ["alice"] = new UserFeishuBotConfigEntity
+                {
+                    Username = "alice",
+                    IsEnabled = true,
+                    ReplyTtsEnabled = true,
+                    ReplyTtsVoiceId = "voice-1"
+                }
+            }
+        };
+
+        var controller = CreateController(configService: configService);
+
+        var result = await controller.GetFeishuBotConfig("alice");
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<UserFeishuBotConfigDto>(ok.Value);
+        Assert.True(dto.ReplyTtsEnabled);
+        Assert.Equal("voice-1", dto.ReplyTtsVoiceId);
+    }
+
+    [Fact]
+    public async Task GetFeishuBotConfig_WithoutConfig_ReturnsDefaultReplyTtsFields()
+    {
+        var configService = new StubUserFeishuBotConfigService
+        {
+            ConfigsByUsername =
+            {
+                ["alice"] = new UserFeishuBotConfigEntity
+                {
+                    Username = "alice",
+                    IsEnabled = true,
+                    ReplyTtsEnabled = true,
+                    ReplyTtsVoiceId = "voice-1"
+                }
+            }
+        };
+
+        var controller = CreateController(configService: configService);
+
+        var result = await controller.GetFeishuBotConfig("bob");
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<UserFeishuBotConfigDto>(ok.Value);
+        Assert.Equal("bob", dto.Username);
+        Assert.False(dto.ReplyTtsEnabled);
+        Assert.Null(dto.ReplyTtsVoiceId);
+    }
+
+    [Fact]
+    public async Task SaveFeishuBotConfig_ForwardsReplyTtsFieldsIntoEntity()
+    {
+        var configService = new StubUserFeishuBotConfigService();
+        var controller = CreateController(configService: configService);
+
+        var result = await controller.SaveFeishuBotConfig("alice", new UserFeishuBotConfigDto
+        {
+            IsEnabled = true,
+            ReplyTtsEnabled = true,
+            ReplyTtsVoiceId = "voice-9"
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(configService.LastSavedConfig);
+        Assert.Equal("alice", configService.LastSavedConfig!.Username);
+        Assert.True(configService.LastSavedConfig.ReplyTtsEnabled);
+        Assert.Equal("voice-9", configService.LastSavedConfig.ReplyTtsVoiceId);
+    }
+
+    [Fact]
+    public async Task SaveFeishuBotConfig_WhenReplyTtsEnabled_EnsuresTtsServiceStarted()
+    {
+        var platformService = new StubFeishuReplyTtsPlatformService();
+        var controller = CreateController(platformService: platformService);
+
+        var result = await controller.SaveFeishuBotConfig("alice", new UserFeishuBotConfigDto
+        {
+            IsEnabled = true,
+            ReplyTtsEnabled = true,
+            ReplyTtsVoiceId = "voice-9"
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, platformService.EnsureStartedCallCount);
+    }
+
+    [Fact]
+    public async Task SaveFeishuBotConfig_WhenReplyTtsDisabled_DoesNotStartTtsService()
+    {
+        var platformService = new StubFeishuReplyTtsPlatformService();
+        var controller = CreateController(platformService: platformService);
+
+        var result = await controller.SaveFeishuBotConfig("alice", new UserFeishuBotConfigDto
+        {
+            IsEnabled = true,
+            ReplyTtsEnabled = false
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(0, platformService.EnsureStartedCallCount);
+    }
+
+    [Fact]
+    public async Task GetFeishuTtsHealth_ReturnsPlatformHealthDto()
+    {
+        var platformService = new StubFeishuReplyTtsPlatformService
+        {
+            HealthResult = new FeishuReplyTtsHealthStatus
+            {
+                IsAvailable = true,
+                StorageRoot = @"D:\reply-tts",
+                ServiceStatus = "ok",
+                Device = "cpu",
+                DefaultVoiceId = "voice-default"
+            }
+        };
+        var controller = CreateController(platformService: platformService);
+
+        var result = await controller.GetFeishuTtsHealth();
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<FeishuReplyTtsHealthStatus>(ok.Value);
+        Assert.True(dto.IsAvailable);
+        Assert.Equal(@"D:\reply-tts", dto.StorageRoot);
+        Assert.Equal("ok", dto.ServiceStatus);
+        Assert.Equal("cpu", dto.Device);
+        Assert.Equal("voice-default", dto.DefaultVoiceId);
+    }
+
+    [Fact]
+    public async Task GetFeishuTtsVoices_ReturnsPlatformVoiceDtos()
+    {
+        var platformService = new StubFeishuReplyTtsPlatformService
+        {
+            VoicesResult =
+            [
+                new FeishuReplyTtsVoiceOption
+                {
+                    VoiceId = "voice-a",
+                    DisplayName = "Voice A"
+                },
+                new FeishuReplyTtsVoiceOption
+                {
+                    VoiceId = "voice-b",
+                    DisplayName = "Voice B"
+                }
+            ]
+        };
+        var controller = CreateController(platformService: platformService);
+
+        var result = await controller.GetFeishuTtsVoices();
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<List<FeishuReplyTtsVoiceOption>>(ok.Value);
+        Assert.Collection(
+            dto,
+            voice => Assert.Equal("voice-a", voice.VoiceId),
+            voice => Assert.Equal("voice-b", voice.VoiceId));
+    }
+
+    [Fact]
+    public async Task GetFeishuTtsVoices_WhenPlatformReturnsEmptyList_ReturnsOkEmptyList()
+    {
+        var controller = CreateController(platformService: new StubFeishuReplyTtsPlatformService
+        {
+            VoicesResult = []
+        });
+
+        var result = await controller.GetFeishuTtsVoices();
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<List<FeishuReplyTtsVoiceOption>>(ok.Value);
+        Assert.Empty(dto);
+    }
+
+    private static AdminController CreateController(
+        StubUserFeishuBotConfigService? configService = null,
+        StubUserFeishuBotRuntimeService? runtimeService = null,
+        StubFeishuReplyTtsPlatformService? platformService = null)
+    {
+        return new AdminController(
+            new StubUserAccountService(),
+            new StubUserToolPolicyService(),
+            new StubUserWorkspacePolicyService(),
+            configService ?? new StubUserFeishuBotConfigService(),
+            runtimeService ?? new StubUserFeishuBotRuntimeService(),
+            new StubCliExecutorService(),
+            platformService ?? new StubFeishuReplyTtsPlatformService());
+    }
+
+    private sealed class StubUserFeishuBotConfigService : IUserFeishuBotConfigService
+    {
+        public Dictionary<string, UserFeishuBotConfigEntity> ConfigsByUsername { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public UserFeishuBotConfigEntity? LastSavedConfig { get; private set; }
+
+        public Task<UserFeishuBotConfigEntity?> GetByUsernameAsync(string username)
+        {
+            return Task.FromResult(
+                ConfigsByUsername.TryGetValue(username, out var config)
+                    ? Clone(config)
+                    : null);
+        }
+
+        public Task<UserFeishuBotConfigEntity?> GetByAppIdAsync(string appId)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<UserFeishuBotConfigSaveResult> SaveAsync(UserFeishuBotConfigEntity config)
+        {
+            LastSavedConfig = Clone(config);
+            return Task.FromResult(UserFeishuBotConfigSaveResult.Saved());
+        }
+
+        public Task<bool> DeleteAsync(string username)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string?> FindConflictingUsernameByAppIdAsync(string username, string? appId)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<List<UserFeishuBotConfigEntity>> GetAutoStartCandidatesAsync()
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> UpdateRuntimePreferenceAsync(string username, bool autoStartEnabled, DateTime? lastStartedAt = null)
+        {
+            throw new NotSupportedException();
+        }
+
+        public FeishuOptions GetSharedDefaults()
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<FeishuOptions> GetEffectiveOptionsAsync(string? username)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<FeishuOptions?> GetEffectiveOptionsByAppIdAsync(string? appId)
+        {
+            throw new NotSupportedException();
+        }
+
+        private static UserFeishuBotConfigEntity Clone(UserFeishuBotConfigEntity entity)
+        {
+            return new UserFeishuBotConfigEntity
+            {
+                Id = entity.Id,
+                Username = entity.Username,
+                IsEnabled = entity.IsEnabled,
+                AutoStartEnabled = entity.AutoStartEnabled,
+                AppId = entity.AppId,
+                AppSecret = entity.AppSecret,
+                EncryptKey = entity.EncryptKey,
+                VerificationToken = entity.VerificationToken,
+                DefaultCardTitle = entity.DefaultCardTitle,
+                ThinkingMessage = entity.ThinkingMessage,
+                HttpTimeoutSeconds = entity.HttpTimeoutSeconds,
+                StreamingThrottleMs = entity.StreamingThrottleMs,
+                ReplyTtsEnabled = entity.ReplyTtsEnabled,
+                ReplyTtsVoiceId = entity.ReplyTtsVoiceId,
+                LastStartedAt = entity.LastStartedAt,
+                CreatedAt = entity.CreatedAt,
+                UpdatedAt = entity.UpdatedAt
+            };
+        }
+    }
+
+    private sealed class StubUserFeishuBotRuntimeService : IUserFeishuBotRuntimeService
+    {
+        public Task<UserFeishuBotRuntimeStatus> GetStatusAsync(string username, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<UserFeishuBotRuntimeStatus> StartAsync(string username, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<UserFeishuBotRuntimeStatus> StopAsync(string username, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new UserFeishuBotRuntimeStatus
+            {
+                Username = username,
+                State = UserFeishuBotRuntimeState.Stopped,
+                UpdatedAt = DateTime.Now
+            });
+        }
+    }
+
+    private sealed class StubUserAccountService : IUserAccountService
+    {
+        public Task EnsureSeedDataAsync() => throw new NotSupportedException();
+        public Task<List<UserAccountEntity>> GetAllAsync() => throw new NotSupportedException();
+        public Task<List<string>> GetAllUsernamesAsync() => throw new NotSupportedException();
+        public Task<UserAccountEntity?> GetByUsernameAsync(string username) => throw new NotSupportedException();
+        public Task<UserAccountEntity?> ValidateCredentialsAsync(string username, string password) => throw new NotSupportedException();
+        public Task<UserAccountEntity?> CreateOrUpdateAsync(UserAccountEntity account, string? plainPassword = null, bool overwritePassword = true) => throw new NotSupportedException();
+        public Task<bool> IsEnabledAsync(string username) => throw new NotSupportedException();
+        public Task<bool> IsAdminAsync(string username) => throw new NotSupportedException();
+        public Task<bool> SetStatusAsync(string username, string status) => throw new NotSupportedException();
+        public Task<bool> UpdateLastLoginAsync(string username, DateTime? lastLoginAt = null) => throw new NotSupportedException();
+    }
+
+    private sealed class StubUserToolPolicyService : IUserToolPolicyService
+    {
+        public Task<bool> IsToolAllowedAsync(string username, string toolId) => throw new NotSupportedException();
+        public Task<HashSet<string>> GetAllowedToolIdsAsync(string username, IEnumerable<string> allToolIds) => throw new NotSupportedException();
+        public Task<Dictionary<string, bool>> GetPolicyMapAsync(string username, IEnumerable<string> allToolIds) => throw new NotSupportedException();
+        public Task<bool> SaveAllowedToolsAsync(string username, IEnumerable<string> allowedToolIds, IEnumerable<string> allToolIds) => throw new NotSupportedException();
+    }
+
+    private sealed class StubUserWorkspacePolicyService : IUserWorkspacePolicyService
+    {
+        public Task<List<string>> GetAllowedDirectoriesAsync(string username) => throw new NotSupportedException();
+        public Task<bool> IsPathAllowedAsync(string username, string directoryPath) => throw new NotSupportedException();
+        public Task<bool> SaveAllowedDirectoriesAsync(string username, IEnumerable<string> allowedDirectories) => throw new NotSupportedException();
+    }
+
+    private sealed class StubCliExecutorService : ICliExecutorService
+    {
+        public ICliToolAdapter? GetAdapter(CliToolConfig tool) => throw new NotSupportedException();
+        public ICliToolAdapter? GetAdapterById(string toolId) => throw new NotSupportedException();
+        public bool SupportsStreamParsing(CliToolConfig tool) => throw new NotSupportedException();
+        public string? GetCliThreadId(string sessionId) => throw new NotSupportedException();
+        public void SetCliThreadId(string sessionId, string threadId) => throw new NotSupportedException();
+        public Task ResetSessionRuntimeAsync(string sessionId, bool clearCliThreadId = true, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public IAsyncEnumerable<StreamOutputChunk> ExecuteStreamAsync(string sessionId, string toolId, string userPrompt, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public bool SupportsLowInterruptionContinue(string toolId) => throw new NotSupportedException();
+        public bool CanStartLowInterruptionContinue(string sessionId, string toolId) => throw new NotSupportedException();
+        public IAsyncEnumerable<StreamOutputChunk> ExecuteLowInterruptionContinueStreamAsync(string sessionId, string toolId, string? prompt = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public List<CliToolConfig> GetAvailableTools(string? username = null) => [];
+        public CliToolConfig? GetTool(string toolId, string? username = null) => throw new NotSupportedException();
+        public bool ValidateTool(string toolId, string? username = null) => throw new NotSupportedException();
+        public void CleanupSessionWorkspace(string sessionId) => throw new NotSupportedException();
+        public void CleanupExpiredWorkspaces() => throw new NotSupportedException();
+        public string GetSessionWorkspacePath(string sessionId) => throw new NotSupportedException();
+        public Task<Dictionary<string, string>> GetToolEnvironmentVariablesAsync(string toolId, string? username = null) => throw new NotSupportedException();
+        public Task<CcSwitchSessionSnapshot?> SyncSessionCcSwitchSnapshotAsync(string sessionId, string? toolId = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<CodexThreadProviderSyncResult> SyncCodexThreadProviderAsync(string sessionId, string? toolId = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> SaveToolEnvironmentVariablesAsync(string toolId, Dictionary<string, string> envVars, string? username = null) => throw new NotSupportedException();
+        public byte[]? GetWorkspaceFile(string sessionId, string relativePath) => throw new NotSupportedException();
+        public byte[]? GetWorkspaceZip(string sessionId) => throw new NotSupportedException();
+        public Task<bool> UploadFileToWorkspaceAsync(string sessionId, string fileName, byte[] fileContent, string? relativePath = null) => throw new NotSupportedException();
+        public Task<bool> CreateFolderInWorkspaceAsync(string sessionId, string folderPath) => throw new NotSupportedException();
+        public Task<bool> DeleteWorkspaceItemAsync(string sessionId, string relativePath, bool isDirectory) => throw new NotSupportedException();
+        public Task<bool> MoveFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath) => throw new NotSupportedException();
+        public Task<bool> CopyFileInWorkspaceAsync(string sessionId, string sourcePath, string targetPath) => throw new NotSupportedException();
+        public Task<bool> RenameFileInWorkspaceAsync(string sessionId, string oldPath, string newName) => throw new NotSupportedException();
+        public Task<int> BatchDeleteFilesAsync(string sessionId, List<string> relativePaths) => throw new NotSupportedException();
+        public Task<string> InitializeSessionWorkspaceAsync(string sessionId, string? projectId = null, bool includeGit = false) => throw new NotSupportedException();
+        public void RefreshWorkspaceRootCache() => throw new NotSupportedException();
+    }
+
+    private sealed class StubFeishuReplyTtsPlatformService : IFeishuReplyTtsPlatformService
+    {
+        public FeishuReplyTtsHealthStatus HealthResult { get; set; } = new();
+
+        public IReadOnlyList<FeishuReplyTtsVoiceOption> VoicesResult { get; set; } = [];
+
+        public int EnsureStartedCallCount { get; private set; }
+
+        public Task<FeishuReplyTtsHealthStatus> GetHealthAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(HealthResult);
+        }
+
+        public Task<IReadOnlyList<FeishuReplyTtsVoiceOption>> GetVoicesAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(VoicesResult);
+        }
+
+        public Task<FeishuReplyTtsVoiceResolutionResult> ResolveVoiceOrFallbackAsync(string? savedVoiceId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<FeishuReplyTtsHealthStatus> EnsureServiceStartedAsync(CancellationToken cancellationToken = default)
+        {
+            EnsureStartedCallCount++;
+            return Task.FromResult(HealthResult);
+        }
+    }
+}

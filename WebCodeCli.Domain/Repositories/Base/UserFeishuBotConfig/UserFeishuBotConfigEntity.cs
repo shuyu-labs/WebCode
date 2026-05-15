@@ -42,6 +42,12 @@ public class UserFeishuBotConfigEntity
     [SugarColumn(IsNullable = true)]
     public int? StreamingThrottleMs { get; set; }
 
+    [SugarColumn(IsNullable = false)]
+    public bool ReplyTtsEnabled { get; set; }
+
+    [SugarColumn(Length = 128, IsNullable = true)]
+    public string? ReplyTtsVoiceId { get; set; }
+
     [SugarColumn(IsNullable = true)]
     public DateTime? LastStartedAt { get; set; }
 

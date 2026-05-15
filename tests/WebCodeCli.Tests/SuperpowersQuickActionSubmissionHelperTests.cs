@@ -7,6 +7,16 @@ namespace WebCodeCli.Tests;
 public sealed class SuperpowersQuickActionSubmissionHelperTests
 {
     [Fact]
+    public void BuildMessage_ReturnsContinuePrompt_ForContinueAction()
+    {
+        var result = SuperpowersQuickActionSubmissionHelper.BuildMessage(
+            SuperpowersQuickActionRequestType.Continue,
+            quickInput: null);
+
+        Assert.Equal(SuperpowersQuickActionDefaults.ContinuePrompt, result);
+    }
+
+    [Fact]
     public void BuildMessage_ReturnsExecutePlanPrompt_ForExecutePlanAction()
     {
         var result = SuperpowersQuickActionSubmissionHelper.BuildMessage(
@@ -27,9 +37,9 @@ public sealed class SuperpowersQuickActionSubmissionHelperTests
     }
 
     [Theory]
-    [InlineData("整理这个 plan", "使用superpowers技能，整理这个 plan")]
-    [InlineData("使用superpowers技能，整理这个 plan", "使用superpowers技能，整理这个 plan")]
-    [InlineData("  整理这个 plan  ", "使用superpowers技能，整理这个 plan")]
+    [InlineData("整理这个 plan", "$superpowers ，使用superpowers技能，整理这个 plan")]
+    [InlineData("$superpowers ，使用superpowers技能，整理这个 plan", "$superpowers ，使用superpowers技能，整理这个 plan")]
+    [InlineData("  整理这个 plan  ", "$superpowers ，使用superpowers技能，整理这个 plan")]
     public void BuildMessage_AppliesQuickInputPrefixRules(string input, string expected)
     {
         var result = SuperpowersQuickActionSubmissionHelper.BuildMessage(

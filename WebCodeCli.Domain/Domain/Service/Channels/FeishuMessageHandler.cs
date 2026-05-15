@@ -480,7 +480,9 @@ public class FeishuMessageHandler : IEventHandler<EventV2Dto<ImMessageReceiveV1E
             {
                 categories = await _commandService.GetCategorizedCommandsAsync(toolId);
                 _logger.LogInformation("🔥 [FeishuHelp] 获取到 {Count} 个分组", categories.Count);
-                card = _cardBuilder.BuildCommandListCardV2(categories);
+                card = _cardBuilder.BuildCommandListCardV2(
+                    categories,
+                    replyTtsEnabled: await GetReplyTtsEnabledAsync(chatId, webUsername));
             }
             else
             {
@@ -564,6 +566,22 @@ public class FeishuMessageHandler : IEventHandler<EventV2Dto<ImMessageReceiveV1E
         }
 
         return await userFeishuBotConfigService.GetEffectiveOptionsAsync(username);
+    }
+
+    private async Task<bool> GetReplyTtsEnabledAsync(string chatId, string? username)
+    {
+        var resolvedUsername = string.IsNullOrWhiteSpace(username)
+            ? _feishuChannel.GetSessionUsername(chatId)
+            : username;
+        if (string.IsNullOrWhiteSpace(resolvedUsername))
+        {
+            return false;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var userFeishuBotConfigService = scope.ServiceProvider.GetRequiredService<IUserFeishuBotConfigService>();
+        var config = await userFeishuBotConfigService.GetByUsernameAsync(resolvedUsername);
+        return config?.ReplyTtsEnabled == true;
     }
 
     private async Task<List<ChatSessionEntity>> GetChatSessionEntitiesAsync(string chatKey, string username)

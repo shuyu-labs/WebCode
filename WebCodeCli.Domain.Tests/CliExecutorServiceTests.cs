@@ -3037,7 +3037,7 @@ args = ["mcp", "serve"]
 
         var configContent = (string)typeof(CliExecutorService)
             .GetMethod("BuildCodexConfigContent", BindingFlags.Static | BindingFlags.NonPublic)!
-            .Invoke(null, [envVars])!;
+            .Invoke(null, [envVars, false])!;
 
         Assert.Contains("model_provider = \"meteor-ai\"", configContent, StringComparison.Ordinal);
         Assert.Contains("disable_response_storage = true", configContent, StringComparison.Ordinal);
@@ -3052,6 +3052,17 @@ args = ["mcp", "serve"]
         Assert.DoesNotContain("\nprofile = ", configContent, StringComparison.Ordinal);
         Assert.DoesNotContain("[profiles.", configContent, StringComparison.Ordinal);
         Assert.DoesNotContain("env_key =", configContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildCodexConfigContent_WhenGoalsEnabled_AppendsGoalsFeatureFlag()
+    {
+        var configContent = (string)typeof(CliExecutorService)
+            .GetMethod("BuildCodexConfigContent", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [new Dictionary<string, string>(), true])!;
+
+        Assert.Contains("[features]", configContent, StringComparison.Ordinal);
+        Assert.Contains("goals = true", configContent, StringComparison.Ordinal);
     }
 
     [Fact]

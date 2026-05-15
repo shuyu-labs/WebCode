@@ -553,6 +553,8 @@
                 {
                     var superpowersEligibility = CurrentSuperpowersQuickActionEligibility;
                     var superpowersViewState = CurrentSuperpowersQuickActionViewState;
+                    var goalEligibility = CurrentGoalQuickActionEligibility;
+                    var goalViewState = CurrentGoalQuickActionViewState;
 
                     @for (var i = 0; i < _messages.Count; i++)
                     {
@@ -562,6 +564,7 @@
                         var hasOutputDetails = isAssistant && _isJsonlOutputActive && _jsonlEvents.Any();
                         var isExpanded = IsMessageExpanded(messageIndex);
                         var showSuperpowersQuickActions = IsSuperpowersQuickActionEligible(message, superpowersEligibility);
+                        var showGoalQuickActions = IsSuperpowersQuickActionEligible(message, goalEligibility);
                         
                         <div class="@(message.Role == "user" ? "flex justify-end" : "flex justify-start flex-col items-start")">
                             <div class="@(message.Role == "user" 
@@ -623,6 +626,15 @@
                                                placeholder="@SuperpowersQuickActionDefaults.QuickInputPlaceholder" />
                                             @if (superpowersViewState.ShowPlanActions)
                                             {
+                                                <div class="flex flex-wrap gap-2">
+                                                <button @onclick="() => OnContinueSuperpowersActionAsync(message)"
+                                                        disabled="@superpowersViewState.ContinueActionDisabled"
+                                                        class="inline-flex items-center justify-center gap-1.5 rounded-full border border-blue-200 px-3 py-1.5 text-xs font-medium transition-colors @(superpowersViewState.ContinueActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l-7 7 7 7"></path>
+                                                    </svg>
+                                                    <span>@SuperpowersQuickActionDefaults.ContinueButtonText</span>
+                                                </button>
                                                 <button @onclick="() => OnExecuteSuperpowersPlanAsync(message)"
                                                         disabled="@superpowersViewState.IsDisabled"
                                                         class="inline-flex items-center justify-center gap-1.5 rounded-full border border-blue-200 px-3 py-1.5 text-xs font-medium transition-colors @(superpowersViewState.IsDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
@@ -639,6 +651,7 @@
                                                     </svg>
                                                     <span>@SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText</span>
                                                 </button>
+                                                </div>
                                             }
                                             @if (!string.IsNullOrWhiteSpace(superpowersViewState.StatusMessage) || superpowersViewState.ShowRetryAction)
                                             {
@@ -654,6 +667,37 @@
                                                                 class="inline-flex items-center justify-center rounded-full border border-blue-200 px-3 py-1 font-medium transition-colors @(superpowersViewState.RetryActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "text-blue-700 hover:bg-blue-100")"
                                                                 type="button">
                                                             @superpowersViewState.RetryActionText
+                                                        </button>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                @if (showGoalQuickActions)
+                                {
+                                    <div class="mt-2 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+                                        <p class="mb-2 text-xs leading-relaxed text-emerald-900">@GoalQuickActionDefaults.InstructionText</p>
+                                        <div class="flex flex-col gap-2">
+                                            <input @bind="_goalQuickInput"
+                                                   @bind:event="oninput"
+                                                   @onkeydown="@(args => HandleGoalQuickInputKeyDown(message, args))"
+                                                   disabled="@goalViewState.IsDisabled"
+                                                   class="w-full rounded-full border border-emerald-200 px-3 py-2 text-xs text-gray-700 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                                                   placeholder="@GoalQuickActionDefaults.QuickInputPlaceholder" />
+                                            @if (!string.IsNullOrWhiteSpace(goalViewState.StatusMessage) || goalViewState.ShowRetryAction)
+                                            {
+                                                <div class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-100 bg-white/70 px-3 py-2 text-xs text-emerald-900">
+                                                    @if (!string.IsNullOrWhiteSpace(goalViewState.StatusMessage))
+                                                    {
+                                                        <span>@goalViewState.StatusMessage</span>
+                                                    }
+                                                    @if (goalViewState.ShowRetryAction)
+                                                    {
+                                                        <button @onclick="() => RetryGoalCapabilityAsync(message)"
+                                                                disabled="@goalViewState.RetryActionDisabled"
+                                                                class="inline-flex items-center justify-center rounded-full border border-emerald-200 px-3 py-1.5 text-xs font-medium transition-colors @(goalViewState.RetryActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-emerald-700 hover:bg-emerald-100")">
+                                                            <span>@goalViewState.RetryActionText</span>
                                                         </button>
                                                     }
                                                 </div>
@@ -740,31 +784,42 @@
                             </div>
                             
                             @* 实时输出详情面板 *@
-                            <div class="mt-2 w-full max-w-[85%] rounded-2xl border border-blue-100 bg-blue-50/70 p-3">
-                                <p class="mb-2 text-xs leading-relaxed text-blue-900">@SuperpowersQuickActionDefaults.InstructionText</p>
-                                <div class="flex flex-col gap-2">
-                                    <input @bind="_superpowersQuickInput"
-                                           @bind:event="oninput"
-                                           disabled="true"
-                                           class="w-full rounded-full border border-blue-200 bg-gray-100 px-3 py-2 text-xs text-gray-400 outline-none disabled:cursor-not-allowed"
-                                           placeholder="@SuperpowersQuickActionDefaults.QuickInputPlaceholder" />
-                                    @if (CurrentSuperpowersQuickActionEligibility.ShowPlanActions)
-                                    {
-                                        <button disabled="true"
-                                                class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                                            </svg>
-                                            <span>@SuperpowersQuickActionDefaults.ExecutePlanButtonText</span>
-                                        </button>
-                                        <button disabled="true"
-                                                class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                                            </svg>
-                                            <span>@SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText</span>
-                                        </button>
-                                    }
+                            <div class="mt-3 w-full max-w-[85%] border-t-2 border-red-300 pt-3">
+                                <div class="rounded-2xl border border-blue-100 bg-blue-50/70 p-3">
+                                    <p class="mb-2 text-xs leading-relaxed text-blue-900">@SuperpowersQuickActionDefaults.InstructionText</p>
+                                    <div class="flex flex-col gap-2">
+                                        <input @bind="_superpowersQuickInput"
+                                               @bind:event="oninput"
+                                               disabled="true"
+                                               class="w-full rounded-full border border-blue-200 bg-gray-100 px-3 py-2 text-xs text-gray-400 outline-none disabled:cursor-not-allowed"
+                                               placeholder="@SuperpowersQuickActionDefaults.QuickInputPlaceholder" />
+                                        @if (CurrentSuperpowersQuickActionEligibility.ShowPlanActions)
+                                        {
+                                            <div class="flex flex-wrap gap-2">
+                                            <button disabled="true"
+                                                    class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l-7 7 7 7"></path>
+                                                </svg>
+                                                <span>@SuperpowersQuickActionDefaults.ContinueButtonText</span>
+                                            </button>
+                                            <button disabled="true"
+                                                    class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                                </svg>
+                                                <span>@SuperpowersQuickActionDefaults.ExecutePlanButtonText</span>
+                                            </button>
+                                            <button disabled="true"
+                                                    class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                                </svg>
+                                                <span>@SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText</span>
+                                            </button>
+                                            </div>
+                                        }
+                                    </div>
                                 </div>
                             </div>
 

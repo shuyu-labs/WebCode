@@ -1,3 +1,4 @@
+using WebCodeCli.Domain.Domain.Model;
 using WebCodeCli.Domain.Domain.Service;
 
 namespace WebCodeCli.Domain.Tests;
@@ -5,10 +6,18 @@ namespace WebCodeCli.Domain.Tests;
 public class SuperpowersPromptBuilderTests
 {
     [Fact]
+    public void BuildContinuePrompt_ReturnsApprovedPrompt()
+    {
+        Assert.Equal(
+            SuperpowersQuickActionDefaults.ContinuePrompt,
+            SuperpowersPromptBuilder.BuildContinuePrompt());
+    }
+
+    [Fact]
     public void BuildExecutePlanPrompt_ReturnsApprovedPrompt()
     {
         Assert.Equal(
-            "使用superpowers的executing-plans技能执行计划",
+            SuperpowersQuickActionDefaults.ExecutePlanPrompt,
             SuperpowersPromptBuilder.BuildExecutePlanPrompt());
     }
 
@@ -16,14 +25,14 @@ public class SuperpowersPromptBuilderTests
     public void BuildSubagentExecutePlanPrompt_ReturnsApprovedCombinedPrompt()
     {
         Assert.Equal(
-            "使用superpowers的executing-plans技能执行计划,并且使用superpowers的subagent-driven-development技能",
+            SuperpowersQuickActionDefaults.ExecuteSubagentPlanPrompt,
             SuperpowersPromptBuilder.BuildSubagentExecutePlanPrompt());
     }
 
     [Theory]
-    [InlineData("写一个执行步骤", "使用superpowers技能，写一个执行步骤")]
-    [InlineData("使用superpowers技能，写一个执行步骤", "使用superpowers技能，写一个执行步骤")]
-    [InlineData("  写一个执行步骤  ", "使用superpowers技能，写一个执行步骤")]
+    [InlineData("写一个执行步骤", "$superpowers ，使用superpowers技能，写一个执行步骤")]
+    [InlineData("$superpowers ，使用superpowers技能，写一个执行步骤", "$superpowers ，使用superpowers技能，写一个执行步骤")]
+    [InlineData("  写一个执行步骤  ", "$superpowers ，使用superpowers技能，写一个执行步骤")]
     public void BuildQuickSkillPrompt_AppliesPrefixOnlyWhenMissing(string input, string expected)
     {
         Assert.Equal(expected, SuperpowersPromptBuilder.BuildQuickSkillPrompt(input));

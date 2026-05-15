@@ -1,7 +1,7 @@
 <Project>
   <!-- See https://aka.ms/dotnet/msbuild/customize for more details on customizing your build -->
   <PropertyGroup>
-    <Version>0.2.7</Version>
+    <Version>0.2.8</Version>
     <NetVersion>10.0.1</NetVersion>
   </PropertyGroup>
 </Project>
