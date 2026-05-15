@@ -4,7 +4,9 @@ param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64",
     [string]$ProjectPath,
-    [string]$OutputRoot
+    [string]$OutputRoot,
+    [string]$ReplyTtsSourceRoot,
+    [string]$ReplyTtsFfmpegExecutablePath
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +76,268 @@ function Update-PublishAppSettings {
     [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Copy-ReplyTtsServiceAssets {
+    param(
+        [string]$RepoRoot,
+        [string]$PublishDirectory
+    )
+
+    $sourceRoot = Join-Path $RepoRoot "tools\sherpa-kokoro-service"
+    if (-not (Test-Path $sourceRoot)) {
+        throw "Reply TTS service assets were not found at $sourceRoot"
+    }
+
+    $destinationRoot = Join-Path $PublishDirectory "tools\sherpa-kokoro-service"
+    if (Test-Path $destinationRoot) {
+        Remove-Item -Recurse -Force $destinationRoot
+    }
+
+    New-Item -ItemType Directory -Force -Path $destinationRoot | Out-Null
+
+    foreach ($relativePath in @(
+        "README.md",
+        "requirements.txt",
+        "app.py",
+        "start.ps1",
+        "start.sh")) {
+        $sourcePath = Join-Path $sourceRoot $relativePath
+        if (-not (Test-Path $sourcePath)) {
+            throw "Required Reply TTS service asset was not found at $sourcePath"
+        }
+
+        $destinationPath = Join-Path $destinationRoot $relativePath
+        $destinationParent = Split-Path -Parent $destinationPath
+        if (-not (Test-Path $destinationParent)) {
+            New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
+        }
+
+        Copy-Item -Path $sourcePath -Destination $destinationPath -Force
+    }
+}
+
+function Get-WindowsSystemDriveRoot {
+    $systemRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+    if (-not [string]::IsNullOrWhiteSpace($systemRoot)) {
+        return [System.IO.Path]::GetPathRoot($systemRoot)
+    }
+
+    $systemDrive = [Environment]::GetEnvironmentVariable("SystemDrive")
+    if ([string]::IsNullOrWhiteSpace($systemDrive)) {
+        return "C:\"
+    }
+
+    return "$($systemDrive.TrimEnd('\'))\"
+}
+
+function Test-IsSameWindowsDrive {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+
+    $leftRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($Left))
+    $rightRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($Right))
+
+    return $leftRoot.TrimEnd('\') -ieq $rightRoot.TrimEnd('\')
+}
+
+function Resolve-ReplyTtsSourceRoot {
+    param([string]$RequestedSourceRoot)
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedSourceRoot)) {
+        if (-not (Test-Path $RequestedSourceRoot)) {
+            throw "Reply TTS bundle source root was not found at $RequestedSourceRoot"
+        }
+
+        return (Resolve-Path $RequestedSourceRoot).Path
+    }
+
+    $systemDriveRoot = Get-WindowsSystemDriveRoot
+    $candidateRoots = [System.IO.DriveInfo]::GetDrives() |
+        Where-Object {
+            $_.DriveType -eq [System.IO.DriveType]::Fixed -and
+            $_.IsReady -and
+            -not (Test-IsSameWindowsDrive $_.RootDirectory.FullName $systemDriveRoot)
+        } |
+        Sort-Object Name |
+        ForEach-Object { Join-Path $_.RootDirectory.FullName "WebCodeData\Kokoro" }
+
+    foreach ($candidateRoot in $candidateRoots) {
+        if (
+            (Test-Path $candidateRoot) -and
+            (Test-Path (Join-Path $candidateRoot "models\kokoro-int8-multi-lang-v1_1")) -and
+            (Test-Path (Join-Path $candidateRoot "venv\Scripts\python.exe")) -and
+            (Test-Path (Join-Path $candidateRoot "python"))
+        ) {
+            return (Resolve-Path $candidateRoot).Path
+        }
+    }
+
+    throw "Reply TTS bundle source root was not found on any writable non-system fixed drive. Pass -ReplyTtsSourceRoot explicitly."
+}
+
+function Resolve-ReplyTtsFfmpegExecutablePath {
+    param(
+        [string]$RequestedExecutablePath,
+        [string]$SourceRoot
+    )
+
+    $candidatePaths = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedExecutablePath)) {
+        $candidatePaths.Add($RequestedExecutablePath)
+    }
+
+    $candidatePaths.Add((Join-Path $SourceRoot "ffmpeg\bin\ffmpeg.exe"))
+
+    $ffmpegCommand = Get-Command ffmpeg.exe -CommandType Application -ErrorAction SilentlyContinue
+    if ($ffmpegCommand) {
+        $candidatePaths.Add($ffmpegCommand.Source)
+    }
+
+    $candidatePaths.Add("C:\Program Files\ImageMagick-7.1.0-Q16\ffmpeg.exe")
+
+    foreach ($candidatePath in $candidatePaths | Select-Object -Unique) {
+        if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path $candidatePath)) {
+            return (Resolve-Path $candidatePath).Path
+        }
+    }
+
+    throw "Reply TTS ffmpeg executable was not found. Pass -ReplyTtsFfmpegExecutablePath explicitly."
+}
+
+function Get-ReplyTtsBundledPythonHome {
+    param([string]$PythonRoot)
+
+    if (-not (Test-Path $PythonRoot)) {
+        throw "Reply TTS python root was not found at $PythonRoot"
+    }
+
+    $bundledPythonHome = Get-ChildItem -Path $PythonRoot -Directory |
+        Sort-Object Name |
+        Where-Object { Test-Path (Join-Path $_.FullName "python.exe") } |
+        Select-Object -First 1
+
+    if ($null -eq $bundledPythonHome) {
+        throw "Reply TTS python root at $PythonRoot does not contain a bundled python.exe"
+    }
+
+    return $bundledPythonHome.FullName
+}
+
+function Get-ReplyTtsBundleSourceLayout {
+    param(
+        [string]$RequestedSourceRoot,
+        [string]$RequestedFfmpegExecutablePath
+    )
+
+    $sourceRoot = Resolve-ReplyTtsSourceRoot -RequestedSourceRoot $RequestedSourceRoot
+    $modelRoot = Join-Path $sourceRoot "models\kokoro-int8-multi-lang-v1_1"
+    $venvRoot = Join-Path $sourceRoot "venv"
+    $pythonRoot = Join-Path $sourceRoot "python"
+    $venvPythonPath = Join-Path $venvRoot "Scripts\python.exe"
+    $venvConfigPath = Join-Path $venvRoot "pyvenv.cfg"
+
+    if (-not (Test-Path $modelRoot)) {
+        throw "Reply TTS model directory was not found at $modelRoot"
+    }
+
+    foreach ($requiredRelativePath in @(
+        "model.int8.onnx",
+        "voices.bin",
+        "tokens.txt",
+        "lexicon-us-en.txt",
+        "lexicon-zh.txt",
+        "date-zh.fst",
+        "phone-zh.fst",
+        "number-zh.fst",
+        "espeak-ng-data")) {
+        $requiredPath = Join-Path $modelRoot $requiredRelativePath
+        if (-not (Test-Path $requiredPath)) {
+            throw "Reply TTS model directory is incomplete. Missing $requiredPath"
+        }
+    }
+
+    if (-not (Test-Path $venvPythonPath)) {
+        throw "Reply TTS bundled venv python was not found at $venvPythonPath"
+    }
+
+    if (-not (Test-Path $venvConfigPath)) {
+        throw "Reply TTS bundled venv config was not found at $venvConfigPath"
+    }
+
+    $bundledPythonHome = Get-ReplyTtsBundledPythonHome -PythonRoot $pythonRoot
+    $ffmpegExecutablePath = Resolve-ReplyTtsFfmpegExecutablePath `
+        -RequestedExecutablePath $RequestedFfmpegExecutablePath `
+        -SourceRoot $sourceRoot
+
+    return [pscustomobject]@{
+        SourceRoot            = $sourceRoot
+        ModelRoot             = $modelRoot
+        VenvRoot              = $venvRoot
+        PythonRoot            = $pythonRoot
+        BundledPythonHome     = $bundledPythonHome
+        FfmpegExecutablePath  = $ffmpegExecutablePath
+    }
+}
+
+function Copy-DirectoryTree {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    if (-not (Test-Path $Source)) {
+        throw "Directory copy source was not found at $Source"
+    }
+
+    $parentPath = Split-Path -Parent $Destination
+    if (-not [string]::IsNullOrWhiteSpace($parentPath) -and -not (Test-Path $parentPath)) {
+        New-Item -ItemType Directory -Force -Path $parentPath | Out-Null
+    }
+
+    if (Test-Path $Destination) {
+        Remove-Item -Recurse -Force $Destination
+    }
+
+    Copy-Item -Path $Source -Destination $Destination -Recurse -Force
+}
+
+function Copy-ReplyTtsBundleAssets {
+    param(
+        [psobject]$SourceLayout,
+        [string]$BundleDirectory
+    )
+
+    if (Test-Path $BundleDirectory) {
+        Remove-Item -Recurse -Force $BundleDirectory
+    }
+
+    New-Item -ItemType Directory -Force -Path $BundleDirectory | Out-Null
+
+    Copy-DirectoryTree `
+        -Source $SourceLayout.ModelRoot `
+        -Destination (Join-Path $BundleDirectory "models\kokoro-int8-multi-lang-v1_1")
+    Copy-DirectoryTree `
+        -Source $SourceLayout.PythonRoot `
+        -Destination (Join-Path $BundleDirectory "python")
+    Copy-DirectoryTree `
+        -Source $SourceLayout.VenvRoot `
+        -Destination (Join-Path $BundleDirectory "venv")
+
+    $ffmpegBinDirectory = Join-Path $BundleDirectory "ffmpeg\bin"
+    New-Item -ItemType Directory -Force -Path $ffmpegBinDirectory | Out-Null
+    Copy-Item -Path $SourceLayout.FfmpegExecutablePath -Destination (Join-Path $ffmpegBinDirectory "ffmpeg.exe") -Force
+
+    foreach ($relativeDirectory in @("cache", "logs", "service", "temp")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $BundleDirectory $relativeDirectory) | Out-Null
+    }
+}
+
 function Get-LaunchUrlForReleaseNotes {
     param([string]$PublishDirectory)
 
@@ -116,6 +380,9 @@ $repoRoot = Get-RepoRoot -ScriptRoot $PSScriptRoot
 $projectFullPath = (Resolve-Path $ProjectPath).Path
 $resolvedVersion = Get-BuildVersion -RequestedVersion $Version -RepoRoot $repoRoot
 $assemblyVersion = "$resolvedVersion.0"
+$replyTtsSourceLayout = Get-ReplyTtsBundleSourceLayout `
+    -RequestedSourceRoot $ReplyTtsSourceRoot `
+    -RequestedFfmpegExecutablePath $ReplyTtsFfmpegExecutablePath
 
 if ($resolvedVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "Resolved version '$resolvedVersion' is not in major.minor.patch format."
@@ -134,6 +401,7 @@ $portableDirectoryName = "WebCode-$versionTag-$RuntimeIdentifier-portable"
 $portableStageDirectory = Join-Path $releaseRoot $portableDirectoryName
 $portableZipPath = Join-Path $releaseRoot "$portableDirectoryName.zip"
 $installerOutputDirectory = Join-Path $releaseRoot "installer"
+$ttsBundleDirectory = Join-Path $releaseRoot "tts-bundle"
 $installerBaseFileName = "WebCode-Setup-$versionTag-$RuntimeIdentifier"
 $installerPath = Join-Path $installerOutputDirectory "$installerBaseFileName.exe"
 $checksumsPath = Join-Path $releaseRoot "SHA256SUMS.txt"
@@ -168,6 +436,8 @@ if (-not (Test-Path $publishedExePath)) {
 }
 
 Update-PublishAppSettings -PublishDirectory $publishDirectory
+Copy-ReplyTtsServiceAssets -RepoRoot $repoRoot -PublishDirectory $publishDirectory
+Copy-ReplyTtsBundleAssets -SourceLayout $replyTtsSourceLayout -BundleDirectory $ttsBundleDirectory
 $launchUrl = Get-LaunchUrlForReleaseNotes -PublishDirectory $publishDirectory
 
 if (Test-Path $portableStageDirectory) {
@@ -188,6 +458,7 @@ Write-Host "Compiling Windows installer with Inno Setup ..."
 & $isccPath `
     "/DMyAppVersion=$resolvedVersion" `
     "/DPublishDir=$publishDirectory" `
+    "/DTtsBundleDir=$ttsBundleDirectory" `
     "/DOutputDir=$installerOutputDirectory" `
     "/DMyAppInstallerFileName=$installerBaseFileName" `
     "/DMyAppSourceExe=WebCodeCli.exe" `
@@ -220,8 +491,11 @@ $releaseNotes = @"
 - Built from commit $(git -C $repoRoot rev-parse --short HEAD)
 - Self-contained $RuntimeIdentifier build, no separate .NET runtime installation required
 - The installer keeps an existing appsettings.json on upgrade
-- Default install path is `%LOCALAPPDATA%\Programs\WebCode`
-- Default runtime data paths are `data/` and `workspaces/` under the install directory
+- Default install path is %LOCALAPPDATA%\Programs\WebCode
+- Default runtime data paths are data/ and workspaces/ under the install directory
+- Includes the local Kokoro/sherpa-onnx Reply TTS wrapper under tools/sherpa-kokoro-service
+- The Windows installer deploys the bundled Reply TTS model, ffmpeg, Python runtime, and venv to a writable non-system drive such as E:\WebCodeData\Kokoro
+- The Windows installer stops with an error if only the Windows system drive is writable
 - After launch, open $launchUrl in the browser
 "@
 [System.IO.File]::WriteAllText($releaseNotesPath, $releaseNotes.Trim() + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
@@ -232,3 +506,4 @@ Write-Host "Installer: $installerPath"
 Write-Host "Portable ZIP: $portableZipPath"
 Write-Host "Checksums: $checksumsPath"
 Write-Host "Release notes: $releaseNotesPath"
+Write-Host "Reply TTS source root: $($replyTtsSourceLayout.SourceRoot)"

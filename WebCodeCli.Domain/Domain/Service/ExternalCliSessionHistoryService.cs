@@ -13,6 +13,13 @@ public interface IExternalCliSessionHistoryService
     /// <summary>
     /// 读取当前系统账户下外部 CLI 原生会话的最近历史消息
     /// </summary>
+    Task<ExternalCliHistoryResult> GetRecentHistoryAsync(
+        string toolId,
+        string cliThreadId,
+        int maxCount = 20,
+        string? workspacePath = null,
+        CancellationToken cancellationToken = default);
+
     Task<List<ExternalCliHistoryMessage>> GetRecentMessagesAsync(
         string toolId,
         string cliThreadId,
@@ -29,6 +36,56 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
     public ExternalCliSessionHistoryService(ILogger<ExternalCliSessionHistoryService> logger)
     {
         _logger = logger;
+    }
+
+    public async Task<ExternalCliHistoryResult> GetRecentHistoryAsync(
+        string toolId,
+        string cliThreadId,
+        int maxCount = 20,
+        string? workspacePath = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(toolId) || string.IsNullOrWhiteSpace(cliThreadId))
+        {
+            return new ExternalCliHistoryResult();
+        }
+
+        var normalizedToolId = NormalizeToolId(toolId);
+        var normalizedThreadId = cliThreadId.Trim();
+        var effectiveMaxCount = maxCount <= 0 ? 20 : maxCount;
+
+        try
+        {
+            var messages = await GetRecentMessagesAsync(
+                normalizedToolId,
+                normalizedThreadId,
+                effectiveMaxCount,
+                workspacePath,
+                cancellationToken);
+
+            var sourcePath = normalizedToolId switch
+            {
+                "codex" => FindCodexRolloutFile(normalizedThreadId, workspacePath, cancellationToken),
+                "claude-code" => FindClaudeTranscriptFile(normalizedThreadId, cancellationToken),
+                "opencode" => $"opencode export {normalizedThreadId}",
+                _ => null
+            };
+
+            return new ExternalCliHistoryResult
+            {
+                Messages = messages,
+                SourcePath = sourcePath
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "读取外部 CLI 历史结果失败: ToolId={ToolId}, CliThreadId={CliThreadId}",
+                normalizedToolId,
+                normalizedThreadId);
+            return new ExternalCliHistoryResult();
+        }
     }
 
     public async Task<List<ExternalCliHistoryMessage>> GetRecentMessagesAsync(
@@ -191,19 +248,28 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
     {
         try
         {
-            foreach (var sessionsRoot in GetCodexSessionsRootPaths(workspacePath))
+            var candidates = GetCodexSessionsRootCandidates(workspacePath).ToList();
+            _logger.LogInformation(
+                "[CodexHistory] Start resolving rollout: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}, Roots={Roots}",
+                cliThreadId,
+                workspacePath,
+                string.Join(" | ", candidates.Select(candidate => $"{candidate.Scope}:{candidate.Path}")));
+
+            foreach (var sessionsRoot in candidates)
             {
                 var directCandidates = Directory
-                    .EnumerateFiles(sessionsRoot, $"*{cliThreadId}*.jsonl", SearchOption.AllDirectories)
+                    .EnumerateFiles(sessionsRoot.Path, $"*{cliThreadId}*.jsonl", SearchOption.AllDirectories)
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .ToList();
 
                 if (directCandidates.Count > 0)
                 {
-                    return directCandidates[0];
+                    var rolloutPath = directCandidates[0];
+                    LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, rolloutPath, "filename", directCandidates.Count);
+                    return rolloutPath;
                 }
 
-                foreach (var file in Directory.EnumerateFiles(sessionsRoot, "rollout-*.jsonl", SearchOption.AllDirectories))
+                foreach (var file in Directory.EnumerateFiles(sessionsRoot.Path, "rollout-*.jsonl", SearchOption.AllDirectories))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
@@ -225,6 +291,7 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                         var sessionId = GetString(payload, "id");
                         if (string.Equals(sessionId, cliThreadId, StringComparison.OrdinalIgnoreCase))
                         {
+                            LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, file, "payload.id", directCandidateCount: 0);
                             return file;
                         }
                     }
@@ -234,10 +301,20 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                     }
                 }
             }
+
+            _logger.LogWarning(
+                "[CodexHistory] Rollout not found: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}, Roots={Roots}",
+                cliThreadId,
+                workspacePath,
+                string.Join(" | ", candidates.Select(candidate => $"{candidate.Scope}:{candidate.Path}")));
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "定位 Codex rollout 文件失败");
+            _logger.LogDebug(
+                ex,
+                "[CodexHistory] Resolve rollout failed: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}",
+                cliThreadId,
+                workspacePath);
         }
 
         return null;
@@ -621,7 +698,60 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
         return null;
     }
 
-    private IEnumerable<string> GetCodexSessionsRootPaths(string? workspacePath)
+    private void LogCodexRolloutResolved(
+        string cliThreadId,
+        string? workspacePath,
+        CodexSessionsRootCandidate sessionsRoot,
+        string rolloutPath,
+        string matchKind,
+        int directCandidateCount)
+    {
+        var metadata = ReadCodexRolloutMetadata(rolloutPath);
+        var lastWriteTimeUtc = File.GetLastWriteTimeUtc(rolloutPath);
+        _logger.LogInformation(
+            "[CodexHistory] Rollout resolved: CliThreadId={CliThreadId}, Scope={Scope}, MatchKind={MatchKind}, DirectCandidateCount={DirectCandidateCount}, RolloutPath={RolloutPath}, RootPath={RootPath}, LastWriteTimeUtc={LastWriteTimeUtc:O}, FirstLineThreadId={FirstLineThreadId}, FirstLineModelProvider={FirstLineModelProvider}, FirstLineCwd={FirstLineCwd}, WorkspacePath={WorkspacePath}",
+            cliThreadId,
+            sessionsRoot.Scope,
+            matchKind,
+            directCandidateCount,
+            rolloutPath,
+            sessionsRoot.Path,
+            lastWriteTimeUtc,
+            metadata.ThreadId,
+            metadata.ModelProvider,
+            metadata.Cwd,
+            workspacePath);
+    }
+
+    private static CodexRolloutMetadata ReadCodexRolloutMetadata(string rolloutPath)
+    {
+        try
+        {
+            var firstLine = ReadFirstNonEmptyLine(rolloutPath, maxLines: 3);
+            if (string.IsNullOrWhiteSpace(firstLine))
+            {
+                return new CodexRolloutMetadata(null, null, null);
+            }
+
+            using var document = JsonDocument.Parse(firstLine);
+            if (!TryGetProperty(document.RootElement, "payload", out var payload)
+                || payload.ValueKind != JsonValueKind.Object)
+            {
+                return new CodexRolloutMetadata(null, null, null);
+            }
+
+            return new CodexRolloutMetadata(
+                GetString(payload, "id"),
+                GetString(payload, "model_provider"),
+                GetString(payload, "cwd"));
+        }
+        catch
+        {
+            return new CodexRolloutMetadata(null, null, null);
+        }
+    }
+
+    private IEnumerable<CodexSessionsRootCandidate> GetCodexSessionsRootCandidates(string? workspacePath)
     {
         var yielded = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -635,7 +765,7 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
             var normalized = Path.GetFullPath(workspaceSessionsRoot);
             if (yielded.Add(normalized))
             {
-                yield return normalized;
+                yield return new CodexSessionsRootCandidate(normalized, "workspace");
             }
         }
 
@@ -649,10 +779,14 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
             var normalized = Path.GetFullPath(globalSessionsRoot);
             if (yielded.Add(normalized))
             {
-                yield return normalized;
+                yield return new CodexSessionsRootCandidate(normalized, "global");
             }
         }
     }
+
+    private sealed record CodexSessionsRootCandidate(string Path, string Scope);
+
+    private sealed record CodexRolloutMetadata(string? ThreadId, string? ModelProvider, string? Cwd);
 
     private static IEnumerable<string> GetWorkspaceCodexSessionsRootPaths(string? workspacePath)
     {

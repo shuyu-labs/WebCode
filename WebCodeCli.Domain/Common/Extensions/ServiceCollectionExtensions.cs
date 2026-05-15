@@ -67,9 +67,11 @@ namespace WebCodeCli.Domain.Common.Extensions
             IConfiguration configuration)
         {
             var feishuSection = configuration.GetSection("Feishu");
+            var feishuReplyTtsSection = configuration.GetSection("FeishuReplyTts");
 
             // 绑定配置选项
             services.Configure<FeishuOptions>(feishuSection);
+            services.Configure<FeishuReplyTtsOptions>(feishuReplyTtsSection);
 
             // 注册 HttpClient 工厂（用于 CardKit API 调用）
             services.AddHttpClient("FeishuClient")
@@ -98,8 +100,10 @@ namespace WebCodeCli.Domain.Common.Extensions
             services.AddSingleton<FeishuCommandService>();
             services.AddSingleton<FeishuHelpCardBuilder>();
             services.AddSingleton<FeishuCardActionService>();
+            services.AddSingleton<ReplyTtsStorageRootResolver>();
 
             services.AddSingleton<IUserFeishuBotRuntimeService, UserFeishuBotRuntimeService>();
+            services.AddHostedService<ReplyTtsStartupHostedService>();
             services.AddHostedService(sp => (UserFeishuBotRuntimeService)sp.GetRequiredService<IUserFeishuBotRuntimeService>());
 
             return services;

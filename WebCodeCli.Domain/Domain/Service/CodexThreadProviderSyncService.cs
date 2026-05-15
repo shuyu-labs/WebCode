@@ -66,7 +66,12 @@ public sealed class CodexThreadProviderSyncService : ICodexThreadProviderSyncSer
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var rewriteOutcome = await TryRewriteRolloutFileAsync(rolloutPath, threadId, targetProviderId, cancellationToken);
+            var rewriteOutcome = await TryRewriteRolloutFileAsync(
+                rolloutPath,
+                targetCodexRoot,
+                threadId,
+                targetProviderId,
+                cancellationToken);
             switch (rewriteOutcome)
             {
                 case RolloutRewriteOutcome.Updated:
@@ -201,6 +206,7 @@ public sealed class CodexThreadProviderSyncService : ICodexThreadProviderSyncSer
 
     private async Task<RolloutRewriteOutcome> TryRewriteRolloutFileAsync(
         string rolloutPath,
+        string targetCodexRoot,
         string threadId,
         string targetProviderId,
         CancellationToken cancellationToken)
@@ -242,6 +248,11 @@ public sealed class CodexThreadProviderSyncService : ICodexThreadProviderSyncSer
         var updatedContent = string.Concat(updatedFirstLine, firstLineSplit.LineBreak, firstLineSplit.Remainder);
         try
         {
+            if (!await TryBackupRolloutFileAsync(rolloutPath, targetCodexRoot, content, cancellationToken))
+            {
+                return RolloutRewriteOutcome.Locked;
+            }
+
             await File.WriteAllTextAsync(rolloutPath, updatedContent, cancellationToken);
             return RolloutRewriteOutcome.Updated;
         }
@@ -254,6 +265,55 @@ public sealed class CodexThreadProviderSyncService : ICodexThreadProviderSyncSer
         {
             _logger.LogWarning(ex, "Write rollout file denied: {RolloutPath}", rolloutPath);
             return RolloutRewriteOutcome.Locked;
+        }
+    }
+
+    private async Task<bool> TryBackupRolloutFileAsync(
+        string rolloutPath,
+        string targetCodexRoot,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        string relativePath;
+        try
+        {
+            relativePath = Path.GetRelativePath(targetCodexRoot, rolloutPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            _logger.LogWarning(ex, "Resolve rollout backup path failed: {RolloutPath}", rolloutPath);
+            return false;
+        }
+
+        if (relativePath.StartsWith("..", GetPathComparison())
+            || Path.IsPathRooted(relativePath))
+        {
+            _logger.LogWarning("Skip rollout backup because path escapes session-local Codex root: {RolloutPath}", rolloutPath);
+            return false;
+        }
+
+        var backupPath = Path.Combine(targetCodexRoot, "rollout-backups", relativePath);
+
+        try
+        {
+            var backupDirectory = Path.GetDirectoryName(backupPath);
+            if (!string.IsNullOrWhiteSpace(backupDirectory))
+            {
+                Directory.CreateDirectory(backupDirectory);
+            }
+
+            await File.WriteAllTextAsync(backupPath, content, cancellationToken);
+            return true;
+        }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "Write rollout backup failed: {BackupPath}", backupPath);
+            return false;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Write rollout backup denied: {BackupPath}", backupPath);
+            return false;
         }
     }
 

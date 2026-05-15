@@ -98,6 +98,25 @@ public interface IFeishuCardKitClient
     /// <param name="title">卡片标题</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>流式回复句柄</returns>
+    Task<string> UploadAudioFileAsync(
+        string filePath,
+        int durationMs,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<string> SendAudioMessageAsync(
+        string chatId,
+        string fileKey,
+        int durationMs,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
     Task<FeishuStreamingHandle> CreateStreamingHandleAsync(
         string chatId,
         string? replyMessageId,

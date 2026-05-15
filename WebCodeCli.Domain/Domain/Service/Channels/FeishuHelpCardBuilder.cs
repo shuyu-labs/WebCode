@@ -18,7 +18,7 @@ public class FeishuHelpCardBuilder
     /// <summary>
     /// 构建命令选择卡片（卡片1）- 使用 ElementsCardV2Dto
     /// </summary>
-    public ElementsCardV2Dto BuildCommandListCardV2(List<FeishuCommandCategory> categories, bool showRefreshButton = true)
+    public ElementsCardV2Dto BuildCommandListCardV2(List<FeishuCommandCategory> categories, bool showRefreshButton = true, bool replyTtsEnabled = false)
     {
         var elements = new List<object>();
 
@@ -80,6 +80,20 @@ public class FeishuHelpCardBuilder
                             }
                         }
                     }
+                }
+            });
+
+            elements.Add(new
+            {
+                tag = "column_set",
+                flex_mode = "none",
+                background_style = "default",
+                columns = new[]
+                {
+                    BuildTopActionColumn(
+                        $"语音回复：{(replyTtsEnabled ? "开" : "关")}",
+                        replyTtsEnabled ? "primary" : "default",
+                        new { action = FeishuHelpCardAction.ToggleReplyTtsAction })
                 }
             });
         }
@@ -626,7 +640,7 @@ public class FeishuHelpCardBuilder
     /// <param name="categories">命令分组列表</param>
     /// <param name="showRefreshButton">是否显示刷新按钮</param>
     /// <returns>飞书卡片JSON</returns>
-    public string BuildCommandListCard(List<FeishuCommandCategory> categories, bool showRefreshButton = true)
+    public string BuildCommandListCard(List<FeishuCommandCategory> categories, bool showRefreshButton = true, bool replyTtsEnabled = false)
     {
         var elements = new List<object>();
 
@@ -688,6 +702,20 @@ public class FeishuHelpCardBuilder
                             }
                         }
                     }
+                }
+            });
+
+            elements.Add(new
+            {
+                tag = "column_set",
+                flex_mode = "none",
+                background_style = "default",
+                columns = new[]
+                {
+                    BuildTopActionColumn(
+                        $"语音回复：{(replyTtsEnabled ? "开" : "关")}",
+                        replyTtsEnabled ? "primary" : "default",
+                        new { action = FeishuHelpCardAction.ToggleReplyTtsAction })
                 }
             });
         }
@@ -924,6 +952,7 @@ public class FeishuHelpCardBuilder
     {
         elements.Add(new { tag = "hr" });
         elements.Add(BuildSuperpowersQuickInput());
+        elements.Add(BuildGoalQuickInput());
     }
 
     private static object BuildSuperpowersQuickInput()
@@ -943,6 +972,29 @@ public class FeishuHelpCardBuilder
                     value = new
                     {
                         action = FeishuHelpCardAction.SubmitSuperpowersQuickInputAction
+                    }
+                }
+            }
+        };
+    }
+
+    private static object BuildGoalQuickInput()
+    {
+        return new
+        {
+            tag = "input",
+            input_type = "text",
+            name = GoalQuickActionDefaults.QuickInputFieldName,
+            label = new { tag = "plain_text", content = GoalQuickActionDefaults.InstructionText },
+            placeholder = new { tag = "plain_text", content = GoalQuickActionDefaults.QuickInputPlaceholder },
+            behaviors = new[]
+            {
+                new
+                {
+                    type = "callback",
+                    value = new
+                    {
+                        action = FeishuHelpCardAction.SubmitGoalQuickInputAction
                     }
                 }
             }
@@ -1048,6 +1100,34 @@ public class FeishuHelpCardBuilder
                                     value = new { action = "show_category", category_id = category.Id }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    private static object BuildTopActionColumn(string text, string type, object value)
+    {
+        return new
+        {
+            tag = "column",
+            width = "weighted",
+            weight = 1,
+            vertical_align = "top",
+            elements = new object[]
+            {
+                new
+                {
+                    tag = "button",
+                    text = new { tag = "plain_text", content = text },
+                    type,
+                    behaviors = new[]
+                    {
+                        new
+                        {
+                            type = "callback",
+                            value
                         }
                     }
                 }

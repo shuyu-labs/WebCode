@@ -133,6 +133,80 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return ExtractMessageId(result, "send text message");
     }
 
+    public async Task<string> UploadAudioFileAsync(
+        string filePath,
+        int durationMs,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            throw new ArgumentException("Audio file path is required.", nameof(filePath));
+        }
+
+        var effectiveOptions = GetEffectiveOptions(optionsOverride);
+        var token = await EnsureTokenAsync(effectiveOptions, cancellationToken);
+
+        using var fileStream = File.OpenRead(filePath);
+        using var payload = new MultipartFormDataContent
+        {
+            { new StringContent("opus"), "file_type" },
+            { new StringContent(Path.GetFileName(filePath)), "file_name" },
+            { new StringContent(durationMs.ToString()), "duration" }
+        };
+        payload.Add(new StreamContent(fileStream), "file", Path.GetFileName(filePath));
+
+        var response = await PostMultipartAsync(
+            "/open-apis/im/v1/files",
+            token,
+            payload,
+            effectiveOptions,
+            cancellationToken);
+
+        var result = await ParseResponseAsync(response, cancellationToken);
+        EnsureBusinessSuccess(result, "Upload Feishu audio file");
+
+        if (result.TryGetProperty("data", out var data) &&
+            data.TryGetProperty("file_key", out var fileKeyProp))
+        {
+            return fileKeyProp.GetString() ?? string.Empty;
+        }
+
+        throw new InvalidOperationException("Failed to upload audio file: invalid response");
+    }
+
+    public async Task<string> SendAudioMessageAsync(
+        string chatId,
+        string fileKey,
+        int durationMs,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        var effectiveOptions = GetEffectiveOptions(optionsOverride);
+        var token = await EnsureTokenAsync(effectiveOptions, cancellationToken);
+
+        var payload = new
+        {
+            receive_id = chatId,
+            msg_type = "audio",
+            content = JsonSerializer.Serialize(new
+            {
+                file_key = fileKey
+            })
+        };
+
+        var response = await PostAsync(
+            "/open-apis/im/v1/messages?receive_id_type=chat_id",
+            token,
+            payload,
+            effectiveOptions,
+            cancellationToken);
+
+        var result = await ParseResponseAsync(response, cancellationToken);
+        EnsureBusinessSuccess(result, "Send Feishu audio message");
+        return ExtractMessageId(result, "send audio message");
+    }
+
     public async Task<string> ReplyCardMessageAsync(
         string replyMessageId,
         string cardId,
@@ -395,7 +469,7 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return chrome?.OverflowOptions.Count is > 0 ? 4000 : 0;
     }
 
-    private object[] BuildStreamingCardElements(string content, FeishuStreamingCardChrome? chrome)
+    internal static object[] BuildStreamingCardElements(string content, FeishuStreamingCardChrome? chrome)
     {
         if (chrome == null)
         {
@@ -414,8 +488,9 @@ public class FeishuCardKitClient : IFeishuCardKitClient
             !string.IsNullOrWhiteSpace(group.SummaryMarkdown)
             || group.OverflowOptions.Count > 0
             || group.Items.Any(item => !string.IsNullOrWhiteSpace(item.Text)));
+        var allBottomPrompts = EnumerateBottomPrompts(chrome).ToArray();
         var hasBottomActions = chrome.BottomActions.Count > 0;
-        var hasBottomPrompt = chrome.BottomPrompt != null;
+        var hasBottomPrompt = allBottomPrompts.Length > 0;
         if (!hasStatusSection && !hasTopChipGroups && !hasBottomActions && !hasBottomPrompt)
         {
             return
@@ -431,53 +506,20 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         var elements = new List<object>();
         if (hasStatusSection)
         {
-            var statusMarkdown = string.IsNullOrWhiteSpace(chrome.StatusMarkdown)
-                ? "当前会话"
-                : chrome.StatusMarkdown;
-
-            if (chrome.OverflowOptions.Count > 0)
-            {
-                elements.Add(new
-                {
-                    tag = "div",
-                    text = new
-                    {
-                        tag = "lark_md",
-                        content = statusMarkdown
-                    },
-                    extra = new
-                    {
-                        tag = "overflow",
-                        options = BuildOverflowOptions(chrome.OverflowOptions)
-                    }
-                });
-            }
-            else
-            {
-                elements.Add(new
-                {
-                    tag = "div",
-                    text = new
-                    {
-                        tag = "lark_md",
-                        content = statusMarkdown
-                    }
-                });
-            }
-
-            elements.Add(new { tag = "hr" });
+            elements.Add(BuildStatusModule(chrome));
         }
 
         if (hasTopChipGroups)
         {
+            elements.Add(BuildSectionMarker("思考等级"));
+
             foreach (var module in FeishuStreamingTopChipLayout.BuildModules(chrome.TopChipGroups, BuildTopChipAction))
             {
                 elements.Add(module);
             }
-
-            elements.Add(new { tag = "hr" });
         }
 
+        elements.Add(BuildSectionMarker("回复内容"));
         elements.Add(new
         {
             tag = "markdown",
@@ -486,11 +528,11 @@ public class FeishuCardKitClient : IFeishuCardKitClient
 
         if (hasBottomPrompt || hasBottomActions)
         {
-            elements.Add(new { tag = "hr" });
+            elements.Add(BuildSectionMarker("Superpowers 工作流"));
 
-            if (hasBottomPrompt)
+            foreach (var prompt in allBottomPrompts)
             {
-                elements.Add(BuildBottomPromptForm(chrome.BottomPrompt!));
+                elements.Add(BuildBottomPromptForm(prompt));
             }
 
             if (hasBottomActions)
@@ -506,6 +548,54 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         }
 
         return elements.ToArray();
+    }
+
+    private static object BuildStatusModule(FeishuStreamingCardChrome chrome)
+    {
+        var statusMarkdown = string.IsNullOrWhiteSpace(chrome.StatusMarkdown)
+            ? "当前会话"
+            : chrome.StatusMarkdown;
+
+        if (chrome.OverflowOptions.Count > 0)
+        {
+            return new
+            {
+                tag = "div",
+                text = new
+                {
+                    tag = "lark_md",
+                    content = statusMarkdown
+                },
+                extra = new
+                {
+                    tag = "overflow",
+                    options = BuildOverflowOptions(chrome.OverflowOptions)
+                }
+            };
+        }
+
+        return new
+        {
+            tag = "div",
+            text = new
+            {
+                tag = "lark_md",
+                content = statusMarkdown
+            }
+        };
+    }
+
+    private static object BuildSectionMarker(string title)
+    {
+        return new
+        {
+            tag = "div",
+            text = new
+            {
+                tag = "lark_md",
+                content = $"🟥🟥🟥 **{title}**"
+            }
+        };
     }
 
     private static object BuildBottomPromptForm(FeishuStreamingCardBottomPrompt prompt)
@@ -555,7 +645,7 @@ public class FeishuCardKitClient : IFeishuCardKitClient
                                     text = new { tag = "plain_text", content = prompt.ButtonText },
                                     type = string.IsNullOrWhiteSpace(prompt.ButtonType) ? "primary" : prompt.ButtonType,
                                     action_type = "form_submit",
-                                    name = "low_interruption_continue_submit",
+                                    name = BuildBottomPromptSubmitButtonName(prompt),
                                     value = prompt.Value
                                 }
                             }
@@ -566,7 +656,47 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         };
     }
 
-    private object[] BuildOverflowOptions(IEnumerable<FeishuStreamingCardOverflowOption> options)
+    private static IEnumerable<FeishuStreamingCardBottomPrompt> EnumerateBottomPrompts(FeishuStreamingCardChrome chrome)
+    {
+        if (chrome.BottomPrompt != null)
+        {
+            yield return chrome.BottomPrompt;
+        }
+
+        foreach (var prompt in chrome.AdditionalBottomPrompts)
+        {
+            if (prompt != null)
+            {
+                yield return prompt;
+            }
+        }
+    }
+
+    private static string BuildBottomPromptSubmitButtonName(FeishuStreamingCardBottomPrompt prompt)
+    {
+        var source = !string.IsNullOrWhiteSpace(prompt.InputName)
+            ? prompt.InputName
+            : !string.IsNullOrWhiteSpace(prompt.FormName)
+                ? prompt.FormName
+                : "bottom_prompt";
+
+        Span<char> buffer = stackalloc char[source.Length];
+        var index = 0;
+        foreach (var ch in source)
+        {
+            buffer[index++] = char.IsLetterOrDigit(ch) ? ch : '_';
+        }
+
+        var normalized = new string(buffer[..index]).Trim('_');
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            normalized = "bottom_prompt";
+        }
+
+        return $"{normalized}_submit";
+    }
+
+    private static object[] BuildOverflowOptions(IEnumerable<FeishuStreamingCardOverflowOption> options)
     {
         return options
             .Where(option => !string.IsNullOrWhiteSpace(option.Text))
@@ -587,7 +717,7 @@ public class FeishuCardKitClient : IFeishuCardKitClient
         return FeishuStreamingTopChipLayout.BuildButton(item);
     }
 
-    private object[] BuildBottomActionColumns(IEnumerable<FeishuStreamingCardBottomAction> actions)
+    private static object[] BuildBottomActionColumns(IEnumerable<FeishuStreamingCardBottomAction> actions)
     {
         return actions
             .Where(action => !string.IsNullOrWhiteSpace(action.Text))
@@ -749,6 +879,26 @@ public class FeishuCardKitClient : IFeishuCardKitClient
             JsonSerializer.Serialize(payload),
             Encoding.UTF8,
             "application/json");
+
+        if (!string.IsNullOrEmpty(token))
+        {
+            request.Headers.Add("Authorization", $"Bearer {token}");
+        }
+
+        return await SendAsync(request, options, cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> PostMultipartAsync(
+        string path,
+        string token,
+        HttpContent payload,
+        FeishuOptions options,
+        CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}{path}")
+        {
+            Content = payload
+        };
 
         if (!string.IsNullOrEmpty(token))
         {

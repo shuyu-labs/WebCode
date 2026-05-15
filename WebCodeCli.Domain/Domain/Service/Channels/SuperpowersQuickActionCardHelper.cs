@@ -65,12 +65,26 @@ internal static class SuperpowersQuickActionCardHelper
             ];
         }
 
+        var actions = new List<FeishuStreamingCardBottomAction>
+        {
+            new()
+            {
+                Text = SuperpowersQuickActionDefaults.ContinueButtonText,
+                Type = "default",
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.ContinueSuperpowersAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            }
+        };
+
         if (!showPlanActions)
         {
-            return [];
+            return actions;
         }
 
-        return
+        actions.AddRange(
         [
             new FeishuStreamingCardBottomAction
             {
@@ -92,7 +106,9 @@ internal static class SuperpowersQuickActionCardHelper
                     chatKey,
                     toolId)
             }
-        ];
+        ]);
+
+        return actions;
     }
 
     public static string? MergeCapabilityStatusMarkdown(

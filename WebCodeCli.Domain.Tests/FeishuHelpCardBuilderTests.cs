@@ -46,6 +46,27 @@ public class FeishuHelpCardBuilderTests
     }
 
     [Fact]
+    public void BuildCommandListCard_IncludesReplyTtsToggle_WhenEnabled()
+    {
+        var cardJson = _builder.BuildCommandListCard(CreateCategories(), replyTtsEnabled: true);
+        using var document = JsonDocument.Parse(cardJson);
+        var elements = document.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.True(ContainsStringValue(elements, "语音回复：开"));
+        Assert.True(ContainsAction(elements, "toggle_reply_tts"));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_IncludesReplyTtsToggle_WhenDisabled()
+    {
+        var card = _builder.BuildCommandListCardV2(CreateCategories(), replyTtsEnabled: false);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "语音回复：关"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, "toggle_reply_tts"));
+    }
+
+    [Fact]
     public void BuildCategoryCommandsCardV2_UsesCommandButtonCallback()
     {
         var category = CreateCategories()[0];
@@ -131,6 +152,29 @@ public class FeishuHelpCardBuilderTests
 
         Assert.False(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ExecuteSuperpowersPlanAction));
         Assert.False(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ExecuteSuperpowersSubagentPlanAction));
+    }
+
+    [Fact]
+    public void BuildCommandListCard_AppendsGoalQuickActionFooter_BelowSuperpowers()
+    {
+        var cardJson = _builder.BuildCommandListCard(CreateCategories());
+        using var document = JsonDocument.Parse(cardJson);
+        var elements = document.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.True(ContainsStringValue(elements, GoalQuickActionDefaults.InstructionText));
+        Assert.Equal(1, CountInputsByName(elements, GoalQuickActionDefaults.QuickInputFieldName));
+
+        var goalInput = GetInputByName(elements, GoalQuickActionDefaults.QuickInputFieldName);
+        Assert.Equal(
+            GoalQuickActionDefaults.QuickInputPlaceholder,
+            goalInput.GetProperty("placeholder").GetProperty("content").GetString());
+        Assert.Equal(
+            FeishuHelpCardAction.SubmitGoalQuickInputAction,
+            goalInput.GetProperty("behaviors")[0].GetProperty("value").GetProperty("action").GetString());
+
+        Assert.True(
+            GetInputIndexByName(elements, GoalQuickActionDefaults.QuickInputFieldName)
+            > GetInputIndexByName(elements, SuperpowersQuickActionDefaults.QuickInputFieldName));
     }
 
     private static JsonElement GetActionValue(JsonElement elements, string action)
@@ -361,6 +405,31 @@ public class FeishuHelpCardBuilderTests
                 CountInputsByName(item, inputName, ref count);
             }
         }
+    }
+
+    private static int GetInputIndexByName(JsonElement elements, string inputName)
+    {
+        if (elements.ValueKind != JsonValueKind.Array)
+        {
+            throw new Xunit.Sdk.XunitException("Card body elements must be an array.");
+        }
+
+        var index = 0;
+        foreach (var item in elements.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("tag", out var tag)
+                && tag.GetString() == "input"
+                && item.TryGetProperty("name", out var name)
+                && string.Equals(name.GetString(), inputName, StringComparison.Ordinal))
+            {
+                return index;
+            }
+
+            index++;
+        }
+
+        throw new Xunit.Sdk.XunitException($"No input found for name '{inputName}' in card payload.");
     }
 
     private static List<FeishuCommandCategory> CreateCategories()

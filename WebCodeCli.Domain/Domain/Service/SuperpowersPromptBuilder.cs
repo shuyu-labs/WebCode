@@ -4,6 +4,9 @@ namespace WebCodeCli.Domain.Domain.Service;
 
 public static class SuperpowersPromptBuilder
 {
+    public static string BuildContinuePrompt()
+        => SuperpowersQuickActionDefaults.ContinuePrompt;
+
     public static string BuildExecutePlanPrompt()
         => SuperpowersQuickActionDefaults.ExecutePlanPrompt;
 

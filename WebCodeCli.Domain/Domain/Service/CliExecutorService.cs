@@ -34,6 +34,7 @@ public class CliExecutorService : ICliExecutorService
     private readonly IChatSessionService _chatSessionService;
     private readonly ICliAdapterFactory _adapterFactory;
     private readonly ICcSwitchService _ccSwitchService;
+    private readonly IGoalCapabilityService _goalCapabilityService;
     
     // 缓存的有效工作区根目录
     private string? _effectiveWorkspaceRoot;
@@ -58,7 +59,8 @@ public class CliExecutorService : ICliExecutorService
         IServiceProvider serviceProvider,
         IChatSessionService chatSessionService,
         ICliAdapterFactory adapterFactory,
-        ICcSwitchService ccSwitchService)
+        ICcSwitchService ccSwitchService,
+        IGoalCapabilityService? goalCapabilityService = null)
     {
         _logger = logger;
         _options = options.Value;
@@ -68,6 +70,7 @@ public class CliExecutorService : ICliExecutorService
         _chatSessionService = chatSessionService;
         _adapterFactory = adapterFactory;
         _ccSwitchService = ccSwitchService;
+        _goalCapabilityService = goalCapabilityService ?? NullGoalCapabilityService.Instance;
         
         // 初始化工作区根目录（延迟加载，首次使用时从数据库获取）
         InitializeWorkspaceRoot();
@@ -3208,10 +3211,17 @@ public class CliExecutorService : ICliExecutorService
         }
         else
         {
-            baseContent = BuildCodexConfigContent(environmentVariables);
+            baseContent = BuildCodexConfigContent(
+                environmentVariables,
+                enableGoalsFeature: await ShouldEnableCodexGoalsAsync(sessionWorkspace, cancellationToken));
         }
 
         baseContent = StripUnsupportedProjectCodexConfigSections(baseContent);
+        if (await ShouldEnableCodexGoalsAsync(sessionWorkspace, cancellationToken))
+        {
+            baseContent = UpsertTomlBooleanSetting(baseContent, "features", "goals", true);
+        }
+
         await WriteFileIfChangedAsync(baseConfigPath, baseContent, cancellationToken);
 
         var launchConfigContent = ApplyCodexLaunchOverride(baseContent, launchOverride);
@@ -3444,6 +3454,46 @@ public class CliExecutorService : ICliExecutorService
         }
 
         return normalizedContent + $"{key} = \"{escapedValue}\"{Environment.NewLine}";
+    }
+
+    private static string UpsertTomlBooleanSetting(string content, string sectionName, string key, bool value)
+    {
+        var normalizedContent = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalizedContent.Split('\n').ToList();
+        var sectionHeader = $"[{sectionName}]";
+        var assignment = $"{key} = {value.ToString().ToLowerInvariant()}";
+        var sectionIndex = lines.FindIndex(line => string.Equals(line.Trim(), sectionHeader, StringComparison.OrdinalIgnoreCase));
+
+        if (sectionIndex >= 0)
+        {
+            for (var i = sectionIndex + 1; i < lines.Count; i++)
+            {
+                var trimmedLine = lines[i].Trim();
+                if (trimmedLine.StartsWith("[", StringComparison.Ordinal) && trimmedLine.EndsWith("]", StringComparison.Ordinal))
+                {
+                    lines.Insert(i, assignment);
+                    return string.Join(Environment.NewLine, lines).TrimEnd() + Environment.NewLine;
+                }
+
+                if (trimmedLine.StartsWith($"{key} =", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[i] = assignment;
+                    return string.Join(Environment.NewLine, lines).TrimEnd() + Environment.NewLine;
+                }
+            }
+
+            lines.Add(assignment);
+            return string.Join(Environment.NewLine, lines).TrimEnd() + Environment.NewLine;
+        }
+
+        var builder = normalizedContent.TrimEnd('\n');
+        if (!string.IsNullOrWhiteSpace(builder))
+        {
+            builder += "\n\n";
+        }
+
+        builder += $"{sectionHeader}\n{assignment}\n";
+        return builder.Replace("\n", Environment.NewLine, StringComparison.Ordinal);
     }
 
     private static string EscapeTomlString(string value)
@@ -3913,7 +3963,9 @@ public class CliExecutorService : ICliExecutorService
     {
         try
         {
-            var configContent = BuildCodexConfigContent(envVars);
+            var configContent = BuildCodexConfigContent(
+                envVars,
+                enableGoalsFeature: ShouldEnableCodexGoalsSync());
             var configHash = configContent.GetHashCode().ToString();
             
             // 检查配置是否变化
@@ -4066,7 +4118,49 @@ public class CliExecutorService : ICliExecutorService
         }
     }
 
-    private static string BuildCodexConfigContent(Dictionary<string, string> envVars)
+    private async Task<bool> ShouldEnableCodexGoalsAsync(string? workspacePath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _goalCapabilityService.ProbeAsync(
+                new GoalCapabilityContext
+                {
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath
+                },
+                forceRefresh: false,
+                cancellationToken: cancellationToken);
+
+            return result.State == GoalCapabilityState.Available;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "检测 Codex /goal 能力失败，当前会话将不注入 goals feature");
+            return false;
+        }
+    }
+
+    private bool ShouldEnableCodexGoalsSync()
+    {
+        try
+        {
+            var result = _goalCapabilityService.ProbeAsync(
+                new GoalCapabilityContext
+                {
+                    ToolId = "codex"
+                },
+                forceRefresh: false).GetAwaiter().GetResult();
+
+            return result.State == GoalCapabilityState.Available;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "检测 Codex /goal 能力失败，全局配置将不注入 goals feature");
+            return false;
+        }
+    }
+
+    private static string BuildCodexConfigContent(Dictionary<string, string> envVars, bool enableGoalsFeature)
     {
         var baseUrl = envVars.GetValueOrDefault("CODEX_BASE_URL", "https://api.routin.ai/v1");
         var model = envVars.GetValueOrDefault("CODEX_MODEL", "gpt-5.4");
@@ -4080,6 +4174,9 @@ public class CliExecutorService : ICliExecutorService
         var sandboxMode = envVars.GetValueOrDefault("CODEX_SANDBOX_MODE", "danger-full-access");
         var maxContext = envVars.GetValueOrDefault("CODEX_MAX_CONTEXT", "1000000");
         var contextCompactLimit = envVars.GetValueOrDefault("CODEX_CONTEXT_COMPACT_LIMIT", "800000");
+        var featureFlags = enableGoalsFeature
+            ? "[features]\ngoals = true\n\n"
+            : string.Empty;
 
         return $@"# Codex CLI 配置文件（由 WebCode 动态生成）
 
@@ -4101,6 +4198,8 @@ name = ""{providerName}""
 base_url = ""{baseUrl}""
 requires_openai_auth = true
 wire_api = ""{wireApi}""
+
+{featureFlags}
 
 [windows]
 sandbox = ""elevated""

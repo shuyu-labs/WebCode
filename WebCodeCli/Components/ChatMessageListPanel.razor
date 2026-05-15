@@ -98,7 +98,15 @@
                                placeholder="@SuperpowersQuickInputPlaceholder" />
                         @if (ShowSuperpowersPlanActions)
                         {
-                            <div class="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                            <div class="flex flex-wrap gap-2 sm:justify-end">
+                                <button @onclick="@(() => OnContinueSuperpowersAction.InvokeAsync(message))"
+                                        disabled="@ContinueSuperpowersActionDisabled"
+                                        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors @(ContinueSuperpowersActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
+                                    <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l-7 7 7 7"></path>
+                                    </svg>
+                                    <span>@ContinueActionText</span>
+                                </button>
                                 <button @onclick="@(() => OnExecuteSuperpowersPlan.InvokeAsync(message))"
                                         disabled="@SuperpowersQuickActionDisabled"
                                         class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors @(SuperpowersQuickActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
@@ -138,13 +146,46 @@
                     </div>
                 </div>
             }
+            @if (ShouldShowGoalQuickActions(message))
+            {
+                <div class="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
+                    <p class="mb-2 text-xs sm:text-sm text-emerald-900">@GoalInstructionText</p>
+                    <div class="flex flex-col items-stretch gap-2">
+                        <input @bind:get="GoalQuickInput"
+                               @bind:set="HandleGoalQuickInputChangedAsync"
+                               @bind:event="oninput"
+                               @onkeydown="@(args => HandleGoalQuickInputKeyDown(message, args))"
+                               disabled="@GoalQuickActionDisabled"
+                               class="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs sm:text-sm text-gray-700 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                               placeholder="@GoalQuickInputPlaceholder" />
+                        @if (!string.IsNullOrWhiteSpace(GoalQuickActionStatusMessage) || ShowGoalRetryAction)
+                        {
+                            <div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-white/70 px-3 py-2 text-xs text-emerald-900">
+                                @if (!string.IsNullOrWhiteSpace(GoalQuickActionStatusMessage))
+                                {
+                                    <span>@GoalQuickActionStatusMessage</span>
+                                }
+                                @if (ShowGoalRetryAction)
+                                {
+                                    <button @onclick="@(() => OnRetryGoalCapability.InvokeAsync(message))"
+                                            disabled="@GoalRetryActionDisabled"
+                                            class="inline-flex items-center justify-center rounded-md border border-emerald-200 px-2.5 py-1 font-medium transition-colors @(GoalRetryActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "text-emerald-700 hover:bg-emerald-100")"
+                                            type="button">
+                                        @GoalRetryActionText
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
         </div>
     }
 
     @if (IsLoading)
     {
         <div class="bg-gray-50 border-l-4 border-blue-500 rounded-lg sm:rounded-xl p-3 sm:p-4 shadow-md animate-pulse overflow-hidden">
-            <div class="flex justify-between items-center mb-2 sm:mb-3">
+            <div class="flex justify-between items-center rounded-lg bg-white/60 px-3 py-2 sm:px-4 sm:py-3 border-b-2 border-red-300">
                 <div class="flex items-center gap-2">
                     <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-md">
                         <svg class="w-4 h-4 sm:w-4.5 sm:h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -158,35 +199,60 @@
                     <div class="animate-spin h-3 w-3 sm:h-4 sm:w-4 border-2 border-blue-600 rounded-full border-t-transparent"></div>
                 </div>
             </div>
-            <div class="text-xs sm:text-sm max-h-60 sm:max-h-96 overflow-y-auto overflow-x-hidden text-gray-700 leading-relaxed break-words">@RenderMarkdown(CurrentAssistantMessage)</div>
+            <div class="mt-3 rounded-lg bg-white/70 px-3 py-3 sm:px-4">
+                <div class="text-xs sm:text-sm max-h-60 sm:max-h-96 overflow-y-auto overflow-x-hidden text-gray-700 leading-relaxed break-words">@RenderMarkdown(CurrentAssistantMessage)</div>
+            </div>
             @if (ShouldShowStreamingSuperpowersQuickActions())
             {
-                <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                    <p class="mb-2 text-xs sm:text-sm text-blue-900">@SuperpowersInstructionText</p>
-                    <div class="flex flex-col items-stretch gap-2">
-                        <input value="@SuperpowersQuickInput"
-                               disabled="true"
-                               class="w-full rounded-lg border border-blue-200 bg-gray-100 px-3 py-2 text-xs sm:text-sm text-gray-400 shadow-sm outline-none disabled:cursor-not-allowed"
-                               placeholder="@SuperpowersQuickInputPlaceholder" />
-                        @if (ShowSuperpowersPlanActions)
-                        {
-                            <div class="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                <button disabled="true"
-                                        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
-                                    <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                                    </svg>
-                                    <span>@ExecutePlanText</span>
-                                </button>
-                                <button disabled="true"
-                                        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
-                                    <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                                    </svg>
-                                    <span>@ExecuteSubagentPlanText</span>
-                                </button>
-                            </div>
-                        }
+                <div class="mt-3 border-t-2 border-red-300 pt-3">
+                    <div class="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                        <p class="mb-2 text-xs sm:text-sm text-blue-900">@SuperpowersInstructionText</p>
+                        <div class="flex flex-col items-stretch gap-2">
+                            <input value="@SuperpowersQuickInput"
+                                   disabled="true"
+                                   class="w-full rounded-lg border border-blue-200 bg-gray-100 px-3 py-2 text-xs sm:text-sm text-gray-400 shadow-sm outline-none disabled:cursor-not-allowed"
+                                   placeholder="@SuperpowersQuickInputPlaceholder" />
+                            @if (ShowSuperpowersPlanActions)
+                            {
+                                <div class="flex flex-wrap gap-2 sm:justify-end">
+                                    <button disabled="true"
+                                            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
+                                        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l-7 7 7 7"></path>
+                                        </svg>
+                                        <span>@ContinueActionText</span>
+                                    </button>
+                                    <button disabled="true"
+                                            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
+                                        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                        </svg>
+                                        <span>@ExecutePlanText</span>
+                                    </button>
+                                    <button disabled="true"
+                                            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
+                                        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                        </svg>
+                                        <span>@ExecuteSubagentPlanText</span>
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            @if (ShouldShowStreamingGoalQuickActions())
+            {
+                <div class="mt-3 border-t-2 border-red-300 pt-3">
+                    <div class="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
+                        <p class="mb-2 text-xs sm:text-sm text-emerald-900">@GoalInstructionText</p>
+                        <div class="flex flex-col items-stretch gap-2">
+                            <input value="@GoalQuickInput"
+                                   disabled="true"
+                                   class="w-full rounded-lg border border-emerald-200 bg-gray-100 px-3 py-2 text-xs sm:text-sm text-gray-400 shadow-sm outline-none disabled:cursor-not-allowed"
+                                   placeholder="@GoalQuickInputPlaceholder" />
+                        </div>
                     </div>
                 </div>
             }
@@ -315,6 +381,8 @@
     [Parameter] public string SuperpowersQuickInput { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> SuperpowersQuickInputChanged { get; set; }
     [Parameter] public string SuperpowersQuickInputPlaceholder { get; set; } = SuperpowersQuickActionDefaults.QuickInputPlaceholder;
+    [Parameter] public string ContinueActionText { get; set; } = SuperpowersQuickActionDefaults.ContinueButtonText;
+    [Parameter] public bool ContinueSuperpowersActionDisabled { get; set; }
     [Parameter] public string ExecutePlanText { get; set; } = SuperpowersQuickActionDefaults.ExecutePlanButtonText;
     [Parameter] public string ExecuteSubagentPlanText { get; set; } = SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText;
     [Parameter] public string? SuperpowersQuickActionStatusMessage { get; set; }
@@ -322,9 +390,23 @@
     [Parameter] public bool SuperpowersRetryActionDisabled { get; set; }
     [Parameter] public string SuperpowersRetryActionText { get; set; } = SuperpowersQuickActionDefaults.CapabilityRetryButtonText;
     [Parameter] public EventCallback<ChatMessage> OnSubmitSuperpowersQuickInput { get; set; }
+    [Parameter] public EventCallback<ChatMessage> OnContinueSuperpowersAction { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnExecuteSuperpowersPlan { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnExecuteSuperpowersSubagentPlan { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnRetrySuperpowersCapability { get; set; }
+    [Parameter] public string? GoalQuickActionMessageId { get; set; }
+    [Parameter] public bool EnableGoalQuickActions { get; set; }
+    [Parameter] public bool GoalQuickActionDisabled { get; set; }
+    [Parameter] public string GoalInstructionText { get; set; } = GoalQuickActionDefaults.InstructionText;
+    [Parameter] public string GoalQuickInput { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> GoalQuickInputChanged { get; set; }
+    [Parameter] public string GoalQuickInputPlaceholder { get; set; } = GoalQuickActionDefaults.QuickInputPlaceholder;
+    [Parameter] public string? GoalQuickActionStatusMessage { get; set; }
+    [Parameter] public bool ShowGoalRetryAction { get; set; }
+    [Parameter] public bool GoalRetryActionDisabled { get; set; }
+    [Parameter] public string GoalRetryActionText { get; set; } = GoalQuickActionDefaults.CapabilityRetryButtonText;
+    [Parameter] public EventCallback<ChatMessage> OnSubmitGoalQuickInput { get; set; }
+    [Parameter] public EventCallback<ChatMessage> OnRetryGoalCapability { get; set; }
 
     private string? _copiedMessageId = null;
     private ChatMessage? _fullscreenMessage = null;
@@ -334,7 +416,9 @@
     {
         if (!OnSubmitSuperpowersQuickInput.HasDelegate
             || (ShowSuperpowersPlanActions
-                && (!OnExecuteSuperpowersPlan.HasDelegate || !OnExecuteSuperpowersSubagentPlan.HasDelegate)))
+                && (!OnContinueSuperpowersAction.HasDelegate
+                    || !OnExecuteSuperpowersPlan.HasDelegate
+                    || !OnExecuteSuperpowersSubagentPlan.HasDelegate)))
         {
             return false;
         }
@@ -356,7 +440,30 @@
         }
 
         return !ShowSuperpowersPlanActions
-            || (OnExecuteSuperpowersPlan.HasDelegate && OnExecuteSuperpowersSubagentPlan.HasDelegate);
+            || (OnContinueSuperpowersAction.HasDelegate
+                && OnExecuteSuperpowersPlan.HasDelegate
+                && OnExecuteSuperpowersSubagentPlan.HasDelegate);
+    }
+
+    private bool ShouldShowGoalQuickActions(ChatMessage message)
+    {
+        if (!EnableGoalQuickActions || !OnSubmitGoalQuickInput.HasDelegate)
+        {
+            return false;
+        }
+
+        if (!string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase) || message.HasError)
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(GoalQuickActionMessageId)
+            && string.Equals(message.Id, GoalQuickActionMessageId, StringComparison.Ordinal);
+    }
+
+    private bool ShouldShowStreamingGoalQuickActions()
+    {
+        return EnableGoalQuickActions && IsLoading && OnSubmitGoalQuickInput.HasDelegate;
     }
 
     private async Task HandleSuperpowersQuickInputKeyDown(ChatMessage message, KeyboardEventArgs args)
@@ -376,6 +483,26 @@
         if (SuperpowersQuickInputChanged.HasDelegate)
         {
             await SuperpowersQuickInputChanged.InvokeAsync(SuperpowersQuickInput);
+        }
+    }
+
+    private async Task HandleGoalQuickInputKeyDown(ChatMessage message, KeyboardEventArgs args)
+    {
+        if (!string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await OnSubmitGoalQuickInput.InvokeAsync(message);
+    }
+
+    private async Task HandleGoalQuickInputChangedAsync(string? value)
+    {
+        GoalQuickInput = value ?? string.Empty;
+
+        if (GoalQuickInputChanged.HasDelegate)
+        {
+            await GoalQuickInputChanged.InvokeAsync(GoalQuickInput);
         }
     }
 

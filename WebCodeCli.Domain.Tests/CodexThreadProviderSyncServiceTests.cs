@@ -74,6 +74,60 @@ public class CodexThreadProviderSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncThreadProviderAsync_BacksUpMatchingRolloutBeforeRewrite()
+    {
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(workspaceRoot, "workspace");
+        var codexRoot = Path.Combine(workspacePath, ".codex");
+        var sessionsRoot = Path.Combine(codexRoot, "sessions", "2026", "04", "30");
+        var matchingPath = Path.Combine(sessionsRoot, "rollout-2026-04-30T10-00-00-thread-a.jsonl");
+        var falseCandidatePath = Path.Combine(sessionsRoot, "rollout-2026-04-30T10-00-01-thread-b.jsonl");
+        var expectedBackupPath = Path.Combine(codexRoot, "rollout-backups", "sessions", "2026", "04", "30", "rollout-2026-04-30T10-00-00-thread-a.jsonl");
+        var unexpectedBackupPath = Path.Combine(codexRoot, "rollout-backups", "sessions", "2026", "04", "30", "rollout-2026-04-30T10-00-01-thread-b.jsonl");
+        const string originalMatchingContent =
+            """
+            {"type":"session_meta","payload":{"id":"thread-a","cwd":"D:\\repo","model_provider":"old-provider"}}
+            {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+            """;
+
+        Directory.CreateDirectory(sessionsRoot);
+        await File.WriteAllTextAsync(matchingPath, originalMatchingContent);
+        await File.WriteAllTextAsync(
+            falseCandidatePath,
+            """
+            {"type":"session_meta","payload":{"id":"thread-b","cwd":"D:\\repo","model_provider":"other-provider"}}
+            {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ignore"}]}}
+            """);
+        CreateStateDatabase(Path.Combine(workspacePath, ".codex", "state_5.sqlite"), "thread-a", "old-provider");
+
+        try
+        {
+            var service = new CodexThreadProviderSyncService(NullLogger<CodexThreadProviderSyncService>.Instance);
+
+            await service.SyncThreadProviderAsync(new CodexThreadProviderSyncRequest
+            {
+                SessionWorkspacePath = workspacePath,
+                ThreadId = "thread-a",
+                TargetProviderId = "new-provider"
+            });
+
+            Assert.True(File.Exists(expectedBackupPath));
+            Assert.Equal(
+                originalMatchingContent.ReplaceLineEndings("\n"),
+                (await File.ReadAllTextAsync(expectedBackupPath)).ReplaceLineEndings("\n"));
+            Assert.False(File.Exists(unexpectedBackupPath));
+            Assert.Equal("new-provider", ReadProviderIdFromFirstLine(matchingPath));
+        }
+        finally
+        {
+            if (Directory.Exists(workspaceRoot))
+            {
+                Directory.Delete(workspaceRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SyncThreadProviderAsync_SeedsLocalSnapshotFromSourceWhenLocalThreadIsMissing()
     {
         var workspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));

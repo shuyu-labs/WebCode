@@ -26,6 +26,11 @@ public sealed class FeishuStreamingCardChrome
     /// 卡片底部少打断执行提示词表单
     /// </summary>
     public FeishuStreamingCardBottomPrompt? BottomPrompt { get; set; }
+
+    /// <summary>
+    /// 卡片底部附加提示词表单，按顺序显示在主表单之后
+    /// </summary>
+    public List<FeishuStreamingCardBottomPrompt> AdditionalBottomPrompts { get; set; } = [];
 }
 
 public sealed class FeishuStreamingCardTopChipGroup
@@ -74,6 +79,24 @@ internal static class FeishuStreamingStatusFormatter
         => string.IsNullOrWhiteSpace(baseStatusMarkdown)
             ? state
             : $"{baseStatusMarkdown} · {state}";
+}
+
+internal static class FeishuStreamingErrorFormatter
+{
+    public static string AppendError(string? existingContent, string? errorMessage)
+    {
+        var normalizedError = string.IsNullOrWhiteSpace(errorMessage)
+            ? "执行失败"
+            : errorMessage.Trim();
+        var formattedError = $"**错误：{normalizedError}**";
+
+        if (string.IsNullOrWhiteSpace(existingContent))
+        {
+            return formattedError;
+        }
+
+        return $"{existingContent.TrimEnd()}\n\n---\n\n{formattedError}";
+    }
 }
 
 internal sealed class FeishuStreamingStatusPulseGate
