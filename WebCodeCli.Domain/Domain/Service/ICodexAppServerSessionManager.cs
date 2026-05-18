@@ -73,5 +73,7 @@ public interface ICodexAppServerSessionManager : IDisposable
         string sessionId,
         CancellationToken cancellationToken = default);
 
+    bool HasActiveTurn(string sessionId);
+
     bool CleanupSession(string sessionId);
 }

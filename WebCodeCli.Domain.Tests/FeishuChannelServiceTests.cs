@@ -3193,6 +3193,106 @@ public class FeishuChannelServiceTests
         }
     }
 
+    [Fact]
+    public async Task HandleIncomingMessageAsync_ShowsGoalButtons_WhenUsingGoalRuntime()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-superpowers-goal-runtime-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        const string sessionId = "33333333-goal-runtime";
+        repositoryProxy.Store(new ChatSessionEntity
+        {
+            SessionId = sessionId,
+            Username = "luhaiyan",
+            WorkspacePath = workspacePath,
+            ToolId = "codex",
+            ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new SessionToolLaunchOverride
+                    {
+                        UsePersistentProcess = false,
+                        UseGoalRuntime = true
+                    }
+                }),
+            FeishuChatKey = "oc_goal_runtime_chat",
+            IsFeishuActive = true,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            FinalContent = "计划已完成\n",
+            UsePersistentProcess = false
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                MessageId = "msg-goal-runtime",
+                ChatId = "oc_goal_runtime_chat",
+                Content = "继续",
+                SenderName = "luhaiyan"
+            });
+
+            var handle = Assert.Single(cardKit.Handles);
+            var chrome = Assert.IsType<FeishuStreamingCardChrome>(handle.Chrome);
+            Assert.Null(chrome.BottomPrompt);
+            Assert.Single(chrome.AdditionalBottomPrompts);
+            Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.StatusButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.PauseButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ClearButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ResumeButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText);
+            Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText);
+            Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecutePlanButtonText);
+            Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText);
+            Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.StopButtonText);
+            Assert.Equal(
+            [
+                "goal_row_1",
+                "goal_row_1",
+                "goal_row_2",
+                "goal_row_2",
+                "goal_row_3"
+            ],
+            chrome.BottomActions.Select(action => action.RowKey).ToArray());
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
     private sealed class StubExternalCliSessionHistoryService(IEnumerable<ExternalCliHistoryMessage> messages)
         : IExternalCliSessionHistoryService
     {

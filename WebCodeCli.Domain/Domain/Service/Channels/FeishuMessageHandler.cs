@@ -486,17 +486,24 @@ public class FeishuMessageHandler : IEventHandler<EventV2Dto<ImMessageReceiveV1E
                 categories = await _commandService.GetCategorizedCommandsAsync(toolId);
                 _logger.LogInformation("🔥 [FeishuHelp] 获取到 {Count} 个分组", categories.Count);
                 var showGoalQuickActionButtons = ResolveShowGoalQuickActionButtons(chatId, webUsername, toolId);
+                var showSuperpowersQuickActions = ResolveShowSuperpowersQuickActions(chatId, webUsername, toolId);
                 card = _cardBuilder.BuildCommandListCardV2(
                     categories,
                     replyTtsEnabled: await GetReplyTtsEnabledAsync(chatId, webUsername),
-                    showGoalQuickActionButtons: showGoalQuickActionButtons);
+                    showGoalQuickActionButtons: showGoalQuickActionButtons,
+                    showSuperpowersQuickActions: showSuperpowersQuickActions);
             }
             else
             {
                 categories = await _commandService.FilterCommandsAsync(keyword, toolId);
                 _logger.LogInformation("🔥 [FeishuHelp] 过滤后获取到 {Count} 个分组", categories.Count);
                 var showGoalQuickActionButtons = ResolveShowGoalQuickActionButtons(chatId, webUsername, toolId);
-                card = _cardBuilder.BuildFilteredCardV2(categories, keyword, showGoalQuickActionButtons);
+                var showSuperpowersQuickActions = ResolveShowSuperpowersQuickActions(chatId, webUsername, toolId);
+                card = _cardBuilder.BuildFilteredCardV2(
+                    categories,
+                    keyword,
+                    showGoalQuickActionButtons,
+                    showSuperpowersQuickActions);
             }
 
             _logger.LogDebug("🔥 [FeishuHelp] 帮助卡片DTO内容: {Card}", JsonSerializer.Serialize(card));
@@ -608,6 +615,47 @@ public class FeishuMessageHandler : IEventHandler<EventV2Dto<ImMessageReceiveV1E
         var repo = scope.ServiceProvider.GetRequiredService<IChatSessionRepository>();
         var session = repo.GetByIdAsync(sessionId).GetAwaiter().GetResult();
         return GoalQuickActionVisibilityHelper.ShouldShowButtons(session, _cliExecutor, toolId);
+    }
+
+    private bool ResolveShowSuperpowersQuickActions(string chatId, string? username, string? toolId)
+    {
+        var chatKey = chatId.ToLowerInvariant();
+        var resolvedUsername = string.IsNullOrWhiteSpace(username)
+            ? _feishuChannel.GetSessionUsername(chatKey)
+            : username;
+        var sessionId = _feishuChannel.GetCurrentSession(chatKey, resolvedUsername);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return true;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IChatSessionRepository>();
+        var session = repo.GetByIdAsync(sessionId).GetAwaiter().GetResult();
+        return !IsGoalRuntimeSession(session);
+    }
+
+    private static bool IsGoalRuntimeSession(ChatSessionEntity? session)
+    {
+        if (session == null)
+        {
+            return false;
+        }
+
+        var effectiveToolId = SessionLaunchOverrideHelper.ResolveEffectiveToolId(
+            session.ToolId,
+            session.CcSwitchSnapshotToolId);
+        if (!SessionLaunchOverrideHelper.SupportsLaunchOverrides(effectiveToolId))
+        {
+            return false;
+        }
+
+        var launchOverride = SessionLaunchOverrideHelper.GetEffectiveOverride(
+            SessionLaunchOverrideHelper.Deserialize(session.ToolLaunchOverridesJson),
+            effectiveToolId,
+            session.ToolId,
+            session.CcSwitchSnapshotToolId);
+        return launchOverride?.UseGoalRuntime == true;
     }
 
     private async Task<List<ChatSessionEntity>> GetChatSessionEntitiesAsync(string chatKey, string username)

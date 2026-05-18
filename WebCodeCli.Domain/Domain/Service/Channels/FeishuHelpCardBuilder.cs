@@ -22,7 +22,8 @@ public class FeishuHelpCardBuilder
         List<FeishuCommandCategory> categories,
         bool showRefreshButton = true,
         bool replyTtsEnabled = false,
-        bool showGoalQuickActionButtons = true)
+        bool showGoalQuickActionButtons = true,
+        bool showSuperpowersQuickActions = true)
     {
         var elements = new List<object>();
 
@@ -111,7 +112,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCategoryActionRow(category));
         }
 
-        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons, showSuperpowersQuickActions);
 
         return new ElementsCardV2Dto
         {
@@ -138,7 +139,8 @@ public class FeishuHelpCardBuilder
     public ElementsCardV2Dto BuildFilteredCardV2(
         List<FeishuCommandCategory> categories,
         string keyword,
-        bool showGoalQuickActionButtons = true)
+        bool showGoalQuickActionButtons = true,
+        bool showSuperpowersQuickActions = true)
     {
         var elements = new List<object>
         {
@@ -210,7 +212,7 @@ public class FeishuHelpCardBuilder
             });
         }
 
-        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons, showSuperpowersQuickActions);
 
         return new ElementsCardV2Dto
         {
@@ -236,7 +238,8 @@ public class FeishuHelpCardBuilder
     /// </summary>
     public ElementsCardV2Dto BuildCategoryCommandsCardV2(
         FeishuCommandCategory category,
-        bool showGoalQuickActionButtons = true)
+        bool showGoalQuickActionButtons = true,
+        bool showSuperpowersQuickActions = true)
     {
         var elements = new List<object>
         {
@@ -290,7 +293,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCommandActionRow(command));
         }
 
-        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons, showSuperpowersQuickActions);
 
         return new ElementsCardV2Dto
         {
@@ -715,6 +718,95 @@ public class FeishuHelpCardBuilder
         };
     }
 
+    public ElementsCardV2Dto BuildGoalOverwriteConfirmCardV2(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        string newGoalPrompt)
+    {
+        var promptPreview = SanitizeMarkdown(newGoalPrompt);
+        promptPreview = promptPreview.Replace("`", "'");
+        if (promptPreview.Length > 180)
+        {
+            promptPreview = $"{promptPreview[..180]}...";
+        }
+
+        var elements = new List<object>
+        {
+            new
+            {
+                tag = "div",
+                text = new
+                {
+                    tag = "lark_md",
+                    content =
+                        "⚠️ 当前 goal 仍在执行，新的提交不会直接覆盖。\n\n" +
+                        $"当前会话：`{sessionId}`\n" +
+                        $"待提交目标：`{promptPreview}`\n\n" +
+                        "请选择接下来的操作。"
+                }
+            },
+            new { tag = "hr" },
+            new
+            {
+                tag = "column_set",
+                flex_mode = "none",
+                columns = new object[]
+                {
+                    BuildTopActionColumn(
+                        "继续当前 goal",
+                        "default",
+                        new
+                        {
+                            action = FeishuHelpCardAction.ContinueCurrentGoalAction,
+                            session_id = sessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId
+                        }),
+                    BuildTopActionColumn(
+                        "中断并覆盖",
+                        "primary",
+                        new
+                        {
+                            action = FeishuHelpCardAction.ConfirmOverwriteGoalAction,
+                            session_id = sessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId,
+                            command = newGoalPrompt
+                        }),
+                    BuildTopActionColumn(
+                        "查看当前状态",
+                        "default",
+                        new
+                        {
+                            action = FeishuHelpCardAction.StatusGoalAction,
+                            session_id = sessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId
+                        })
+                }
+            }
+        };
+
+        return new ElementsCardV2Dto
+        {
+            Header = new ElementsCardV2Dto.HeaderSuffix
+            {
+                Template = "orange",
+                Title = new HeaderTitleElement { Content = "确认覆盖 Goal" }
+            },
+            Config = new ElementsCardV2Dto.ConfigSuffix
+            {
+                EnableForward = true,
+                UpdateMulti = true
+            },
+            Body = new ElementsCardV2Dto.BodySuffix
+            {
+                Elements = elements.ToArray()
+            }
+        };
+    }
+
     // ========== 原来的实现（用于初始发送卡片） ==========
 
     /// <summary>
@@ -723,11 +815,92 @@ public class FeishuHelpCardBuilder
     /// <param name="categories">命令分组列表</param>
     /// <param name="showRefreshButton">是否显示刷新按钮</param>
     /// <returns>飞书卡片JSON</returns>
+    public ElementsCardV2Dto BuildSyncSessionProviderConfirmCardV2(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        bool showAllSessions = false)
+    {
+        var elements = new List<object>
+        {
+            new
+            {
+                tag = "div",
+                text = new
+                {
+                    tag = "lark_md",
+                    content =
+                        "⚠️ 当前 goal runtime 仍在运行，同步 Provider 不会热切当前进程。\n\n" +
+                        $"当前会话：`{sessionId}`\n\n" +
+                        "如果继续同步，WebCode 会先同步线程 Provider，再重启当前 goal runtime，后续新的 turn 才会使用新的 Provider。"
+                }
+            },
+            new { tag = "hr" },
+            new
+            {
+                tag = "column_set",
+                flex_mode = "none",
+                columns = new object[]
+                {
+                    BuildTopActionColumn(
+                        "继续当前 goal",
+                        "default",
+                        new
+                        {
+                            action = "open_session_manager",
+                            chat_key = chatKey,
+                            show_all_sessions = showAllSessions
+                        }),
+                    BuildTopActionColumn(
+                        "中断并同步 Provider",
+                        "primary",
+                        new
+                        {
+                            action = FeishuHelpCardAction.ConfirmSyncSessionProviderAction,
+                            session_id = sessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId,
+                            show_all_sessions = showAllSessions
+                        }),
+                    BuildTopActionColumn(
+                        "查看当前状态",
+                        "default",
+                        new
+                        {
+                            action = FeishuHelpCardAction.StatusGoalAction,
+                            session_id = sessionId,
+                            chat_key = chatKey,
+                            tool_id = toolId
+                        })
+                }
+            }
+        };
+
+        return new ElementsCardV2Dto
+        {
+            Header = new ElementsCardV2Dto.HeaderSuffix
+            {
+                Template = "orange",
+                Title = new HeaderTitleElement { Content = "确认同步 Provider" }
+            },
+            Config = new ElementsCardV2Dto.ConfigSuffix
+            {
+                EnableForward = true,
+                UpdateMulti = true
+            },
+            Body = new ElementsCardV2Dto.BodySuffix
+            {
+                Elements = elements.ToArray()
+            }
+        };
+    }
+
     public string BuildCommandListCard(
         List<FeishuCommandCategory> categories,
         bool showRefreshButton = true,
         bool replyTtsEnabled = false,
-        bool showGoalQuickActionButtons = true)
+        bool showGoalQuickActionButtons = true,
+        bool showSuperpowersQuickActions = true)
     {
         var elements = new List<object>();
 
@@ -816,7 +989,7 @@ public class FeishuHelpCardBuilder
             elements.Add(BuildCategoryActionRow(category));
         }
 
-        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons, showSuperpowersQuickActions);
 
         var card = new
         {
@@ -939,7 +1112,11 @@ public class FeishuHelpCardBuilder
     /// <param name="categories">过滤后的命令分组</param>
     /// <param name="keyword">搜索关键词</param>
     /// <returns>飞书卡片JSON</returns>
-    public string BuildFilteredCard(List<FeishuCommandCategory> categories, string keyword)
+    public string BuildFilteredCard(
+        List<FeishuCommandCategory> categories,
+        string keyword,
+        bool showGoalQuickActionButtons = true,
+        bool showSuperpowersQuickActions = true)
     {
         var elements = new List<object>();
 
@@ -1011,7 +1188,7 @@ public class FeishuHelpCardBuilder
             });
         }
 
-        AppendSuperpowersQuickActionElements(elements, true);
+        AppendSuperpowersQuickActionElements(elements, showGoalQuickActionButtons, showSuperpowersQuickActions);
 
         var card = new
         {
@@ -1035,14 +1212,20 @@ public class FeishuHelpCardBuilder
     /// <param name="toastMessage">toast消息</param>
     /// <param name="toastType">toast类型</param>
     /// <returns>飞书响应对象</returns>
-    private static void AppendSuperpowersQuickActionElements(List<object> elements, bool showGoalQuickActionButtons)
+    private static void AppendSuperpowersQuickActionElements(
+        List<object> elements,
+        bool showGoalQuickActionButtons,
+        bool showSuperpowersQuickActions)
     {
         elements.Add(new { tag = "hr" });
-        elements.Add(BuildSuperpowersQuickInput());
+        if (showSuperpowersQuickActions)
+        {
+            elements.Add(BuildSuperpowersQuickInput());
+        }
         elements.Add(BuildGoalQuickInput());
         if (showGoalQuickActionButtons)
         {
-            elements.Add(BuildGoalQuickActions());
+            elements.AddRange(BuildGoalQuickActions());
         }
     }
 
@@ -1092,23 +1275,30 @@ public class FeishuHelpCardBuilder
         };
     }
 
-    private static object BuildGoalQuickActions()
+    private static IEnumerable<object> BuildGoalQuickActions()
+    {
+        return
+        [
+            BuildGoalQuickActionRow(
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.StatusButtonText, FeishuHelpCardAction.StatusGoalAction),
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.PauseButtonText, FeishuHelpCardAction.PauseGoalAction)),
+            BuildGoalQuickActionRow(
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ClearButtonText, FeishuHelpCardAction.ClearGoalAction),
+                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ResumeButtonText, FeishuHelpCardAction.ResumeGoalAction, "primary"))
+        ];
+    }
+
+    private static object BuildGoalQuickActionRow(params object[] columns)
     {
         return new
         {
             tag = "column_set",
             flex_mode = "none",
-            columns = new object[]
-            {
-                BuildGoalQuickActionColumn(GoalQuickActionDefaults.StatusButtonText, FeishuHelpCardAction.StatusGoalAction),
-                BuildGoalQuickActionColumn(GoalQuickActionDefaults.PauseButtonText, FeishuHelpCardAction.PauseGoalAction),
-                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ClearButtonText, FeishuHelpCardAction.ClearGoalAction),
-                BuildGoalQuickActionColumn(GoalQuickActionDefaults.ResumeButtonText, FeishuHelpCardAction.ResumeGoalAction)
-            }
+            columns
         };
     }
 
-    private static object BuildGoalQuickActionColumn(string text, string action)
+    private static object BuildGoalQuickActionColumn(string text, string action, string type = "default")
     {
         return new
         {
@@ -1125,7 +1315,7 @@ public class FeishuHelpCardBuilder
                         tag = "plain_text",
                         content = text
                     },
-                    type = "default",
+                    type,
                     behaviors = new[]
                     {
                         new

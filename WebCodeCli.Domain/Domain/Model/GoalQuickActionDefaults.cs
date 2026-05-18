@@ -11,6 +11,7 @@ public static class GoalQuickActionDefaults
     public const string PauseButtonText = "/goal pause";
     public const string ClearButtonText = "/goal clear";
     public const string ResumeButtonText = "/goal resume";
+    public const string TemporaryExitButtonText = "临时退出补充会话内容";
     public const string StatusPrompt = "/goal";
     public const string PausePrompt = "/goal pause";
     public const string ClearPrompt = "/goal clear";

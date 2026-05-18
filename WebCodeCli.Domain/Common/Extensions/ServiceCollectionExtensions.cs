@@ -94,6 +94,9 @@ namespace WebCodeCli.Domain.Common.Extensions
             // 注册本地 CLI 配置检测服务（Singleton）
             services.AddSingleton<ILocalCliConfigDetector, LocalCliConfigDetector>();
 
+            // 共享 Codex app-server 会话管理器，避免不同服务读取到不同的 turn 状态
+            services.AddSingleton<ICodexAppServerSessionManager, CodexAppServerSessionManager>();
+
             // 注册 CardKit 客户端（Singleton）
             services.AddSingleton<IFeishuCardKitClient, FeishuCardKitClient>();
 

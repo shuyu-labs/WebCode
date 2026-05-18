@@ -11,17 +11,19 @@ namespace WebCodeCli.Domain.Domain.Service;
 
 internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManager
 {
+    private static readonly UTF8Encoding TransportEncoding = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly ILogger _logger;
+    private readonly ILogger<CodexAppServerSessionManager> _logger;
     private readonly ConcurrentDictionary<string, AppServerSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionCreationLocks = new(StringComparer.OrdinalIgnoreCase);
     private long _nextRequestId;
     private bool _disposed;
 
-    public CodexAppServerSessionManager(ILogger logger)
+    public CodexAppServerSessionManager(ILogger<CodexAppServerSessionManager> logger)
     {
         _logger = logger;
     }
@@ -370,6 +372,13 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         return true;
     }
 
+    public bool HasActiveTurn(string sessionId)
+    {
+        return !string.IsNullOrWhiteSpace(sessionId)
+            && _sessions.TryGetValue(sessionId, out var session)
+            && !string.IsNullOrWhiteSpace(session.ActiveTurnId);
+    }
+
     public bool CleanupSession(string sessionId)
     {
         if (_sessions.TryRemove(sessionId, out var session))
@@ -406,31 +415,74 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         Dictionary<string, string>? environmentVariables,
         CancellationToken cancellationToken)
     {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(CodexAppServerSessionManager));
-        }
-
-        if (_sessions.TryGetValue(sessionId, out var existing))
-        {
-            if (existing.IsRunning)
-            {
-                return existing;
-            }
-
-            CleanupSession(sessionId);
-        }
-
-        var session = await CreateSessionAsync(
+        return await RunWithSessionCreationLockAsync(
             sessionId,
-            commandPath,
-            tool,
-            workingDirectory,
-            environmentVariables,
-            cancellationToken);
+            async () =>
+            {
+                if (_disposed)
+                {
+                    throw new ObjectDisposedException(nameof(CodexAppServerSessionManager));
+                }
 
-        _sessions[sessionId] = session;
-        return session;
+                if (_sessions.TryGetValue(sessionId, out var existing))
+                {
+                    if (existing.IsRunning)
+                    {
+                        return existing;
+                    }
+
+                    CleanupSession(sessionId);
+                }
+
+                var session = await CreateSessionAsync(
+                    sessionId,
+                    commandPath,
+                    tool,
+                    workingDirectory,
+                    environmentVariables,
+                    cancellationToken);
+
+                _sessions[sessionId] = session;
+                return session;
+            },
+            cancellationToken);
+    }
+
+    private async Task<T> RunWithSessionCreationLockAsync<T>(
+        string sessionId,
+        Func<Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        var creationLock = GetSessionCreationLock(sessionId);
+        await creationLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await action();
+        }
+        finally
+        {
+            creationLock.Release();
+        }
+    }
+
+    private Task RunWithSessionCreationLockAsync(
+        string sessionId,
+        Func<Task> action,
+        CancellationToken cancellationToken)
+    {
+        return RunWithSessionCreationLockAsync(
+            sessionId,
+            async () =>
+            {
+                await action();
+                return true;
+            },
+            cancellationToken);
+    }
+
+    private SemaphoreSlim GetSessionCreationLock(string sessionId)
+    {
+        return _sessionCreationLocks.GetOrAdd(sessionId.Trim(), static _ => new SemaphoreSlim(1, 1));
     }
 
     private async Task<AppServerSession> CreateSessionAsync(
@@ -450,9 +502,9 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            StandardInputEncoding = Encoding.UTF8,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+            StandardInputEncoding = GetTransportEncoding(),
+            StandardOutputEncoding = GetTransportEncoding(),
+            StandardErrorEncoding = GetTransportEncoding(),
             WorkingDirectory = workingDirectory
         };
 
@@ -790,6 +842,16 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
 
     private void HandleNotification(AppServerSession session, string method, JsonElement parameters)
     {
+        var errorMessage = string.Equals(method, "error", StringComparison.Ordinal)
+            ? ExtractErrorMessage(parameters)
+            : null;
+        var suppressTransientError = ShouldSuppressTransientErrorNotification(method, errorMessage);
+
+        if (!suppressTransientError && TryBuildCliOutputJsonl(method, parameters) is { Length: > 0 } jsonl)
+        {
+            WriteCliOutputJsonl(session, jsonl);
+        }
+
         switch (method)
         {
             case "thread/started":
@@ -814,32 +876,30 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
                 {
                     session.ActiveTurnId = null;
                 }
+                else
+                {
+                    session.ActiveTurnId = null;
+                }
 
                 CompleteActiveOutput(session, errorMessage: method == "turn/failed" ? "Codex turn 执行失败。" : null);
                 break;
-            case "item/agentMessage/delta":
-                AppendDelta(session, parameters, "delta");
-                break;
-            case "command/exec/outputDelta":
-            case "process/outputDelta":
-            case "item/commandExecution/outputDelta":
-            case "item/fileChange/outputDelta":
-            case "item/mcpToolCall/progress":
-                AppendDelta(session, parameters, "delta");
-                break;
             case "error":
-                CompleteActiveOutput(session, errorMessage: TryGetString(parameters, "message", out var message) ? message : "Codex app-server 返回了错误。");
+                if (suppressTransientError)
+                {
+                    _logger.LogInformation(
+                        "忽略 Codex app-server 瞬时错误通知并保持当前 turn 流继续: Session={SessionId}, Message={Message}",
+                        session.SessionId,
+                        errorMessage);
+                    break;
+                }
+
+                CompleteActiveOutput(session, errorMessage: errorMessage ?? "Codex app-server 返回了错误。");
                 break;
         }
     }
 
-    private void AppendDelta(AppServerSession session, JsonElement parameters, string propertyName)
+    private void WriteCliOutputJsonl(AppServerSession session, string jsonl)
     {
-        if (!TryGetString(parameters, propertyName, out var delta) || string.IsNullOrEmpty(delta))
-        {
-            return;
-        }
-
         if (session.ActiveOutputWriter == null)
         {
             return;
@@ -847,10 +907,460 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
 
         session.ActiveOutputWriter.TryWrite(new StreamOutputChunk
         {
-            Content = delta,
+            Content = jsonl.EndsWith('\n') ? jsonl : $"{jsonl}\n",
             IsCompleted = false,
             IsError = false
         });
+    }
+
+    private static string? TryBuildCliOutputJsonl(string method, JsonElement parameters)
+    {
+        var payload = method switch
+        {
+            "thread/started" => BuildThreadStartedPayload(parameters),
+            "turn/started" => BuildTurnStartedPayload(parameters),
+            "turn/completed" => BuildTurnCompletedPayload(parameters),
+            "turn/failed" => BuildTurnFailedPayload(parameters),
+            "item/started" => BuildItemPayload("item.started", parameters, includeAgentMessageText: false),
+            "item/completed" => BuildItemPayload("item.completed", parameters, includeAgentMessageText: false),
+            "item/agentMessage/delta" => BuildAgentMessageDeltaPayload(parameters),
+            "error" => BuildErrorPayload(parameters),
+            _ => null
+        };
+
+        return payload == null ? null : JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    private static object? BuildThreadStartedPayload(JsonElement parameters)
+    {
+        if (!TryGetString(parameters, "thread", "id", out var threadId))
+        {
+            return null;
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "thread.started",
+            ["thread_id"] = threadId
+        };
+    }
+
+    private static object? BuildTurnStartedPayload(JsonElement parameters)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["type"] = "turn.started"
+        };
+
+        if (TryGetString(parameters, "turn", "id", out var turnId))
+        {
+            payload["turn_id"] = turnId;
+        }
+
+        return payload;
+    }
+
+    private static object? BuildTurnCompletedPayload(JsonElement parameters)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["type"] = "turn.completed"
+        };
+
+        if (TryGetString(parameters, "turn", "id", out var turnId))
+        {
+            payload["turn_id"] = turnId;
+        }
+
+        return payload;
+    }
+
+    private static object? BuildTurnFailedPayload(JsonElement parameters)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["type"] = "turn.failed"
+        };
+
+        if (TryGetString(parameters, "turn", "id", out var turnId))
+        {
+            payload["turn_id"] = turnId;
+        }
+
+        var errorMessage = TryGetNestedString(parameters, "error", "message")
+            ?? TryGetNestedString(parameters, "turn", "error", "message")
+            ?? GetString(parameters, "message");
+        if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            payload["error"] = new Dictionary<string, object?>
+            {
+                ["message"] = errorMessage
+            };
+        }
+
+        return payload;
+    }
+
+    private static object? BuildAgentMessageDeltaPayload(JsonElement parameters)
+    {
+        if (!TryGetString(parameters, "delta", out var delta) || string.IsNullOrWhiteSpace(delta))
+        {
+            return null;
+        }
+
+        var item = new Dictionary<string, object?>
+        {
+            ["type"] = "agent_message",
+            ["text"] = delta
+        };
+
+        if (TryGetString(parameters, "threadId", out var threadId))
+        {
+            item["thread_id"] = threadId;
+        }
+
+        if (TryGetString(parameters, "itemId", out var itemId))
+        {
+            item["id"] = itemId;
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "item.updated",
+            ["item"] = item
+        };
+    }
+
+    private static object? BuildItemPayload(string eventType, JsonElement parameters, bool includeAgentMessageText)
+    {
+        if (parameters.ValueKind == JsonValueKind.Undefined
+            || parameters.ValueKind == JsonValueKind.Null
+            || !parameters.TryGetProperty("item", out var itemElement)
+            || itemElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (!itemElement.TryGetProperty("type", out var itemTypeElement) || itemTypeElement.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var normalizedItemType = NormalizeAppServerItemType(itemTypeElement.GetString());
+        if (string.IsNullOrWhiteSpace(normalizedItemType))
+        {
+            return null;
+        }
+
+        Dictionary<string, object?>? normalizedItem = normalizedItemType switch
+        {
+            "command_execution" => BuildCommandExecutionItem(itemElement, parameters, normalizedItemType),
+            "file_change" => BuildFileChangeItem(itemElement, parameters, normalizedItemType),
+            "todo_list" => BuildTodoListItem(itemElement, parameters, normalizedItemType),
+            "agent_message" when includeAgentMessageText => BuildAgentMessageItem(itemElement, parameters, normalizedItemType),
+            _ => null
+        };
+
+        if (normalizedItem == null)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = eventType,
+            ["item"] = normalizedItem
+        };
+    }
+
+    private static Dictionary<string, object?> BuildCommandExecutionItem(
+        JsonElement itemElement,
+        JsonElement parameters,
+        string normalizedItemType)
+    {
+        var item = BuildBaseItem(itemElement, parameters, normalizedItemType);
+
+        if (TryGetString(itemElement, "command", out var command))
+        {
+            item["command"] = command;
+        }
+
+        if (TryGetString(itemElement, "status", out var status))
+        {
+            item["status"] = status;
+        }
+
+        if (TryGetInt32(itemElement, "exitCode", out var exitCode))
+        {
+            item["exit_code"] = exitCode;
+        }
+
+        return item;
+    }
+
+    private static Dictionary<string, object?> BuildFileChangeItem(
+        JsonElement itemElement,
+        JsonElement parameters,
+        string normalizedItemType)
+    {
+        var item = BuildBaseItem(itemElement, parameters, normalizedItemType);
+
+        if (itemElement.TryGetProperty("changes", out var changesElement) && changesElement.ValueKind == JsonValueKind.Array)
+        {
+            var changes = new List<Dictionary<string, object?>>();
+            foreach (var change in changesElement.EnumerateArray())
+            {
+                if (change.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var entry = new Dictionary<string, object?>();
+                if (TryGetString(change, "path", out var path))
+                {
+                    entry["path"] = path;
+                }
+
+                if (TryGetString(change, "kind", out var kind))
+                {
+                    entry["kind"] = kind;
+                }
+
+                if (entry.Count > 0)
+                {
+                    changes.Add(entry);
+                }
+            }
+
+            if (changes.Count > 0)
+            {
+                item["changes"] = changes;
+            }
+        }
+
+        if (TryGetString(itemElement, "status", out var status))
+        {
+            item["status"] = status;
+        }
+
+        return item;
+    }
+
+    private static Dictionary<string, object?> BuildTodoListItem(
+        JsonElement itemElement,
+        JsonElement parameters,
+        string normalizedItemType)
+    {
+        var item = BuildBaseItem(itemElement, parameters, normalizedItemType);
+
+        if (itemElement.TryGetProperty("items", out var itemsElement) && itemsElement.ValueKind == JsonValueKind.Array)
+        {
+            var items = new List<Dictionary<string, object?>>();
+            foreach (var todoElement in itemsElement.EnumerateArray())
+            {
+                if (todoElement.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var todo = new Dictionary<string, object?>();
+                if (TryGetString(todoElement, "id", out var id))
+                {
+                    todo["id"] = id;
+                }
+
+                if (TryGetString(todoElement, "title", out var title) || TryGetString(todoElement, "text", out title))
+                {
+                    todo["text"] = title;
+                }
+
+                if (TryGetString(todoElement, "status", out var status))
+                {
+                    todo["status"] = status;
+                }
+                else if (todoElement.TryGetProperty("completed", out var completedElement)
+                         && (completedElement.ValueKind == JsonValueKind.True || completedElement.ValueKind == JsonValueKind.False))
+                {
+                    todo["completed"] = completedElement.GetBoolean();
+                }
+
+                if (todo.Count > 0)
+                {
+                    items.Add(todo);
+                }
+            }
+
+            if (items.Count > 0)
+            {
+                item["items"] = items;
+            }
+        }
+
+        return item;
+    }
+
+    private static Dictionary<string, object?> BuildAgentMessageItem(
+        JsonElement itemElement,
+        JsonElement parameters,
+        string normalizedItemType)
+    {
+        var item = BuildBaseItem(itemElement, parameters, normalizedItemType);
+
+        if (TryGetString(itemElement, "text", out var text))
+        {
+            item["text"] = text;
+        }
+
+        return item;
+    }
+
+    private static Dictionary<string, object?> BuildBaseItem(
+        JsonElement itemElement,
+        JsonElement parameters,
+        string normalizedItemType)
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["type"] = normalizedItemType
+        };
+
+        if (TryGetString(itemElement, "id", out var id))
+        {
+            item["id"] = id;
+        }
+
+        if (TryGetString(parameters, "threadId", out var threadId))
+        {
+            item["thread_id"] = threadId;
+        }
+
+        return item;
+    }
+
+    private static object? BuildErrorPayload(JsonElement parameters)
+    {
+        var message = ExtractErrorMessage(parameters);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "error",
+            ["message"] = message
+        };
+    }
+
+    private static string? ExtractErrorMessage(JsonElement parameters)
+    {
+        return TryGetNestedString(parameters, "error", "message")
+            ?? TryGetNestedString(parameters, "cause", "message")
+            ?? TryGetNestedString(parameters, "details", "message")
+            ?? TryGetNestedString(parameters, "data", "message")
+            ?? GetString(parameters, "message");
+    }
+
+    private static bool ShouldSuppressTransientErrorNotification(string method, string? errorMessage)
+    {
+        return string.Equals(method, "error", StringComparison.Ordinal)
+               && IsTransientAppServerErrorMessage(errorMessage);
+    }
+
+    private static bool IsTransientAppServerErrorMessage(string? errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(errorMessage))
+        {
+            return false;
+        }
+
+        var normalized = errorMessage.Trim();
+        return normalized.StartsWith("Reconnecting...", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Current interaction failed.", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "An unknown error occurred.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeAppServerItemType(string? itemType)
+    {
+        if (string.IsNullOrWhiteSpace(itemType))
+        {
+            return null;
+        }
+
+        if (itemType.Contains('_', StringComparison.Ordinal))
+        {
+            return itemType;
+        }
+
+        var builder = new StringBuilder(itemType.Length + 8);
+        for (var i = 0; i < itemType.Length; i++)
+        {
+            var ch = itemType[i];
+            if (char.IsUpper(ch))
+            {
+                if (i > 0)
+                {
+                    builder.Append('_');
+                }
+
+                builder.Append(char.ToLowerInvariant(ch));
+            }
+            else
+            {
+                builder.Append(ch);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string? GetString(JsonElement element, string propertyName)
+    {
+        if (TryGetString(element, propertyName, out var value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetInt32(JsonElement element, string propertyName, out int value)
+    {
+        value = default;
+        if (element.ValueKind == JsonValueKind.Undefined
+            || element.ValueKind == JsonValueKind.Null
+            || !element.TryGetProperty(propertyName, out var prop))
+        {
+            return false;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string? TryGetNestedString(JsonElement element, params string[] path)
+    {
+        if (path.Length == 0)
+        {
+            return null;
+        }
+
+        var current = element;
+        foreach (var segment in path)
+        {
+            if (current.ValueKind == JsonValueKind.Undefined
+                || current.ValueKind == JsonValueKind.Null
+                || !current.TryGetProperty(segment, out current))
+            {
+                return null;
+            }
+        }
+
+        return current.ValueKind == JsonValueKind.String ? current.GetString() : null;
     }
 
     private static bool TryGetString(JsonElement parameters, string propertyName, out string? value)
@@ -871,6 +1381,8 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         value = null;
         return false;
     }
+
+    private static Encoding GetTransportEncoding() => TransportEncoding;
 
     private static bool TryGetString(JsonElement parameters, string parentPropertyName, string childPropertyName, out string? value)
     {

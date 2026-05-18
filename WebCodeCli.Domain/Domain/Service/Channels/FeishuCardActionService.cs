@@ -254,20 +254,25 @@ public class FeishuCardActionService
                         ? await HandleStopStreamingExecutionAsync(action, chatId)
                         : await HandleSuperpowersQuickActionAsync(action, formValueElement, chatId, operatorUserId, appId, inputValues);
                 case FeishuHelpCardAction.SubmitGoalQuickInputAction:
+                case FeishuHelpCardAction.ConfirmOverwriteGoalAction:
+                case FeishuHelpCardAction.ContinueCurrentGoalAction:
                 case FeishuHelpCardAction.StatusGoalAction:
+                case FeishuHelpCardAction.PauseGoalAction:
                 case FeishuHelpCardAction.ClearGoalAction:
                 case FeishuHelpCardAction.ResumeGoalAction:
                     return await HandleGoalQuickActionAsync(action, formValueElement, chatId, operatorUserId, appId, inputValues);
-                case FeishuHelpCardAction.PauseGoalAction:
-                    return await HandleStopStreamingExecutionAsync(action, chatId);
+                case FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction:
+                    return await HandleTemporarilyExitGoalRuntimeAsync(action.SessionId, action.ChatKey ?? chatId, operatorUserId, action.ShowAllSessions);
                 case FeishuHelpCardAction.RetrySuperpowersCapabilityDetectionAction:
                     return await HandleRetrySuperpowersCapabilityDetectionAsync(action, chatId);
                 case LowInterruptionContinueHelper.ActionName:
                     return await HandleLowInterruptionContinueAsync(action.SessionId, action.ChatKey ?? chatId, action.ToolId, formValueElement, operatorUserId, appId);
                 case "switch_session":
-                    return await HandleSwitchSessionAsync(action.SessionId, action.ChatKey, operatorUserId, appId);
+                    return await HandleSwitchSessionAsync(action.SessionId, action.ChatKey, operatorUserId, appId, action.ShowAllSessions == true);
                 case "sync_session_provider":
-                    return await HandleSyncSessionProviderAsync(action.SessionId, action.ChatKey, operatorUserId, action.ShowAllSessions == true);
+                    return await HandleSyncSessionProviderAsync(action.SessionId, action.ChatKey, operatorUserId, appId, action.ShowAllSessions == true);
+                case FeishuHelpCardAction.ConfirmSyncSessionProviderAction:
+                    return await HandleConfirmSyncSessionProviderAsync(action.SessionId, action.ChatKey, operatorUserId, appId, action.ShowAllSessions == true);
                 case "show_rename_session_form":
                     return await HandleShowRenameSessionFormAsync(action.SessionId, action.ChatKey, operatorUserId, action.ShowAllSessions == true);
                 case "rename_session":
@@ -865,37 +870,27 @@ public class FeishuCardActionService
         }
 
         var activeSessionId = action.SessionId ?? _feishuChannel.GetCurrentSession(NormalizeChatKey(targetChatKey));
-        if (string.Equals(action.Action, FeishuHelpCardAction.PauseGoalAction, StringComparison.OrdinalIgnoreCase))
-        {
-            if (string.IsNullOrWhiteSpace(activeSessionId))
-            {
-                return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 缺少当前会话，无法停止执行", "error");
-            }
-
-            var pauseToolId = await ResolveSessionToolIdAsync(activeSessionId, action.ToolId, targetChatKey, null);
-            await _cliExecutor.StopSessionExecutionAsync(activeSessionId, pauseToolId);
-            return _cardBuilder.BuildCardActionToastOnlyResponse("✅ 已请求停止当前执行", "success");
-        }
-
-        var prompt = GoalPromptBuilder.BuildPromptForAction(
-            action.Action,
-            ResolveQuickInputValue(formValue, GoalQuickActionDefaults.QuickInputFieldName, inputValues));
-        if (string.IsNullOrWhiteSpace(prompt))
-        {
-            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 请输入目标", "warning");
-        }
-
-        if (!string.IsNullOrWhiteSpace(activeSessionId) && _feishuChannel.IsSessionExecutionActive(activeSessionId))
-        {
-            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前会话已有任务在执行，请等待完成后再试", "warning");
-        }
-
         if (string.IsNullOrWhiteSpace(activeSessionId))
         {
             return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 缺少当前会话，无法执行 /goal 快捷操作", "error");
         }
 
         var effectiveToolId = await ResolveSessionToolIdAsync(activeSessionId, action.ToolId, targetChatKey, null);
+        if (string.Equals(action.Action, FeishuHelpCardAction.ContinueCurrentGoalAction, StringComparison.OrdinalIgnoreCase))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("✅ 已保留当前 goal", "success");
+        }
+
+        var prompt = string.Equals(action.Action, FeishuHelpCardAction.ConfirmOverwriteGoalAction, StringComparison.OrdinalIgnoreCase)
+            ? GoalPromptBuilder.BuildGoalPrompt(action.Command)
+            : GoalPromptBuilder.BuildPromptForAction(
+                action.Action,
+                ResolveQuickInputValue(formValue, GoalQuickActionDefaults.QuickInputFieldName, inputValues));
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 请输入目标", "warning");
+        }
+
         var capabilityResult = await ProbeGoalCapabilityAsync(activeSessionId, effectiveToolId, forceRefresh: false);
         if (capabilityResult.State != GoalCapabilityState.Available)
         {
@@ -903,6 +898,31 @@ public class FeishuCardActionService
                 ? GoalQuickActionDefaults.CapabilityProbeFailedText
                 : capabilityResult.Message!;
             return _cardBuilder.BuildCardActionToastOnlyResponse($"⚠️ {message}", "warning");
+        }
+
+        if (string.Equals(action.Action, FeishuHelpCardAction.SubmitGoalQuickInputAction, StringComparison.OrdinalIgnoreCase)
+            && HasGoalExecutionConflict(activeSessionId))
+        {
+            return BuildGoalOverwriteConfirmResponse(activeSessionId, targetChatKey, effectiveToolId, prompt);
+        }
+
+        var isStatusAction = string.Equals(action.Action, FeishuHelpCardAction.StatusGoalAction, StringComparison.OrdinalIgnoreCase);
+        var isPauseAction = string.Equals(action.Action, FeishuHelpCardAction.PauseGoalAction, StringComparison.OrdinalIgnoreCase);
+        var isClearAction = string.Equals(action.Action, FeishuHelpCardAction.ClearGoalAction, StringComparison.OrdinalIgnoreCase);
+        if (!isStatusAction
+            && !isPauseAction
+            && !isClearAction
+            && !string.Equals(action.Action, FeishuHelpCardAction.ConfirmOverwriteGoalAction, StringComparison.OrdinalIgnoreCase)
+            && _feishuChannel.IsSessionExecutionActive(activeSessionId))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前会话已有任务在执行，请等待完成后再试", "warning");
+        }
+
+        if (string.Equals(action.Action, FeishuHelpCardAction.ConfirmOverwriteGoalAction, StringComparison.OrdinalIgnoreCase))
+        {
+            _feishuChannel.StopSessionExecution(activeSessionId);
+            TryRequestStopActiveStreamingExecution(activeSessionId);
+            await _cliExecutor.StopSessionExecutionAsync(activeSessionId, effectiveToolId);
         }
 
         return await HandleExecuteCommandAsync(
@@ -914,6 +934,155 @@ public class FeishuCardActionService
             appId: appId,
             preferredSessionId: activeSessionId,
             preferredToolId: effectiveToolId);
+    }
+
+    private CardActionTriggerResponseDto BuildGoalOverwriteConfirmResponse(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        string prompt)
+    {
+        return _cardBuilder.BuildCardActionResponseV2(
+            _cardBuilder.BuildGoalOverwriteConfirmCardV2(sessionId, chatKey, toolId, prompt),
+            "⚠️ 当前 goal 正在执行，请确认是否覆盖原有 goal",
+            "warning");
+    }
+
+    private CardActionTriggerResponseDto BuildSyncSessionProviderConfirmResponse(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        bool showAllSessions)
+    {
+        return _cardBuilder.BuildCardActionResponseV2(
+            _cardBuilder.BuildSyncSessionProviderConfirmCardV2(sessionId, chatKey, toolId, showAllSessions),
+            "⚠️ 当前 goal 正在执行，同步 Provider 需要先中断并重启当前运行时，请确认是否继续",
+            "warning");
+    }
+
+    private static string BuildSyncSessionProviderCompletionMessage(
+        CodexThreadProviderSyncResult syncResult,
+        bool restartGoalRuntimeAfterSync)
+    {
+        var restartSuffix = restartGoalRuntimeAfterSync
+            ? "，并已重启当前 goal runtime"
+            : string.Empty;
+
+        if (syncResult.HasWarnings)
+        {
+            return string.IsNullOrWhiteSpace(syncResult.Message)
+                ? $"⚠️ 已完成同步providers{restartSuffix}，但存在警告"
+                : $"⚠️ 已完成同步providers{restartSuffix}，但存在警告：{syncResult.Message}";
+        }
+
+        return $"✅ 已完成同步providers{restartSuffix}";
+    }
+
+    private static string BuildSyncSessionProviderQueuedToastMessage(bool restartGoalRuntimeAfterSync)
+    {
+        return restartGoalRuntimeAfterSync
+            ? "🚀 已开始在后台同步 Provider，完成后会发送通知并重启当前 goal runtime"
+            : "🚀 已开始在后台同步 Provider，完成后会发送通知";
+    }
+
+    private static string BuildSyncSessionProviderFailureMessage(Exception ex)
+    {
+        return $"❌ 同步providers失败：{ex.Message}";
+    }
+
+    private bool HasGoalExecutionConflict(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return false;
+        }
+
+        if (_activeStreamingExecutions.ContainsKey(sessionId))
+        {
+            return true;
+        }
+
+        if (_feishuChannel.IsSessionExecutionActive(sessionId))
+        {
+            return true;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var appServerSessionManager = scope.ServiceProvider.GetService<ICodexAppServerSessionManager>();
+        return appServerSessionManager?.HasActiveTurn(sessionId) == true;
+    }
+
+    private async Task<CardActionTriggerResponseDto> HandleTemporarilyExitGoalRuntimeAsync(
+        string? sessionId,
+        string? chatKey,
+        string? operatorUserId,
+        bool? showAllSessions)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(chatKey))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 参数错误，无法临时退出 goal 持续会话", "error");
+        }
+
+        var actualChatKey = NormalizeChatKey(chatKey);
+        var username = ResolveFeishuUsername(actualChatKey, operatorUserId);
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 请先绑定 Web 用户，再操作 goal 持续会话", "error");
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IChatSessionRepository>();
+        var session = await repo.GetByIdAndUsernameAsync(sessionId, username);
+        if (session == null || !string.Equals(session.FeishuChatKey, actualChatKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 会话不存在或已失效，请重新打开会话管理", "error");
+        }
+
+        var effectiveToolId = SessionLaunchOverrideHelper.ResolveEffectiveToolId(session.ToolId, session.CcSwitchSnapshotToolId);
+        if (!IsGoalRuntimeSession(session, effectiveToolId))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前会话不是 goal 持续会话，无需临时退出", "warning");
+        }
+
+        if (HasGoalExecutionConflict(sessionId))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前 goal 正在执行，暂时不能临时退出", "warning");
+        }
+
+        try
+        {
+            var currentOverrides = SessionLaunchOverrideHelper.Deserialize(session.ToolLaunchOverridesJson);
+            var updatedOverrides = SessionLaunchOverrideHelper.ApplyGoalRuntimeOverride(
+                currentOverrides,
+                effectiveToolId,
+                false);
+
+            session.ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(updatedOverrides);
+            session.UpdatedAt = DateTime.Now;
+
+            if (!await repo.UpdateAsync(session))
+            {
+                return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 临时退出 goal 持续会话失败，请稍后重试", "error");
+            }
+
+            const string successMessage = "✅ 已临时退出 goal 持续会话，后续补充消息将按一次性进程执行";
+            if (showAllSessions.HasValue)
+            {
+                var card = await BuildSessionManagerCardAsync(actualChatKey, operatorUserId, username, showAllSessions.Value);
+                return _cardBuilder.BuildCardActionResponseV2(card, successMessage, "success");
+            }
+
+            return _cardBuilder.BuildCardActionToastOnlyResponse(successMessage, "success");
+        }
+        catch (ArgumentException ex)
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse($"❌ {ex.Message}", "error");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "临时退出 goal 持续会话失败: SessionId={SessionId}", sessionId);
+            return _cardBuilder.BuildCardActionToastOnlyResponse($"❌ 临时退出 goal 持续会话失败: {ex.Message}", "error");
+        }
     }
 
     private async Task<CardActionTriggerResponseDto> HandleLowInterruptionContinueAsync(
@@ -1645,13 +1814,16 @@ public class FeishuCardActionService
         }
 
         var normalizedToolId = NormalizeToolId(toolId) ?? toolId;
+        var isGoalRuntimeSession = IsGoalRuntimeSession(sessionId, normalizedToolId);
         var capabilityState = ResolveSuperpowersCapabilityState(sessionId, normalizedToolId);
         var showGoalQuickActionButtons = ResolveShowGoalQuickActionButtons(sessionId, normalizedToolId);
-        streamingChrome.BottomPrompt = SuperpowersQuickActionCardHelper.CreateBottomPrompt(
-            sessionId,
-            normalizedChatKey,
-            normalizedToolId,
-            capabilityState);
+        streamingChrome.BottomPrompt = isGoalRuntimeSession
+            ? null
+            : SuperpowersQuickActionCardHelper.CreateBottomPrompt(
+                sessionId,
+                normalizedChatKey,
+                normalizedToolId,
+                capabilityState);
         streamingChrome.AdditionalBottomPrompts.Clear();
         var goalCapabilityState = ResolveGoalCapabilityState(sessionId, normalizedToolId);
         var goalPrompt = GoalQuickActionCardHelper.CreateBottomPrompt(
@@ -1669,17 +1841,21 @@ public class FeishuCardActionService
             normalizedChatKey,
             normalizedToolId,
             goalCapabilityState,
-            showGoalQuickActionButtons));
-        streamingChrome.BottomActions.AddRange(SuperpowersQuickActionCardHelper.CreateBottomActions(
-            sessionId,
-            normalizedChatKey,
-            normalizedToolId,
-            showPlanActions: ShouldShowSuperpowersPlanActions(sessionId),
-            capabilityState: capabilityState,
-            showStopAction: showStopAction));
-        streamingChrome.StatusMarkdown = SuperpowersQuickActionCardHelper.MergeCapabilityStatusMarkdown(
-            streamingChrome.StatusMarkdown,
-            capabilityState);
+            showGoalQuickActionButtons,
+            isGoalRuntimeSession));
+        if (!isGoalRuntimeSession)
+        {
+            streamingChrome.BottomActions.AddRange(SuperpowersQuickActionCardHelper.CreateBottomActions(
+                sessionId,
+                normalizedChatKey,
+                normalizedToolId,
+                showPlanActions: ShouldShowSuperpowersPlanActions(sessionId),
+                capabilityState: capabilityState,
+                showStopAction: showStopAction));
+            streamingChrome.StatusMarkdown = SuperpowersQuickActionCardHelper.MergeCapabilityStatusMarkdown(
+                streamingChrome.StatusMarkdown,
+                capabilityState);
+        }
         streamingChrome.StatusMarkdown = GoalQuickActionCardHelper.MergeCapabilityStatusMarkdown(
             streamingChrome.StatusMarkdown,
             goalCapabilityState);
@@ -2273,6 +2449,7 @@ public class FeishuCardActionService
         }
 
         string? lastUsefulContent = null;
+        var sawStructuredOutput = false;
         var lines = fullOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         foreach (var rawLine in lines)
         {
@@ -2288,6 +2465,13 @@ public class FeishuCardActionService
                 continue;
             }
 
+            var isStructuredLine = line.StartsWith("{", StringComparison.Ordinal)
+                                   || line.StartsWith("[", StringComparison.Ordinal);
+            if (isStructuredLine)
+            {
+                sawStructuredOutput = true;
+            }
+
             var assistantMessage = adapter.ExtractAssistantMessage(outputEvent);
             if (!string.IsNullOrWhiteSpace(assistantMessage))
             {
@@ -2299,6 +2483,11 @@ public class FeishuCardActionService
             {
                 lastUsefulContent = outputEvent.Content.Trim();
             }
+        }
+
+        if (!sawStructuredOutput)
+        {
+            return FormatMarkdownOutput(fullOutput);
         }
 
         return lastUsefulContent;
@@ -2372,7 +2561,7 @@ public class FeishuCardActionService
     /// <summary>
     /// 处理切换会话动作
     /// </summary>
-    private async Task<CardActionTriggerResponseDto> HandleSwitchSessionAsync(string? sessionId, string? chatKey, string? operatorUserId, string? appId)
+    private async Task<CardActionTriggerResponseDto> HandleSwitchSessionAsync(string? sessionId, string? chatKey, string? operatorUserId, string? appId, bool showAllSessions = false)
     {
         if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(chatKey))
         {
@@ -2451,6 +2640,8 @@ public class FeishuCardActionService
                 toolLabel,
                 lastActiveTime);
 
+            var card = await BuildSessionManagerCardAsync(actualChatKey, operatorUserId, username, showAllSessions);
+
             // 后台异步发送会话历史卡片
             _ = Task.Run(async () =>
             {
@@ -2499,7 +2690,8 @@ public class FeishuCardActionService
                 }
             });
 
-            return _cardBuilder.BuildCardActionToastOnlyResponse(
+            return _cardBuilder.BuildCardActionResponseV2(
+                card,
                 $"✅ 已切换到会话 {sessionId[..8]}...\n🛠️ CLI 工具: {toolLabel}\n📂 当前工作目录: {workspacePath}\n📜 历史消息已发送到聊天窗口",
                 "success");
         }
@@ -2521,7 +2713,12 @@ public class FeishuCardActionService
     /// <summary>
     /// 显式同步会话固定的 cc-switch Provider 快照
     /// </summary>
-    private async Task<CardActionTriggerResponseDto> HandleSyncSessionProviderAsync(string? sessionId, string? chatKey, string? operatorUserId, bool showAllSessions = false)
+    private async Task<CardActionTriggerResponseDto> HandleSyncSessionProviderAsync(
+        string? sessionId,
+        string? chatKey,
+        string? operatorUserId,
+        string? appId,
+        bool showAllSessions = false)
     {
         if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(chatKey))
         {
@@ -2548,71 +2745,118 @@ public class FeishuCardActionService
             return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前会话未绑定 cc-switch 管理的 CLI 工具，无需同步 Provider", "warning");
         }
 
-        _ = Task.Run(async () =>
+        if (IsGoalRuntimeSession(session, effectiveToolId) && HasGoalExecutionConflict(sessionId))
         {
-            try
-            {
-                await SyncSessionProviderInBackgroundAsync(
-                    actualChatKey,
-                    sessionId,
-                    effectiveToolId,
-                    username,
-                    operatorUserId,
-                    showAllSessions);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "飞书端同步会话 Provider 后台任务失败: SessionId={SessionId}", sessionId);
-            }
-        });
+            return BuildSyncSessionProviderConfirmResponse(sessionId, actualChatKey, effectiveToolId, showAllSessions);
+        }
+
+        StartSyncSessionProviderInBackground(
+            actualChatKey,
+            sessionId,
+            effectiveToolId,
+            username,
+            appId,
+            restartGoalRuntimeAfterSync: false);
 
         return _cardBuilder.BuildCardActionToastOnlyResponse(
-            "🚀 已开始后台同步当前会话 Provider，完成后会刷新会话管理卡片",
+            BuildSyncSessionProviderQueuedToastMessage(restartGoalRuntimeAfterSync: false),
             "info");
     }
 
-    private async Task SyncSessionProviderInBackgroundAsync(
+    private async Task<CardActionTriggerResponseDto> HandleConfirmSyncSessionProviderAsync(
+        string? sessionId,
+        string? chatKey,
+        string? operatorUserId,
+        string? appId,
+        bool showAllSessions = false)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(chatKey))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 参数错误，无法同步 Provider", "error");
+        }
+
+        var actualChatKey = NormalizeChatKey(chatKey);
+        var username = ResolveFeishuUsername(actualChatKey, operatorUserId);
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 请先绑定 Web 用户，再同步会话 Provider", "error");
+        }
+
+        var sessionEntities = await GetChatSessionEntitiesAsync(actualChatKey, username);
+        var session = sessionEntities.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase));
+        if (session == null)
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("❌ 会话不存在，无法同步 Provider", "error");
+        }
+
+        var effectiveToolId = NormalizeToolId(session.CcSwitchSnapshotToolId ?? session.ToolId);
+        if (!IsCcSwitchManagedTool(effectiveToolId))
+        {
+            return _cardBuilder.BuildCardActionToastOnlyResponse("⚠️ 当前会话未绑定 cc-switch 管理的 CLI 工具，无需同步 Provider", "warning");
+        }
+
+        StartSyncSessionProviderInBackground(
+            actualChatKey,
+            sessionId,
+            effectiveToolId,
+            username,
+            appId,
+            restartGoalRuntimeAfterSync: true);
+
+        return _cardBuilder.BuildCardActionToastOnlyResponse(
+            BuildSyncSessionProviderQueuedToastMessage(restartGoalRuntimeAfterSync: true),
+            "info");
+    }
+
+    private void StartSyncSessionProviderInBackground(
         string chatKey,
         string sessionId,
         string? effectiveToolId,
         string username,
-        string? operatorUserId,
-        bool showAllSessions)
+        string? appId,
+        bool restartGoalRuntimeAfterSync)
     {
-        try
+        _ = Task.Run(async () =>
         {
-            _logger.LogInformation(
-                "开始后台同步会话 Provider: SessionId={SessionId}, ChatKey={ChatKey}, ToolId={ToolId}",
-                sessionId,
-                chatKey,
-                effectiveToolId ?? string.Empty);
-
-            var syncResult = await _cliExecutor.SyncCodexThreadProviderAsync(sessionId, effectiveToolId);
-            var card = await BuildSessionManagerCardAsync(chatKey, operatorUserId, username, showAllSessions);
-            await SendElementsCardToChatAsync(
-                chatKey,
-                card,
-                "❌ 同步后刷新会话管理卡片失败，请稍后重试",
-                username);
-
-            if (syncResult.HasWarnings)
+            try
             {
-                var warningMessage = string.IsNullOrWhiteSpace(syncResult.Message)
-                    ? $"⚠️ 会话 {sessionId[..Math.Min(8, sessionId.Length)]} 已完成同步，但存在警告"
-                    : $"⚠️ {syncResult.Message}";
-                await _feishuChannel.SendMessageAsync(chatKey, warningMessage, username);
-            }
+                _logger.LogInformation(
+                    "开始后台同步会话 Provider: SessionId={SessionId}, ChatKey={ChatKey}, ToolId={ToolId}, RestartGoalRuntime={RestartGoalRuntime}",
+                    sessionId,
+                    chatKey,
+                    effectiveToolId ?? string.Empty,
+                    restartGoalRuntimeAfterSync);
 
-            _logger.LogInformation(
-                "后台同步会话 Provider 完成: SessionId={SessionId}, HasWarnings={HasWarnings}",
-                sessionId,
-                syncResult.HasWarnings);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "后台同步会话 Provider 失败: SessionId={SessionId}", sessionId);
-            await _feishuChannel.SendMessageAsync(chatKey, $"❌ 同步当前 cc-switch Provider 失败: {ex.Message}", username);
-        }
+                var syncResult = await _cliExecutor.SyncCodexThreadProviderAsync(sessionId, effectiveToolId);
+                if (restartGoalRuntimeAfterSync)
+                {
+                    await _cliExecutor.ResetSessionRuntimeAsync(sessionId, clearCliThreadId: false);
+                }
+
+                var completionMessage = BuildSyncSessionProviderCompletionMessage(syncResult, restartGoalRuntimeAfterSync);
+
+                _logger.LogInformation(
+                    "后台同步会话 Provider 完成: SessionId={SessionId}, HasWarnings={HasWarnings}, RestartGoalRuntime={RestartGoalRuntime}",
+                    sessionId,
+                    syncResult.HasWarnings,
+                    restartGoalRuntimeAfterSync);
+
+                await _feishuChannel.SendMessageAsync(chatKey, completionMessage, username, appId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "后台同步会话 Provider 失败: SessionId={SessionId}", sessionId);
+
+                try
+                {
+                    await _feishuChannel.SendMessageAsync(chatKey, BuildSyncSessionProviderFailureMessage(ex), username, appId);
+                }
+                catch (Exception notifyEx)
+                {
+                    _logger.LogError(notifyEx, "发送同步 Provider 失败通知也失败: SessionId={SessionId}", sessionId);
+                }
+            }
+        });
     }
 
     private async Task SendExternalCliHistoryAsync(
@@ -3106,11 +3350,13 @@ public class FeishuCardActionService
         var categories = await _commandService.GetCategorizedCommandsAsync(toolId);
         var replyTtsEnabled = await GetReplyTtsEnabledAsync(username);
         var showGoalQuickActionButtons = ResolveShowGoalQuickActionButtons(actualChatKey, username, toolId);
+        var showSuperpowersQuickActions = ResolveShowSuperpowersQuickActions(actualChatKey, username, toolId);
         return _cardBuilder.BuildCommandListCardV2(
             categories,
             showRefreshButton,
             replyTtsEnabled,
-            showGoalQuickActionButtons);
+            showGoalQuickActionButtons,
+            showSuperpowersQuickActions);
     }
 
     private bool ResolveShowGoalQuickActionButtons(string? chatKey, string? username, string? toolId)
@@ -3138,6 +3384,64 @@ public class FeishuCardActionService
         var repo = scope.ServiceProvider.GetService<IChatSessionRepository>();
         var session = repo?.GetByIdAsync(sessionId).GetAwaiter().GetResult();
         return GoalQuickActionVisibilityHelper.ShouldShowButtons(session, _cliExecutor, toolId);
+    }
+
+    private bool ResolveShowSuperpowersQuickActions(string? chatKey, string? username, string? toolId)
+    {
+        if (string.IsNullOrWhiteSpace(chatKey))
+        {
+            return true;
+        }
+
+        var sessionId = _feishuChannel.GetCurrentSession(chatKey, username);
+        return string.IsNullOrWhiteSpace(sessionId)
+            || !IsGoalRuntimeSession(sessionId, toolId);
+    }
+
+    private bool IsGoalRuntimeSession(string sessionId, string? toolId)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var repo = scope.ServiceProvider.GetService<IChatSessionRepository>();
+        var session = repo?.GetByIdAsync(sessionId).GetAwaiter().GetResult();
+        return IsGoalRuntimeSession(session, toolId);
+    }
+
+    private static bool IsGoalRuntimeSession(ChatSessionEntity? session, string? toolId)
+    {
+        if (session == null)
+        {
+            return false;
+        }
+
+        var effectiveToolId = SessionLaunchOverrideHelper.ResolveEffectiveToolId(
+            toolId ?? session.ToolId,
+            session.CcSwitchSnapshotToolId);
+        if (!SessionLaunchOverrideHelper.SupportsLaunchOverrides(effectiveToolId))
+        {
+            return false;
+        }
+
+        var launchOverride = SessionLaunchOverrideHelper.GetEffectiveOverride(
+            SessionLaunchOverrideHelper.Deserialize(session.ToolLaunchOverridesJson),
+            effectiveToolId,
+            session.ToolId,
+            session.CcSwitchSnapshotToolId);
+        return launchOverride?.UseGoalRuntime == true;
+    }
+
+    private bool ShouldShowTemporaryExitGoalRuntimeAction(string sessionId, string? toolId)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var repo = scope.ServiceProvider.GetService<IChatSessionRepository>();
+        var session = repo?.GetByIdAsync(sessionId).GetAwaiter().GetResult();
+        return session != null && ShouldShowTemporaryExitGoalRuntimeAction(session, toolId);
+    }
+
+    private bool ShouldShowTemporaryExitGoalRuntimeAction(ChatSessionEntity? session, string? toolId)
+    {
+        return session != null
+               && IsGoalRuntimeSession(session, toolId)
+               && !HasGoalExecutionConflict(session.SessionId);
     }
 
     private async Task<bool> GetReplyTtsEnabledAsync(string? username)
@@ -4160,6 +4464,8 @@ public class FeishuCardActionService
             var isCurrent = sessionId == currentSessionId;
             var sessionTitle = GetSessionDisplayTitle(session);
             var effectiveToolId = NormalizeToolId(session.CcSwitchSnapshotToolId ?? session.ToolId);
+            var isGoalRuntimeSession = IsGoalRuntimeSession(session, effectiveToolId);
+            var showTemporaryExitGoalRuntimeAction = ShouldShowTemporaryExitGoalRuntimeAction(session, effectiveToolId);
             var toolLabel = GetToolDisplayName(effectiveToolId ?? session.ToolId);
             var isManagedTool = IsCcSwitchManagedTool(effectiveToolId);
             var launchOverrideSummary = BuildSessionLaunchOverrideSummary(session);
@@ -4184,7 +4490,8 @@ public class FeishuCardActionService
                     {
                         action = "switch_session",
                         session_id = sessionId,
-                        chat_key = chatKey
+                        chat_key = chatKey,
+                        show_all_sessions = showAllSessions
                     }),
                 BuildActionButton(
                     "重命名",
@@ -4262,6 +4569,16 @@ public class FeishuCardActionService
                     }
                 }
             });
+
+            if (isGoalRuntimeSession)
+            {
+                elements.AddRange(BuildGoalRuntimeSessionActionRows(
+                    sessionId,
+                    chatKey,
+                    effectiveToolId,
+                    showAllSessions,
+                    showTemporaryExitGoalRuntimeAction));
+            }
 
             elements.Add(new { tag = "hr" });
         }
@@ -5208,6 +5525,108 @@ public class FeishuCardActionService
             session.ToolId,
             session.CcSwitchSnapshotToolId);
         return launchOverride?.UseGoalRuntime == true;
+    }
+
+    private static IEnumerable<object> BuildGoalRuntimeSessionActionRows(
+        string sessionId,
+        string chatKey,
+        string? toolId,
+        bool showAllSessions,
+        bool showTemporaryExitAction)
+    {
+        yield return BuildGoalRuntimeSessionActionRow(
+            BuildGoalRuntimeSessionActionColumn(
+                BuildActionButton(
+                    GoalQuickActionDefaults.StatusButtonText,
+                    "default",
+                    new
+                    {
+                        action = FeishuHelpCardAction.StatusGoalAction,
+                        session_id = sessionId,
+                        chat_key = chatKey,
+                        tool_id = toolId,
+                        show_all_sessions = showAllSessions
+                    })),
+            BuildGoalRuntimeSessionActionColumn(
+                BuildActionButton(
+                    GoalQuickActionDefaults.PauseButtonText,
+                    "default",
+                    new
+                    {
+                        action = FeishuHelpCardAction.PauseGoalAction,
+                        session_id = sessionId,
+                        chat_key = chatKey,
+                        tool_id = toolId,
+                        show_all_sessions = showAllSessions
+                    })));
+
+        yield return BuildGoalRuntimeSessionActionRow(
+            BuildGoalRuntimeSessionActionColumn(
+                BuildActionButton(
+                    GoalQuickActionDefaults.ClearButtonText,
+                    "default",
+                    new
+                    {
+                        action = FeishuHelpCardAction.ClearGoalAction,
+                        session_id = sessionId,
+                        chat_key = chatKey,
+                        tool_id = toolId,
+                        show_all_sessions = showAllSessions
+                    })),
+            BuildGoalRuntimeSessionActionColumn(
+                BuildActionButton(
+                    GoalQuickActionDefaults.ResumeButtonText,
+                    "primary",
+                    new
+                    {
+                        action = FeishuHelpCardAction.ResumeGoalAction,
+                        session_id = sessionId,
+                        chat_key = chatKey,
+                        tool_id = toolId,
+                        show_all_sessions = showAllSessions
+                    })));
+
+        if (!showTemporaryExitAction)
+        {
+            yield break;
+        }
+
+        yield return BuildGoalRuntimeSessionActionRow(
+            BuildGoalRuntimeSessionActionColumn(
+                BuildActionButton(
+                    GoalQuickActionDefaults.TemporaryExitButtonText,
+                    "default",
+                    new
+                    {
+                        action = FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction,
+                        session_id = sessionId,
+                        chat_key = chatKey,
+                        tool_id = toolId,
+                        show_all_sessions = showAllSessions
+                    })));
+    }
+
+    private static object BuildGoalRuntimeSessionActionRow(params object[] columns)
+    {
+        return new
+        {
+            tag = "column_set",
+            flex_mode = "none",
+            background_style = "default",
+            columns
+        };
+    }
+
+    private static object BuildGoalRuntimeSessionActionColumn(object button)
+    {
+        return new
+        {
+            tag = "column",
+            width = "weighted",
+            weight = 1,
+            vertical_align = "top",
+            elements = new[] { button }
+        };
     }
 
     private async Task<CardActionTriggerResponseDto> HandleDiscoverExternalCliSessionsAsync(

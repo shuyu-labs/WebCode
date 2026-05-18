@@ -8,6 +8,7 @@ internal static class GoalQuickActionCardHelper
 {
     private const string GoalRow1 = "goal_row_1";
     private const string GoalRow2 = "goal_row_2";
+    private const string GoalRow3 = "goal_row_3";
 
     public static FeishuStreamingCardBottomPrompt? CreateBottomPrompt(
         string sessionId,
@@ -42,15 +43,16 @@ internal static class GoalQuickActionCardHelper
         string chatKey,
         string? toolId,
         GoalCapabilitySnapshot? capabilityState = null,
-        bool showButtons = true)
+        bool showButtons = true,
+        bool showTemporaryExitAction = false)
     {
         if (!showButtons || capabilityState?.State == GoalCapabilityState.Unavailable)
         {
             return [];
         }
 
-        return
-        [
+        var actions = new List<FeishuStreamingCardBottomAction>
+        {
             new FeishuStreamingCardBottomAction
             {
                 Text = GoalQuickActionDefaults.StatusButtonText,
@@ -95,7 +97,24 @@ internal static class GoalQuickActionCardHelper
                     chatKey,
                     toolId)
             }
-        ];
+        };
+
+        if (showTemporaryExitAction)
+        {
+            actions.Add(new FeishuStreamingCardBottomAction
+            {
+                Text = GoalQuickActionDefaults.TemporaryExitButtonText,
+                Type = "default",
+                RowKey = GoalRow3,
+                Value = BuildActionValue(
+                    FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction,
+                    sessionId,
+                    chatKey,
+                    toolId)
+            });
+        }
+
+        return actions;
     }
 
     public static string? MergeCapabilityStatusMarkdown(

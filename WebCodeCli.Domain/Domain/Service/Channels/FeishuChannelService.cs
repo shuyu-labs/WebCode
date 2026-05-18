@@ -1872,6 +1872,7 @@ public class FeishuChannelService : BackgroundService, IFeishuChannelService
         }
 
         string? lastUsefulContent = null;
+        var sawStructuredOutput = false;
         var lines = fullOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         foreach (var rawLine in lines)
         {
@@ -1887,6 +1888,13 @@ public class FeishuChannelService : BackgroundService, IFeishuChannelService
                 continue;
             }
 
+            var isStructuredLine = line.StartsWith("{", StringComparison.Ordinal)
+                                   || line.StartsWith("[", StringComparison.Ordinal);
+            if (isStructuredLine)
+            {
+                sawStructuredOutput = true;
+            }
+
             var assistantMessage = adapter.ExtractAssistantMessage(outputEvent);
             if (!string.IsNullOrWhiteSpace(assistantMessage))
             {
@@ -1898,6 +1906,11 @@ public class FeishuChannelService : BackgroundService, IFeishuChannelService
             {
                 lastUsefulContent = outputEvent.Content.Trim();
             }
+        }
+
+        if (!sawStructuredOutput)
+        {
+            return FormatMarkdownOutput(fullOutput);
         }
 
         return lastUsefulContent;
@@ -2209,16 +2222,19 @@ public class FeishuChannelService : BackgroundService, IFeishuChannelService
         }
 
         var normalizedToolId = NormalizeToolId(toolId) ?? toolId;
+        var isGoalRuntimeSession = IsGoalRuntimeSession(session);
         var capabilityState = ResolveSuperpowersCapabilityState(sessionId, normalizedToolId);
         var showGoalQuickActionButtons = GoalQuickActionVisibilityHelper.ShouldShowButtons(
             session,
             _cliExecutor,
             normalizedToolId);
-        chrome.BottomPrompt = SuperpowersQuickActionCardHelper.CreateBottomPrompt(
-            sessionId,
-            chatKey,
-            normalizedToolId,
-            capabilityState);
+        chrome.BottomPrompt = isGoalRuntimeSession
+            ? null
+            : SuperpowersQuickActionCardHelper.CreateBottomPrompt(
+                sessionId,
+                chatKey,
+                normalizedToolId,
+                capabilityState);
         chrome.AdditionalBottomPrompts.Clear();
         var goalCapabilityState = ResolveGoalCapabilityState(sessionId, normalizedToolId);
         var goalPrompt = GoalQuickActionCardHelper.CreateBottomPrompt(
@@ -2236,17 +2252,21 @@ public class FeishuChannelService : BackgroundService, IFeishuChannelService
             chatKey,
             normalizedToolId,
             goalCapabilityState,
-            showGoalQuickActionButtons));
-        chrome.BottomActions.AddRange(SuperpowersQuickActionCardHelper.CreateBottomActions(
-            sessionId,
-            chatKey,
-            normalizedToolId,
-            showPlanActions: ShouldShowSuperpowersPlanActions(sessionId),
-            capabilityState: capabilityState,
-            showStopAction: showStopAction));
-        chrome.StatusMarkdown = SuperpowersQuickActionCardHelper.MergeCapabilityStatusMarkdown(
-            chrome.StatusMarkdown,
-            capabilityState);
+            showGoalQuickActionButtons,
+            isGoalRuntimeSession));
+        if (!isGoalRuntimeSession)
+        {
+            chrome.BottomActions.AddRange(SuperpowersQuickActionCardHelper.CreateBottomActions(
+                sessionId,
+                chatKey,
+                normalizedToolId,
+                showPlanActions: ShouldShowSuperpowersPlanActions(sessionId),
+                capabilityState: capabilityState,
+                showStopAction: showStopAction));
+            chrome.StatusMarkdown = SuperpowersQuickActionCardHelper.MergeCapabilityStatusMarkdown(
+                chrome.StatusMarkdown,
+                capabilityState);
+        }
         chrome.StatusMarkdown = GoalQuickActionCardHelper.MergeCapabilityStatusMarkdown(
             chrome.StatusMarkdown,
             goalCapabilityState);

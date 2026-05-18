@@ -30,6 +30,11 @@ internal static class GoalQuickActionVisibilityHelper
             session?.ToolId,
             session?.CcSwitchSnapshotToolId);
 
+        if (launchOverride?.UseGoalRuntime == true)
+        {
+            return true;
+        }
+
         return launchOverride?.UsePersistentProcess ?? tool.UsePersistentProcess;
     }
 }

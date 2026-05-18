@@ -449,12 +449,22 @@ New-Item -ItemType Directory -Force -Path $publishDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $installerOutputDirectory | Out-Null
 
 Write-Host "Publishing WebCode $resolvedVersion for $RuntimeIdentifier ..."
+# Release packaging does not need analyzers or debug symbols, and forcing a
+# single-node publish avoids Roslyn OOMs on large Windows builds.
 dotnet publish $projectFullPath `
     -c $Configuration `
     -r $RuntimeIdentifier `
+    -m:1 `
     --self-contained true `
     -o $publishDirectory `
+    /nr:false `
+    /p:UseSharedCompilation=false `
+    /p:BuildInParallel=false `
     /p:PublishSingleFile=false `
+    /p:RunAnalyzers=false `
+    /p:GenerateDocumentationFile=false `
+    /p:DebugSymbols=false `
+    /p:DebugType=None `
     /p:Version=$resolvedVersion `
     /p:AssemblyVersion=$assemblyVersion `
     /p:FileVersion=$assemblyVersion `

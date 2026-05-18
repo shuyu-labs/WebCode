@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WebCodeCli.Domain.Common;
 using WebCodeCli.Domain.Common.Extensions;
@@ -69,7 +70,10 @@ public class CliExecutorService : ICliExecutorService
         _options = options.Value;
         _concurrencyLimiter = new SemaphoreSlim(_options.MaxConcurrentExecutions);
         _processManager = new PersistentProcessManager(processManagerLogger);
-        _codexAppServerSessionManager = codexAppServerSessionManager ?? new CodexAppServerSessionManager(_logger);
+        _codexAppServerSessionManager = codexAppServerSessionManager
+            ?? new CodexAppServerSessionManager(
+                serviceProvider.GetService<ILogger<CodexAppServerSessionManager>>()
+                ?? NullLogger<CodexAppServerSessionManager>.Instance);
         _serviceProvider = serviceProvider;
         _chatSessionService = chatSessionService;
         _adapterFactory = adapterFactory;
@@ -2934,6 +2938,12 @@ public class CliExecutorService : ICliExecutorService
         StreamOutputChunk? terminalChunk = null;
         AppServerTurnRun? turnRun = null;
 
+        await BestEffortSyncCodexGoalRuntimeThreadProviderAsync(
+            sessionId,
+            sessionWorkspace,
+            existingThreadId,
+            cancellationToken);
+
         try
         {
             threadId = await _codexAppServerSessionManager.EnsureThreadAsync(
@@ -3186,14 +3196,14 @@ public class CliExecutorService : ICliExecutorService
                             threadId,
                             cancellationToken);
 
-                        turnRun = await _codexAppServerSessionManager.StartTurnAsync(
+                        turnRun = await StartGoalTurnWithRetryAsync(
                             sessionId,
                             resolvedCommand,
                             tool,
                             workingDirectory,
                             environmentVariables,
                             sessionContext,
-                            GoalQuickActionDefaults.ResumePrompt,
+                            goal.Objective,
                             threadId,
                             cancellationToken);
                     }
@@ -3257,7 +3267,7 @@ public class CliExecutorService : ICliExecutorService
                             threadId,
                             cancellationToken);
 
-                        turnRun = await _codexAppServerSessionManager.StartTurnAsync(
+                        turnRun = await StartGoalTurnWithRetryAsync(
                             sessionId,
                             resolvedCommand,
                             tool,
@@ -3346,6 +3356,60 @@ public class CliExecutorService : ICliExecutorService
             {
                 yield return chunk;
             }
+        }
+    }
+
+    private async Task<AppServerTurnRun> StartGoalTurnWithRetryAsync(
+        string sessionId,
+        string commandPath,
+        CliToolConfig tool,
+        string workingDirectory,
+        Dictionary<string, string>? environmentVariables,
+        CliSessionContext sessionContext,
+        string userPrompt,
+        string? existingThreadId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _codexAppServerSessionManager.StartTurnAsync(
+                sessionId,
+                commandPath,
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                userPrompt,
+                existingThreadId,
+                cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("已有一个 turn", StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "检测到 goal runtime 线程仍有旧 turn，先尝试中断后重试: Session={SessionId}, Thread={ThreadId}",
+                sessionId,
+                existingThreadId);
+
+            await _codexAppServerSessionManager.InterruptActiveTurnAsync(
+                sessionId,
+                commandPath,
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                existingThreadId,
+                cancellationToken);
+
+            return await _codexAppServerSessionManager.StartTurnAsync(
+                sessionId,
+                commandPath,
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                userPrompt,
+                existingThreadId,
+                cancellationToken);
         }
     }
 
@@ -3890,6 +3954,84 @@ public class CliExecutorService : ICliExecutorService
         }
 
         var sessionWorkspace = GetSessionWorkspacePath(sessionId);
+        var targetProviderId = string.Equals(effectiveToolId, "codex", StringComparison.OrdinalIgnoreCase)
+            ? await ResolveCodexModelProviderNameAsync(sessionWorkspace, snapshot.SourceLiveConfigPath, cancellationToken)
+                ?? snapshot.ProviderId
+            : snapshot.ProviderId;
+
+        return await SyncCodexThreadProviderCoreAsync(
+            sessionId,
+            sessionWorkspace,
+            cliThreadId,
+            targetProviderId,
+            includeSkillsSync: true,
+            cancellationToken);
+    }
+
+    private async Task BestEffortSyncCodexGoalRuntimeThreadProviderAsync(
+        string sessionId,
+        string sessionWorkspace,
+        string? cliThreadId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(cliThreadId))
+        {
+            return;
+        }
+
+        var targetProviderId = await ResolvePinnedCodexProviderIdAsync(sessionId, sessionWorkspace, cancellationToken);
+        if (string.IsNullOrWhiteSpace(targetProviderId))
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await SyncCodexThreadProviderCoreAsync(
+                sessionId,
+                sessionWorkspace,
+                cliThreadId,
+                targetProviderId,
+                includeSkillsSync: false,
+                cancellationToken);
+
+            if (result.HasWarnings)
+            {
+                _logger.LogWarning(
+                    "进入 Codex goal runtime 前同步线程 Provider 完成但有警告: Session={SessionId}, Thread={ThreadId}, Provider={ProviderId}, Message={Message}",
+                    sessionId,
+                    cliThreadId,
+                    targetProviderId,
+                    result.Message);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "进入 Codex goal runtime 前已同步线程 Provider: Session={SessionId}, Thread={ThreadId}, Provider={ProviderId}",
+                    sessionId,
+                    cliThreadId,
+                    targetProviderId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "进入 Codex goal runtime 前同步线程 Provider 失败，将继续尝试恢复线程: Session={SessionId}, Thread={ThreadId}, Provider={ProviderId}",
+                sessionId,
+                cliThreadId,
+                targetProviderId);
+        }
+    }
+
+    private async Task<CodexThreadProviderSyncResult> SyncCodexThreadProviderCoreAsync(
+        string sessionId,
+        string sessionWorkspace,
+        string cliThreadId,
+        string targetProviderId,
+        bool includeSkillsSync,
+        CancellationToken cancellationToken)
+    {
         using var scope = _serviceProvider.CreateScope();
         var threadSyncService = scope.ServiceProvider.GetRequiredService<ICodexThreadProviderSyncService>();
         var result = await threadSyncService.SyncThreadProviderAsync(
@@ -3897,9 +4039,14 @@ public class CliExecutorService : ICliExecutorService
             {
                 SessionWorkspacePath = sessionWorkspace,
                 ThreadId = cliThreadId,
-                TargetProviderId = snapshot.ProviderId
+                TargetProviderId = targetProviderId
             },
             cancellationToken);
+
+        if (!includeSkillsSync)
+        {
+            return result;
+        }
 
         var skillsSyncMessage = SyncGlobalCodexSkillsToWorkspace(sessionWorkspace, sessionId);
         if (!string.IsNullOrWhiteSpace(skillsSyncMessage))
@@ -3915,6 +4062,63 @@ public class CliExecutorService : ICliExecutorService
         }
 
         return result;
+    }
+
+    private async Task<string?> ResolvePinnedCodexProviderIdAsync(
+        string sessionId,
+        string sessionWorkspace,
+        CancellationToken cancellationToken)
+    {
+        var session = await TryGetChatSessionAsync(sessionId);
+        var configProviderId = await ResolveCodexModelProviderNameAsync(
+            sessionWorkspace,
+            session?.CcSwitchLiveConfigPath,
+            cancellationToken);
+        if (!string.IsNullOrWhiteSpace(configProviderId))
+        {
+            return configProviderId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session?.CcSwitchProviderId))
+        {
+            return session.CcSwitchProviderId;
+        }
+
+        return null;
+    }
+
+    private async Task<string?> ResolveCodexModelProviderNameAsync(
+        string sessionWorkspace,
+        string? sourceLiveConfigPath,
+        CancellationToken cancellationToken)
+    {
+        var candidatePaths = new[]
+        {
+            Path.Combine(sessionWorkspace, GetCcSwitchSnapshotRelativePath("codex")),
+            Path.Combine(GetCodexSessionConfigDirectory(sessionWorkspace), "config.toml"),
+            GetCodexLaunchBaseConfigPath(sessionWorkspace),
+            sourceLiveConfigPath
+        };
+
+        foreach (var candidatePath in candidatePaths
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!File.Exists(candidatePath))
+            {
+                continue;
+            }
+
+            var content = await File.ReadAllTextAsync(candidatePath, cancellationToken);
+            var providerId = ReadTomlStringSetting(content, "model_provider")
+                             ?? ReadTomlStringSetting(content, "provider");
+            if (!string.IsNullOrWhiteSpace(providerId))
+            {
+                return providerId;
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> EnsureManagedToolSessionSnapshotAsync(
@@ -4362,6 +4566,22 @@ public class CliExecutorService : ICliExecutorService
         }
 
         return mergedContent;
+    }
+
+    private static string? ReadTomlStringSetting(string content, string key)
+    {
+        if (string.IsNullOrWhiteSpace(content) || string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(
+            content,
+            $@"(?m)^\s*{Regex.Escape(key)}\s*=\s*""(?<value>(?:\\.|[^""])*)""\s*$");
+
+        return match.Success
+            ? Regex.Unescape(match.Groups["value"].Value)
+            : null;
     }
 
     private static string StripUnsupportedProjectCodexConfigSections(string content)

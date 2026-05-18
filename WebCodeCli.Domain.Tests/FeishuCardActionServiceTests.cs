@@ -1054,6 +1054,99 @@ public class FeishuCardActionServiceTests
     }
 
     [Fact]
+    public async Task HandleCardActionAsync_ExecuteCommand_ShowsGoalButtons_WhenUsingGoalRuntime()
+    {
+        const string chatId = "oc_goal_runtime_chat";
+        const string activeSessionId = "session-superpowers-goal-runtime";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "plan completed"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\goal-runtime");
+        cliExecutor.SetToolUsePersistentProcess("codex", false);
+
+        var chatSessionService = new StubChatSessionService();
+        chatSessionService.Messages[activeSessionId] =
+        [
+            new ChatMessage
+            {
+                Role = "user",
+                Content = "superpowers",
+                IsCompleted = true,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-2)
+            }
+        ];
+
+        var cardKit = new StubFeishuCardKitClient();
+        var feishuChannel = new StubFeishuChannelService(activeSessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = activeSessionId,
+                Username = "luhaiyan",
+                ToolId = "codex",
+                WorkspacePath = @"D:\repo\goal-runtime",
+                FeishuChatKey = chatId,
+                IsFeishuActive = true,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+                UpdatedAt = DateTime.UtcNow
+            }
+        ]);
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(chatSessionRepository: sessionRepository),
+            cardKit,
+            chatSessionService);
+
+        await service.HandleCardActionAsync(
+            """{"action":"execute_command"}""",
+            chatId: chatId,
+            inputValues: "继续");
+
+        await cliExecutor.WaitForExecutionAsync(TimeSpan.FromSeconds(3));
+        await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(3));
+
+        Assert.NotNull(cardKit.LastStreamingChrome);
+        var chrome = cardKit.LastStreamingChrome!;
+        Assert.Null(chrome.BottomPrompt);
+        Assert.Single(chrome.AdditionalBottomPrompts);
+        Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.StatusButtonText);
+        Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.PauseButtonText);
+        Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ClearButtonText);
+        Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ResumeButtonText);
+        Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText);
+        Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText);
+        Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecutePlanButtonText);
+        Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText);
+        Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.StopButtonText);
+        Assert.Equal(
+        [
+            "goal_row_1",
+            "goal_row_1",
+            "goal_row_2",
+            "goal_row_2",
+            "goal_row_3"
+        ],
+        chrome.BottomActions.Select(action => action.RowKey).ToArray());
+
+        var temporaryExitValueJson = JsonSerializer.Serialize(
+            Assert.Single(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText).Value);
+        Assert.Contains($"\"action\":\"{FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction}\"", temporaryExitValueJson);
+    }
+
+    [Fact]
     public async Task HandleCardActionAsync_SuperpowersQuickAction_WhenActiveSessionChanged_ReturnsConfirmCardWithoutExecuting()
     {
         const string chatId = "oc_current_chat";
@@ -1490,6 +1583,7 @@ public class FeishuCardActionServiceTests
 
     [Theory]
     [InlineData("status_goal", "/goal")]
+    [InlineData("pause_goal", "/goal pause")]
     [InlineData("clear_goal", "/goal clear")]
     [InlineData("resume_goal", "/goal resume")]
     public async Task HandleCardActionAsync_GoalActionButtons_ExecuteExpectedPrompt(string actionName, string expectedPrompt)
@@ -1529,40 +1623,6 @@ public class FeishuCardActionServiceTests
 
         var probeContext = Assert.Single(capabilityService.ProbeContexts);
         Assert.Equal("codex", probeContext.ToolId);
-    }
-
-    [Fact]
-    public async Task HandleCardActionAsync_PauseGoal_StopsSessionAndSkipsGoalPromptExecution()
-    {
-        const string chatId = "oc_current_chat";
-        const string activeSessionId = "session-goal-pause";
-
-        var cliExecutor = new RecordingCliExecutorService();
-        var capabilityService = new StubGoalCapabilityService
-        {
-            ProbeState = GoalCapabilityState.Available,
-            ProbeOutcome = GoalCapabilityProbeOutcome.Available
-        };
-
-        var feishuChannel = new StubFeishuChannelService(activeSessionId)
-        {
-            ResolvedToolId = "codex"
-        };
-        var service = CreateService(
-            cliExecutor,
-            feishuChannel,
-            new TestServiceProvider(goalCapabilityService: capabilityService));
-
-        var response = await service.HandleCardActionAsync(
-            $$"""{"action":"{{FeishuHelpCardAction.PauseGoalAction}}","chat_key":"{{chatId}}"}""",
-            chatId: chatId);
-
-        Assert.Single(cliExecutor.StopRequests);
-        Assert.Equal((activeSessionId, "codex"), cliExecutor.StopRequests[0]);
-        Assert.Empty(cliExecutor.ExecutedPrompts);
-        Assert.Empty(capabilityService.ProbeContexts);
-        Assert.Equal("✅ 已请求停止当前执行", response.Toast?.Content);
-        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Success, response.Toast?.Type);
     }
 
     [Fact]
@@ -1808,6 +1868,299 @@ public class FeishuCardActionServiceTests
         Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Warning, response.Toast?.Type);
         Assert.Contains(GoalQuickActionDefaults.CapabilityUnavailableText, response.Toast?.Content, StringComparison.Ordinal);
         Assert.Empty(cliExecutor.ExecutedPrompts);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_SubmitGoalQuickInput_WhenSessionAlreadyRunning_ReturnsOverwriteConfirmCard()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-busy";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "goal completed"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex",
+            SessionExecutionActive = true
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(goalCapabilityService: capabilityService));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.SubmitGoalQuickInputAction}}","chat_key":"{{chatId}}"}""",
+            chatId: chatId,
+            formValue: new Dictionary<string, object>
+            {
+                [GoalQuickActionDefaults.QuickInputFieldName] = "整理这个目标"
+            });
+
+        Assert.Equal("⚠️ 当前 goal 正在执行，请确认是否覆盖原有 goal", ExtractToastContent(response));
+        var cardContents = ExtractCardContentStrings(response);
+        Assert.Contains(cardContents, content => content.Contains("继续当前 goal", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("中断并覆盖", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("查看当前状态", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("整理这个目标", StringComparison.Ordinal));
+        Assert.Empty(cliExecutor.ExecutedPrompts);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_SubmitGoalQuickInput_WhenAppServerTurnStillActive_ReturnsOverwriteConfirmCard()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-lingering-turn";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "goal completed"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+        var appServerSessionManager = new StubCodexAppServerSessionManager();
+        appServerSessionManager.SeedActiveTurn(activeSessionId);
+
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex"
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(
+                goalCapabilityService: capabilityService,
+                codexAppServerSessionManager: appServerSessionManager));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.SubmitGoalQuickInputAction}}","chat_key":"{{chatId}}"}""",
+            chatId: chatId,
+            formValue: new Dictionary<string, object>
+            {
+                [GoalQuickActionDefaults.QuickInputFieldName] = "整理这个目标"
+            });
+
+        Assert.Equal("⚠️ 当前 goal 正在执行，请确认是否覆盖原有 goal", ExtractToastContent(response));
+        Assert.Contains(ExtractCardContentStrings(response), content => content.Contains("中断并覆盖", StringComparison.Ordinal));
+        Assert.Empty(cliExecutor.ExecutedPrompts);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_SubmitGoalQuickInput_WhenCardActionStreamingStillRunning_ReturnsOverwriteConfirmCard()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-card-action-busy";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "goal completed",
+            StandardExecutionCompletionDelay = TimeSpan.FromSeconds(10)
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+
+        var cardKit = new StubFeishuCardKitClient();
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex"
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(goalCapabilityService: capabilityService),
+            cardKit);
+
+        await service.HandleCardActionAsync(
+            """{"action":"execute_command"}""",
+            chatId: chatId,
+            inputValues: "先执行一个长任务");
+
+        await cliExecutor.WaitForExecutionAsync(TimeSpan.FromSeconds(3));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.SubmitGoalQuickInputAction}}","chat_key":"{{chatId}}","session_id":"{{activeSessionId}}","tool_id":"codex"}""",
+            chatId: chatId,
+            formValue: new Dictionary<string, object>
+            {
+                [GoalQuickActionDefaults.QuickInputFieldName] = "整理这个目标"
+            });
+
+        Assert.Equal("⚠️ 当前 goal 正在执行，请确认是否覆盖原有 goal", ExtractToastContent(response));
+        var cardContents = ExtractCardContentStrings(response);
+        Assert.Contains(cardContents, content => content.Contains("继续当前 goal", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("中断并覆盖", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("查看当前状态", StringComparison.Ordinal));
+        Assert.Equal(1, cliExecutor.ExecutedPrompts.Count);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_ConfirmOverwriteGoal_StopsCurrentExecutionAndExecutesNewGoal()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-confirm-overwrite";
+        var expectedPrompt = GoalPromptBuilder.BuildGoalPrompt("整理这个目标");
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "goal completed"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex"
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(goalCapabilityService: capabilityService));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"confirm_overwrite_goal","chat_key":"{{chatId}}","session_id":"{{activeSessionId}}","tool_id":"codex","command":"{{expectedPrompt}}"}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
+        Assert.Single(cliExecutor.StopRequests);
+        Assert.Equal((activeSessionId, "codex"), cliExecutor.StopRequests[0]);
+
+        await cliExecutor.WaitForExecutionAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(expectedPrompt, Assert.Single(cliExecutor.ExecutedPrompts));
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_ContinueCurrentGoal_DoesNotExecuteNewPrompt()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-continue-current";
+
+        var cliExecutor = new RecordingCliExecutorService();
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex"
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider());
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"continue_current_goal","chat_key":"{{chatId}}","session_id":"{{activeSessionId}}","tool_id":"codex"}""",
+            chatId: chatId);
+
+        Assert.Equal("✅ 已保留当前 goal", ExtractToastContent(response));
+        Assert.Empty(cliExecutor.StopRequests);
+        Assert.Empty(cliExecutor.ExecutedPrompts);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_StatusGoal_WhenSessionAlreadyRunning_StillExecutesStatusPrompt()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-status-busy";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            StandardExecutionContent = "goal status"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex",
+            SessionExecutionActive = true
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(goalCapabilityService: capabilityService));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.StatusGoalAction}}","chat_key":"{{chatId}}"}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
+        await cliExecutor.WaitForExecutionAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal("/goal", Assert.Single(cliExecutor.ExecutedPrompts));
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_StatusGoal_WhenExecutionReturnsPlainMultilineStatus_KeepsFullContent()
+    {
+        const string chatId = "oc_current_chat";
+        const string activeSessionId = "session-goal-status-multiline";
+
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            Adapter = new CodexAdapter(),
+            SupportsStreamParsingEnabled = true,
+            StandardExecutionContent = "Current goal: ship this task\nStatus: paused\nTokens used: 12/200\nTime used: 86 seconds"
+        };
+        cliExecutor.SetSessionWorkspacePath(activeSessionId, @"D:\repo\superpowers");
+
+        var capabilityService = new StubGoalCapabilityService
+        {
+            ProbeState = GoalCapabilityState.Available,
+            ProbeOutcome = GoalCapabilityProbeOutcome.Available
+        };
+
+        var cardKit = new StubFeishuCardKitClient();
+        var feishuChannel = new StubFeishuChannelService(activeSessionId)
+        {
+            ResolvedToolId = "codex",
+            SessionExecutionActive = true
+        };
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(goalCapabilityService: capabilityService),
+            cardKit);
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.StatusGoalAction}}","chat_key":"{{chatId}}"}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
+        await cliExecutor.WaitForExecutionCompletionAsync(TimeSpan.FromSeconds(3));
+        await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("/goal", Assert.Single(cliExecutor.ExecutedPrompts));
+        Assert.NotNull(cardKit.FinalStreamingContent);
+        Assert.Contains("Current goal: ship this task", cardKit.FinalStreamingContent, StringComparison.Ordinal);
+        Assert.Contains("Status: paused", cardKit.FinalStreamingContent, StringComparison.Ordinal);
+        Assert.Contains("Tokens used: 12/200", cardKit.FinalStreamingContent, StringComparison.Ordinal);
+        Assert.Contains("Time used: 86 seconds", cardKit.FinalStreamingContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2269,6 +2622,12 @@ public class FeishuCardActionServiceTests
         Assert.Contains(collapsedContents, content => content.Contains("当前默认展示最近 **3** 个会话", StringComparison.Ordinal));
         Assert.Contains(collapsedContents, content => content.Contains("更多会话", StringComparison.Ordinal));
         Assert.Contains("\"show_all_sessions\":true", collapsedPayload);
+        Assert.Contains(FeishuHelpCardAction.StatusGoalAction, collapsedPayload, StringComparison.Ordinal);
+        Assert.Contains(FeishuHelpCardAction.PauseGoalAction, collapsedPayload, StringComparison.Ordinal);
+        Assert.Contains(FeishuHelpCardAction.ClearGoalAction, collapsedPayload, StringComparison.Ordinal);
+        Assert.Contains(FeishuHelpCardAction.ResumeGoalAction, collapsedPayload, StringComparison.Ordinal);
+        Assert.Contains(FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction, collapsedPayload, StringComparison.Ordinal);
+        Assert.Contains(GoalQuickActionDefaults.TemporaryExitButtonText, collapsedPayload, StringComparison.Ordinal);
 
         var expandedResponse = await service.HandleCardActionAsync(
             """{"action":"open_session_manager","chat_key":"oc_workspace_chat","show_all_sessions":true}""",
@@ -2280,6 +2639,60 @@ public class FeishuCardActionServiceTests
         Assert.Contains(expandedContents, content => content.Contains("当前展示全部 **4** 个会话", StringComparison.Ordinal));
         Assert.Contains(expandedContents, content => content.Contains("收起", StringComparison.Ordinal));
         Assert.Contains("\"show_all_sessions\":false", expandedPayload);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_OpenSessionManager_ForActiveGoalRuntimeSession_HidesTemporaryExitAction()
+    {
+        const string chatId = "oc_workspace_chat";
+        const string sessionId = "session-goal-runtime-active";
+
+        var cliExecutor = new RecordingCliExecutorService();
+        var feishuChannel = new StubFeishuChannelService(sessionId);
+        var appServerSessionManager = new StubCodexAppServerSessionManager();
+        appServerSessionManager.SeedActiveTurn(sessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = sessionId,
+                Username = "luhaiyan",
+                Title = "Active Goal Runtime Session",
+                WorkspacePath = @"D:\repo\goal-runtime-active",
+                ToolId = "codex",
+                FeishuChatKey = chatId,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.Now.AddMinutes(-30),
+                UpdatedAt = DateTime.Now,
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                IsCustomWorkspace = true
+            }
+        ]);
+
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(
+                chatSessionRepository: sessionRepository,
+                codexAppServerSessionManager: appServerSessionManager));
+
+        var response = await service.HandleCardActionAsync(
+            """{"action":"open_session_manager","chat_key":"oc_workspace_chat"}""",
+            chatId: chatId);
+
+        var payload = SerializeResponse(response);
+        Assert.Contains(FeishuHelpCardAction.ResumeGoalAction, payload, StringComparison.Ordinal);
+        Assert.DoesNotContain(FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction, payload, StringComparison.Ordinal);
+        Assert.DoesNotContain(GoalQuickActionDefaults.TemporaryExitButtonText, payload, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2438,6 +2851,136 @@ public class FeishuCardActionServiceTests
         Assert.Contains(cardContents, content => content.Contains("🤖 模型: `gpt-5.4`", StringComparison.Ordinal));
         Assert.Contains(cardContents, content => content.Contains("🧠 思考: `high`", StringComparison.Ordinal));
         Assert.Contains("\"show_all_sessions\":true", payload);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_TemporarilyExitGoalRuntime_DisablesGoalRuntimeWithoutResetAndRefreshesSessionManagerCard()
+    {
+        const string chatId = "oc_workspace_chat";
+        const string sessionId = "session-temporary-exit-goal-runtime";
+
+        var cliExecutor = new RecordingCliExecutorService();
+        var feishuChannel = new StubFeishuChannelService(sessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = sessionId,
+                Username = "luhaiyan",
+                Title = "Goal Runtime Session",
+                WorkspacePath = @"D:\repo\goal-runtime-exit",
+                ToolId = "codex",
+                FeishuChatKey = chatId,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            Model = "gpt-5.4",
+                            ReasoningEffort = "high",
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.Now.AddMinutes(-30),
+                UpdatedAt = DateTime.Now,
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                IsCustomWorkspace = true
+            }
+        ]);
+
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(chatSessionRepository: sessionRepository));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction}}","session_id":"{{sessionId}}","chat_key":"{{chatId}}","show_all_sessions":true}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Success, response.Toast?.Type);
+        Assert.Contains("临时退出", response.Toast?.Content, StringComparison.Ordinal);
+        Assert.Empty(cliExecutor.ResetRequests);
+
+        var updatedSession = await sessionRepository.GetByIdAndUsernameAsync(sessionId, "luhaiyan");
+        Assert.NotNull(updatedSession);
+        var launchOverride = SessionLaunchOverrideHelper.GetEffectiveOverride(
+            SessionLaunchOverrideHelper.Deserialize(updatedSession!.ToolLaunchOverridesJson),
+            "codex",
+            updatedSession.ToolId,
+            updatedSession.CcSwitchSnapshotToolId);
+        Assert.NotNull(launchOverride);
+        Assert.False(launchOverride!.UseGoalRuntime);
+        Assert.Equal("gpt-5.4", launchOverride.Model);
+        Assert.Equal("high", launchOverride.ReasoningEffort);
+
+        var payload = SerializeResponse(response);
+        Assert.DoesNotContain(GoalQuickActionDefaults.TemporaryExitButtonText, payload, StringComparison.Ordinal);
+        Assert.DoesNotContain("🎯 **Goal持续会话**", payload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_TemporarilyExitGoalRuntime_WhenGoalStillActive_ReturnsWarningWithoutChangingOverride()
+    {
+        const string chatId = "oc_workspace_chat";
+        const string sessionId = "session-temporary-exit-goal-runtime-active";
+
+        var cliExecutor = new RecordingCliExecutorService();
+        var feishuChannel = new StubFeishuChannelService(sessionId);
+        var appServerSessionManager = new StubCodexAppServerSessionManager();
+        appServerSessionManager.SeedActiveTurn(sessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = sessionId,
+                Username = "luhaiyan",
+                Title = "Active Goal Runtime Session",
+                WorkspacePath = @"D:\repo\goal-runtime-active",
+                ToolId = "codex",
+                FeishuChatKey = chatId,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.Now.AddMinutes(-30),
+                UpdatedAt = DateTime.Now,
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                IsCustomWorkspace = true
+            }
+        ]);
+
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(
+                chatSessionRepository: sessionRepository,
+                codexAppServerSessionManager: appServerSessionManager));
+
+        var response = await service.HandleCardActionAsync(
+            $$"""{"action":"{{FeishuHelpCardAction.TemporarilyExitGoalRuntimeAction}}","session_id":"{{sessionId}}","chat_key":"{{chatId}}","show_all_sessions":true}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Warning, response.Toast?.Type);
+        Assert.Contains("正在执行", response.Toast?.Content, StringComparison.Ordinal);
+        Assert.Empty(cliExecutor.ResetRequests);
+
+        var updatedSession = await sessionRepository.GetByIdAndUsernameAsync(sessionId, "luhaiyan");
+        Assert.NotNull(updatedSession);
+        var launchOverride = SessionLaunchOverrideHelper.GetEffectiveOverride(
+            SessionLaunchOverrideHelper.Deserialize(updatedSession!.ToolLaunchOverridesJson),
+            "codex",
+            updatedSession.ToolId,
+            updatedSession.CcSwitchSnapshotToolId);
+        Assert.NotNull(launchOverride);
+        Assert.True(launchOverride!.UseGoalRuntime);
     }
 
     [Fact]
@@ -2828,17 +3371,17 @@ public class FeishuCardActionServiceTests
     }
 
     [Fact]
-    public async Task HandleCardActionAsync_SyncSessionProvider_ReturnsImmediatelyAndRefreshesSessionManagerCardInBackground()
+    public async Task HandleCardActionAsync_SyncSessionProvider_ReturnsBackgroundToastAndSendsCompletionMessage()
     {
         const string chatId = "oc_workspace_chat";
         const string sessionId = "session-sync-provider";
 
+        var syncBlocker = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cliExecutor = new RecordingCliExecutorService
         {
-            ThreadSyncBlocker = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously)
+            ThreadSyncBlocker = syncBlocker
         };
         var feishuChannel = new StubFeishuChannelService(sessionId);
-        var cardKit = new StubFeishuCardKitClient();
         var sessionRepository = new StubChatSessionRepository(
         [
             new ChatSessionEntity
@@ -2859,33 +3402,157 @@ public class FeishuCardActionServiceTests
         var service = CreateService(
             cliExecutor,
             feishuChannel,
-            new TestServiceProvider(chatSessionRepository: sessionRepository),
-            cardKit);
+            new TestServiceProvider(chatSessionRepository: sessionRepository));
 
-        var responseTask = service.HandleCardActionAsync(
+        var response = await service.HandleCardActionAsync(
             """{"action":"sync_session_provider","session_id":"session-sync-provider","chat_key":"oc_workspace_chat"}""",
             chatId: chatId);
-        var completedTask = await Task.WhenAny(responseTask, Task.Delay(TimeSpan.FromMilliseconds(300)));
-        Assert.Same(responseTask, completedTask);
 
-        var response = await responseTask;
         Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
-        Assert.Contains("已开始后台同步", response.Toast?.Content, StringComparison.Ordinal);
+        Assert.Contains("后台同步", response.Toast?.Content, StringComparison.Ordinal);
 
-        var syncRequest = await cliExecutor.WaitForThreadSyncRequestAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(sessionId, syncRequest.SessionId);
-        Assert.Equal("codex", syncRequest.ToolId);
+        var payload = SerializeResponse(response);
+        Assert.DoesNotContain("\"action\":\"sync_session_provider\"", payload, StringComparison.Ordinal);
 
-        cliExecutor.ThreadSyncBlocker!.TrySetResult(null);
+        var started = await cliExecutor.WaitForThreadSyncRequestAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal((sessionId, "codex"), started);
 
-        var sentCard = await cardKit.WaitForRawCardSentAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(chatId, sentCard.ChatId);
-        Assert.Contains("sync_session_provider", sentCard.CardJson, StringComparison.Ordinal);
-        Assert.Contains("session-sync-provider", sentCard.CardJson, StringComparison.Ordinal);
+        syncBlocker.TrySetResult(null);
+        var completion = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(chatId, completion.ChatId);
+        Assert.Contains("已完成同步providers", completion.Content, StringComparison.Ordinal);
+        Assert.Empty(cliExecutor.ResetRequests);
     }
 
     [Fact]
-    public async Task HandleCardActionAsync_SyncSessionProvider_PartialSuccess_SendsWarningTextAndRefreshesSessionManagerCard()
+    public async Task HandleCardActionAsync_SyncSessionProvider_WhenGoalRuntimeTurnActive_ReturnsConfirmCardInsteadOfStartingBackgroundSync()
+    {
+        const string chatId = "oc_workspace_chat";
+        const string sessionId = "session-sync-provider-goal-runtime";
+
+        var cliExecutor = new RecordingCliExecutorService();
+        var feishuChannel = new StubFeishuChannelService(sessionId);
+        var appServerSessionManager = new StubCodexAppServerSessionManager();
+        appServerSessionManager.SeedActiveTurn(sessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = sessionId,
+                Username = "luhaiyan",
+                WorkspacePath = @"D:\repo\goal-runtime",
+                ToolId = "codex",
+                FeishuChatKey = chatId,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.Now,
+                UpdatedAt = DateTime.Now,
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                IsCustomWorkspace = true
+            }
+        ]);
+
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(
+                chatSessionRepository: sessionRepository,
+                codexAppServerSessionManager: appServerSessionManager));
+
+        var response = await service.HandleCardActionAsync(
+            """{"action":"sync_session_provider","session_id":"session-sync-provider-goal-runtime","chat_key":"oc_workspace_chat"}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Warning, response.Toast?.Type);
+        Assert.Contains("需要先中断并重启", response.Toast?.Content, StringComparison.Ordinal);
+
+        var payload = SerializeResponse(response);
+        Assert.Contains("\"action\":\"confirm_sync_session_provider\"", payload, StringComparison.Ordinal);
+
+        var cardContents = ExtractCardContentStrings(response);
+        Assert.Contains(cardContents, content => content.Contains("继续当前 goal", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("中断并同步 Provider", StringComparison.Ordinal));
+        Assert.Contains(cardContents, content => content.Contains("查看当前状态", StringComparison.Ordinal));
+
+        Assert.Empty(cliExecutor.ThreadSyncRequests);
+        Assert.Empty(cliExecutor.ResetRequests);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_ConfirmSyncSessionProvider_ReturnsBackgroundToastAndNotifiesAfterReset()
+    {
+        const string chatId = "oc_workspace_chat";
+        const string sessionId = "session-sync-provider-confirm";
+
+        var syncBlocker = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cliExecutor = new RecordingCliExecutorService
+        {
+            ThreadSyncBlocker = syncBlocker
+        };
+        var feishuChannel = new StubFeishuChannelService(sessionId);
+        var sessionRepository = new StubChatSessionRepository(
+        [
+            new ChatSessionEntity
+            {
+                SessionId = sessionId,
+                Username = "luhaiyan",
+                WorkspacePath = @"D:\repo\goal-runtime",
+                ToolId = "codex",
+                FeishuChatKey = chatId,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.Now,
+                UpdatedAt = DateTime.Now,
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                IsCustomWorkspace = true
+            }
+        ]);
+
+        var service = CreateService(
+            cliExecutor,
+            feishuChannel,
+            new TestServiceProvider(chatSessionRepository: sessionRepository));
+
+        var response = await service.HandleCardActionAsync(
+            """{"action":"confirm_sync_session_provider","session_id":"session-sync-provider-confirm","chat_key":"oc_workspace_chat"}""",
+            chatId: chatId);
+
+        Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
+        Assert.Contains("后台同步", response.Toast?.Content, StringComparison.Ordinal);
+
+        var payload = SerializeResponse(response);
+        Assert.DoesNotContain("\"action\":\"sync_session_provider\"", payload, StringComparison.Ordinal);
+
+        var started = await cliExecutor.WaitForThreadSyncRequestAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal((sessionId, "codex"), started);
+
+        syncBlocker.TrySetResult(null);
+        var completion = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(chatId, completion.ChatId);
+        Assert.Contains("已完成同步providers", completion.Content, StringComparison.Ordinal);
+        Assert.Contains("goal runtime", completion.Content, StringComparison.Ordinal);
+        Assert.Single(cliExecutor.ResetRequests);
+        Assert.Equal((sessionId, false), cliExecutor.ResetRequests[0]);
+    }
+
+    [Fact]
+    public async Task HandleCardActionAsync_SyncSessionProvider_PartialSuccess_SendsWarningCompletionMessage()
     {
         const string chatId = "oc_workspace_chat";
         const string sessionId = "session-sync-provider-warning";
@@ -2928,22 +3595,16 @@ public class FeishuCardActionServiceTests
             chatId: chatId);
 
         Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
-        Assert.Contains("已开始后台同步", response.Toast?.Content, StringComparison.Ordinal);
+        Assert.Contains("后台同步", response.Toast?.Content, StringComparison.Ordinal);
 
-        var syncRequest = await cliExecutor.WaitForThreadSyncRequestAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(sessionId, syncRequest.SessionId);
-
-        var sentCard = await cardKit.WaitForRawCardSentAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(chatId, sentCard.ChatId);
-        Assert.Contains("session-sync-provider-warning", sentCard.CardJson, StringComparison.Ordinal);
-
-        var warningMessage = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(chatId, warningMessage.ChatId);
-        Assert.Contains("thread synced with warnings", warningMessage.Content, StringComparison.Ordinal);
+        var completion = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(chatId, completion.ChatId);
+        Assert.Contains("已完成同步providers", completion.Content, StringComparison.Ordinal);
+        Assert.Contains("thread synced with warnings", completion.Content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task HandleCardActionAsync_SyncSessionProvider_BackgroundFailure_SendsFailureTextWithoutBlockingCallback()
+    public async Task HandleCardActionAsync_SyncSessionProvider_Failure_SendsErrorCompletionMessage()
     {
         const string chatId = "oc_workspace_chat";
         const string sessionId = "session-sync-provider-failure";
@@ -2975,20 +3636,17 @@ public class FeishuCardActionServiceTests
             feishuChannel,
             new TestServiceProvider(chatSessionRepository: sessionRepository));
 
-        var responseTask = service.HandleCardActionAsync(
+        var response = await service.HandleCardActionAsync(
             """{"action":"sync_session_provider","session_id":"session-sync-provider-failure","chat_key":"oc_workspace_chat"}""",
             chatId: chatId);
-        var completedTask = await Task.WhenAny(responseTask, Task.Delay(TimeSpan.FromMilliseconds(300)));
-        Assert.Same(responseTask, completedTask);
 
-        var response = await responseTask;
         Assert.Equal(CardActionTriggerResponseDto.ToastSuffix.ToastType.Info, response.Toast?.Type);
-        Assert.Contains("已开始后台同步", response.Toast?.Content, StringComparison.Ordinal);
+        Assert.Contains("后台同步", response.Toast?.Content, StringComparison.Ordinal);
 
-        var failureMessage = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal(chatId, failureMessage.ChatId);
-        Assert.Contains("同步当前 cc-switch Provider 失败", failureMessage.Content, StringComparison.Ordinal);
-        Assert.Contains("同步线程失败", failureMessage.Content, StringComparison.Ordinal);
+        var completion = await feishuChannel.WaitForMessageAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(chatId, completion.ChatId);
+        Assert.Contains("同步providers失败", completion.Content, StringComparison.Ordinal);
+        Assert.Contains("同步线程失败", completion.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3459,6 +4117,12 @@ public class FeishuCardActionServiceTests
         Assert.Equal(currentSessionId, feishuChannel.LastPausedSessionId);
         Assert.Equal(TimeSpan.FromSeconds(3), feishuChannel.LastPauseDuration);
         Assert.Equal(targetSessionId, feishuChannel.LastSwitchedSessionId);
+
+        var payload = SerializeResponse(response);
+        Assert.Contains("\"action\":\"switch_session\"", payload, StringComparison.Ordinal);
+        Assert.Contains("session-switch-target", payload, StringComparison.Ordinal);
+        var cardContents = ExtractCardContentStrings(response);
+        Assert.Contains(cardContents, content => content.Contains("当前", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -5028,6 +5692,7 @@ public class FeishuCardActionServiceTests
         private readonly IExternalCliSessionService _externalCliSessionService;
         private readonly ISuperpowersCapabilityService _superpowersCapabilityService;
         private readonly IGoalCapabilityService _goalCapabilityService;
+        private readonly ICodexAppServerSessionManager? _codexAppServerSessionManager;
         private readonly IReplyTtsOrchestrator? _replyTtsOrchestrator;
         private readonly IMessageSubmissionService _messageSubmissionService;
         private readonly IFeishuAttachmentDraftService _attachmentDraftService;
@@ -5041,6 +5706,7 @@ public class FeishuCardActionServiceTests
             IExternalCliSessionService? externalCliSessionService = null,
             ISuperpowersCapabilityService? superpowersCapabilityService = null,
             IGoalCapabilityService? goalCapabilityService = null,
+            ICodexAppServerSessionManager? codexAppServerSessionManager = null,
             IReplyTtsOrchestrator? replyTtsOrchestrator = null,
             StubUserFeishuBotConfigService? feishuBotConfigService = null,
             IMessageSubmissionService? messageSubmissionService = null,
@@ -5055,6 +5721,7 @@ public class FeishuCardActionServiceTests
             _externalCliSessionService = externalCliSessionService ?? new StubExternalCliSessionService([]);
             _superpowersCapabilityService = superpowersCapabilityService ?? new StubSuperpowersCapabilityService();
             _goalCapabilityService = goalCapabilityService ?? new StubGoalCapabilityService();
+            _codexAppServerSessionManager = codexAppServerSessionManager;
             _replyTtsOrchestrator = replyTtsOrchestrator;
             _messageSubmissionService = messageSubmissionService ?? new StubMessageSubmissionService();
             _attachmentDraftService = attachmentDraftService ?? new FeishuAttachmentDraftService();
@@ -5122,6 +5789,11 @@ public class FeishuCardActionServiceTests
                 return _goalCapabilityService;
             }
 
+            if (serviceType == typeof(ICodexAppServerSessionManager))
+            {
+                return _codexAppServerSessionManager;
+            }
+
             if (serviceType == typeof(IReplyTtsOrchestrator))
             {
                 return _replyTtsOrchestrator;
@@ -5148,6 +5820,99 @@ public class FeishuCardActionServiceTests
         public IServiceScope CreateScope() => this;
 
         public IServiceProvider ServiceProvider => this;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class StubCodexAppServerSessionManager : ICodexAppServerSessionManager
+    {
+        private readonly HashSet<string> _activeTurnSessionIds = new(StringComparer.OrdinalIgnoreCase);
+
+        public void SeedActiveTurn(string sessionId)
+        {
+            _activeTurnSessionIds.Add(sessionId);
+        }
+
+        public Task<string> EnsureThreadAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AppServerTurnRun> StartTurnAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string userPrompt,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AppServerGoalSnapshot?> GetGoalAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AppServerGoalSnapshot?> SetGoalAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string objective,
+            string status,
+            long? tokenBudget,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<bool> ClearGoalAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<bool> InterruptActiveTurnAsync(
+            string sessionId,
+            string commandPath,
+            CliToolConfig tool,
+            string workingDirectory,
+            Dictionary<string, string>? environmentVariables,
+            CliSessionContext sessionContext,
+            string? existingThreadId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<bool> InterruptActiveTurnAsync(string sessionId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public bool HasActiveTurn(string sessionId)
+            => _activeTurnSessionIds.Contains(sessionId);
+
+        public bool CleanupSession(string sessionId)
+            => _activeTurnSessionIds.Remove(sessionId);
 
         public void Dispose()
         {

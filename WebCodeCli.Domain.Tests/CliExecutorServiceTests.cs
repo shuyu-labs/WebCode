@@ -276,6 +276,85 @@ public class CliExecutorServiceTests
     }
 
     [Fact]
+    public async Task SyncCodexThreadProviderAsync_WhenCcSwitchProviderRecordIdDiffersFromCodexModelProvider_UsesConfigModelProvider()
+    {
+        const string sessionId = "session-sync-thread-provider-config-name";
+        const string cliThreadId = "019d1338-0c3f-7eb3-ae2b-e4617eb7d24e";
+
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(workspaceRoot, "workspace");
+        var liveConfigPath = Path.Combine(workspaceRoot, "codex-live-config.toml");
+        Directory.CreateDirectory(workspacePath);
+        await File.WriteAllTextAsync(liveConfigPath, "model_provider = \"provider-alias\"\nmodel = \"gpt-5.4\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+                [
+                    new ChatSessionEntity
+                    {
+                        SessionId = sessionId,
+                        Username = "luhaiyan",
+                        ToolId = "codex",
+                        CliThreadId = cliThreadId,
+                        WorkspacePath = workspacePath,
+                        CreatedAt = DateTime.Now,
+                        UpdatedAt = DateTime.Now
+                    }
+                ]);
+            var threadSyncService = new RecordingCodexThreadProviderSyncService();
+            var ccSwitchService = new StubCcSwitchService(
+                new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new CcSwitchToolStatus
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsDetected = true,
+                        HasDatabase = true,
+                        HasSettingsFile = true,
+                        HasLiveConfig = true,
+                        IsLaunchReady = true,
+                        ConfigDirectory = Path.Combine(workspaceRoot, "cc-switch"),
+                        LiveConfigPath = liveConfigPath,
+                        ActiveProviderId = "provider-record-id",
+                        ActiveProviderName = "Provider Alias",
+                        ActiveProviderCategory = "custom",
+                        StatusMessage = "ready"
+                    }
+                });
+            var serviceProvider = new NullServiceProvider(repository, new StubSessionOutputService(), threadSyncService);
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N")),
+                    Tools = []
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                serviceProvider,
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                ccSwitchService);
+
+            var result = await service.SyncCodexThreadProviderAsync(sessionId);
+
+            var request = Assert.Single(threadSyncService.Requests);
+            Assert.Equal("provider-alias", request.TargetProviderId);
+            Assert.False(result.HasWarnings);
+        }
+        finally
+        {
+            if (Directory.Exists(workspaceRoot))
+            {
+                Directory.Delete(workspaceRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CodexAdapter_BuildLowInterruptionArguments_UsesResumeFullAutoWithoutPrompt()
     {
         var adapter = new CodexAdapter();
@@ -433,6 +512,376 @@ public class CliExecutorServiceTests
             Assert.Null(launchOverride.UsePersistentProcess);
 
             await service.ResetSessionRuntimeAsync(sessionId);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRuntimeReentersWithExistingCodexThread_SyncsPinnedProviderBeforeAppServerResume()
+    {
+        const string sessionId = "session-goal-reenter-sync-provider";
+        const string cliThreadId = "thread-goal-reenter-sync-provider";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        var overrideJson = SessionLaunchOverrideHelper.Serialize(new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { UseGoalRuntime = false }
+        });
+
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "provider = \"provider-new\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CliThreadId = cliThreadId,
+                    ToolLaunchOverridesJson = overrideJson,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var threadSyncService = new RecordingCodexThreadProviderSyncService();
+            var stubManager = new StubCodexAppServerSessionManager();
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService(), threadSyncService),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-new",
+                        ActiveProviderName = "Provider New",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
+            {
+                chunks.Add(chunk);
+            }
+
+            Assert.DoesNotContain(chunks, c => c.IsError && c.IsCompleted);
+
+            var request = Assert.Single(threadSyncService.Requests);
+            Assert.Equal(workspacePath, request.SessionWorkspacePath);
+            Assert.Equal(cliThreadId, request.ThreadId);
+            Assert.Equal("provider-new", request.TargetProviderId);
+            Assert.True(stubManager.EnsureThreadCalls >= 1);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRuntimeReentersWithStaleSessionProviderId_PrefersSnapshotModelProvider()
+    {
+        const string sessionId = "session-goal-reenter-stale-provider-id";
+        const string cliThreadId = "thread-goal-reenter-stale-provider-id";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        var overrideJson = SessionLaunchOverrideHelper.Serialize(new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { UseGoalRuntime = false }
+        });
+
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "model_provider = \"provider-alias\"\nprovider = \"provider-alias\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CliThreadId = cliThreadId,
+                    CcSwitchProviderId = "provider-record-id-old",
+                    ToolLaunchOverridesJson = overrideJson,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var threadSyncService = new RecordingCodexThreadProviderSyncService();
+            var stubManager = new StubCodexAppServerSessionManager();
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService(), threadSyncService),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-record-id-old",
+                        ActiveProviderName = "Provider Alias",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
+            {
+                chunks.Add(chunk);
+            }
+
+            Assert.DoesNotContain(chunks, c => c.IsError && c.IsCompleted);
+
+            var request = Assert.Single(threadSyncService.Requests);
+            Assert.Equal("provider-alias", request.TargetProviderId);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRuntimeResumesWithLingeringActiveTurn_InterruptsAndRetries()
+    {
+        const string sessionId = "session-goal-lingering-turn";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "model = \"gpt-5.4\"\nprovider = \"provider-a\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var stubManager = new StubCodexAppServerSessionManager
+            {
+                ThrowOnStartWithActiveTurn = true
+            };
+            stubManager.SeedActiveTurn(sessionId, "turn-stale");
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService()),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-a",
+                        ActiveProviderName = "Provider A",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
+            {
+                chunks.Add(chunk);
+            }
+
+            Assert.DoesNotContain(chunks, c => c.IsError && c.IsCompleted);
+            Assert.Contains(
+                chunks,
+                c => !string.IsNullOrWhiteSpace(c.Content) && c.Content.Contains("已提交 goal：ship this task", StringComparison.Ordinal));
+            Assert.Equal(1, stubManager.LegacyInterruptCalls);
+            Assert.Equal(2, stubManager.StartTurnCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRuntimeResumes_UsesGoalObjectiveForTurnPrompt()
+    {
+        const string sessionId = "session-goal-resume";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "model = \"gpt-5.4\"\nprovider = \"provider-a\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.SeedGoal(sessionId, new AppServerGoalSnapshot("ship this task", "paused", null, 12, 34));
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService()),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-a",
+                        ActiveProviderName = "Provider A",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal resume"))
+            {
+                chunks.Add(chunk);
+            }
+
+            Assert.DoesNotContain(chunks, c => c.IsError && c.IsCompleted);
+            Assert.Contains(chunks, c => !string.IsNullOrWhiteSpace(c.Content) && c.Content.Contains("已恢复 goal", StringComparison.Ordinal));
+            Assert.Equal(["ship this task"], stubManager.StartedTurnPrompts);
         }
         finally
         {
@@ -4285,6 +4734,19 @@ args = ["mcp", "serve"]
         public int SimpleInterruptCalls { get; private set; }
         public int EnsureThreadCalls { get; private set; }
         public int LegacyInterruptCalls { get; private set; }
+        public int StartTurnCalls { get; private set; }
+        public bool ThrowOnStartWithActiveTurn { get; set; }
+        public List<string> StartedTurnPrompts { get; } = new();
+
+        public void SeedActiveTurn(string sessionId, string turnId)
+        {
+            _activeTurnIds[sessionId] = turnId;
+        }
+
+        public void SeedGoal(string sessionId, AppServerGoalSnapshot goal)
+        {
+            _goals[sessionId] = goal;
+        }
 
         public void Dispose()
         {
@@ -4331,6 +4793,14 @@ args = ["mcp", "serve"]
             string? existingThreadId,
             CancellationToken cancellationToken = default)
         {
+            StartTurnCalls++;
+            StartedTurnPrompts.Add(userPrompt);
+
+            if (ThrowOnStartWithActiveTurn && _activeTurnIds.ContainsKey(sessionId))
+            {
+                throw new InvalidOperationException("当前 app-server 运行中已有一个 turn，无法再启动新的 turn。");
+            }
+
             var threadId = await EnsureThreadAsync(
                 sessionId,
                 commandPath,
@@ -4428,6 +4898,9 @@ args = ["mcp", "serve"]
             SimpleInterruptCalls++;
             return Task.FromResult(_activeTurnIds.Remove(sessionId));
         }
+
+        public bool HasActiveTurn(string sessionId)
+            => _activeTurnIds.ContainsKey(sessionId);
 
         public bool CleanupSession(string sessionId)
         {

@@ -179,6 +179,15 @@ public class FeishuHelpCardBuilderTests
         Assert.True(ContainsAction(elements, "pause_goal"));
         Assert.True(ContainsAction(elements, "clear_goal"));
         Assert.True(ContainsAction(elements, "resume_goal"));
+        Assert.Equal(
+            2,
+            CountColumnSetsContainingActions(
+                elements,
+                FeishuHelpCardAction.StatusGoalAction,
+                FeishuHelpCardAction.PauseGoalAction,
+                FeishuHelpCardAction.ClearGoalAction,
+                FeishuHelpCardAction.ResumeGoalAction));
+        Assert.False(ContainsStringValue(elements, GoalQuickActionDefaults.TemporaryExitButtonText));
 
         Assert.True(
             GetInputIndexByName(elements, GoalQuickActionDefaults.QuickInputFieldName)
@@ -201,6 +210,21 @@ public class FeishuHelpCardBuilderTests
         Assert.False(ContainsAction(elements, "pause_goal"));
         Assert.False(ContainsAction(elements, "clear_goal"));
         Assert.False(ContainsAction(elements, "resume_goal"));
+    }
+
+    [Fact]
+    public void BuildCommandListCard_HidesSuperpowersQuickActions_WhenDisabled()
+    {
+        var cardJson = _builder.BuildCommandListCard(
+            CreateCategories(),
+            showSuperpowersQuickActions: false);
+        using var document = JsonDocument.Parse(cardJson);
+        var elements = document.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.Equal(0, CountInputsByName(elements, SuperpowersQuickActionDefaults.QuickInputFieldName));
+        Assert.False(ContainsStringValue(elements, SuperpowersQuickActionDefaults.InstructionText));
+        Assert.Equal(1, CountInputsByName(elements, GoalQuickActionDefaults.QuickInputFieldName));
+        Assert.True(ContainsStringValue(elements, GoalQuickActionDefaults.InstructionText));
     }
 
     private static JsonElement GetActionValue(JsonElement elements, string action)
@@ -249,6 +273,44 @@ public class FeishuHelpCardBuilderTests
 
         actionValue = default;
         return false;
+    }
+
+    private static int CountColumnSetsContainingActions(JsonElement element, params string[] actions)
+    {
+        var actionSet = actions.ToHashSet(StringComparer.Ordinal);
+        var count = 0;
+        CountColumnSetsContainingActionsCore(element, actionSet, ref count);
+        return count;
+    }
+
+    private static void CountColumnSetsContainingActionsCore(JsonElement element, HashSet<string> actions, ref int count)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("tag", out var tagElement)
+                && string.Equals(tagElement.GetString(), "column_set", StringComparison.Ordinal)
+                && actions.Any(action => TryGetActionValue(element, action, out _)))
+            {
+                count++;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                CountColumnSetsContainingActionsCore(property.Value, actions, ref count);
+            }
+
+            return;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            CountColumnSetsContainingActionsCore(item, actions, ref count);
+        }
     }
 
     private static bool TryGetButtonActionValue(JsonElement element, string action, out JsonElement actionValue)
