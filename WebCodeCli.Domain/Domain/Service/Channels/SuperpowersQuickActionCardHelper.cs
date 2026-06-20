@@ -8,6 +8,7 @@ internal static class SuperpowersQuickActionCardHelper
 {
     private const string ExecutionControlRow = "execution_control_row";
     private const string PlanActionRow = "plan_action_row";
+    private const string GoalPlanActionRow = "goal_plan_action_row";
     private const string CapabilityActionRow = "capability_action_row";
     private const string SessionConfirmActionRow = "session_confirm_action_row";
 
@@ -117,6 +118,28 @@ internal static class SuperpowersQuickActionCardHelper
                     RowKey = PlanActionRow,
                     Value = BuildActionValue(
                         FeishuHelpCardAction.ExecuteSuperpowersSubagentPlanAction,
+                        sessionId,
+                        chatKey,
+                        toolId)
+                },
+                new FeishuStreamingCardBottomAction
+                {
+                    Text = SuperpowersQuickActionDefaults.ExecuteGoalPlanButtonText,
+                    Type = "primary",
+                    RowKey = GoalPlanActionRow,
+                    Value = BuildActionValue(
+                        FeishuHelpCardAction.ExecuteSuperpowersGoalPlanAction,
+                        sessionId,
+                        chatKey,
+                        toolId)
+                },
+                new FeishuStreamingCardBottomAction
+                {
+                    Text = SuperpowersQuickActionDefaults.CompleteWorktreeButtonText,
+                    Type = "default",
+                    RowKey = GoalPlanActionRow,
+                    Value = BuildActionValue(
+                        FeishuHelpCardAction.ExecuteSuperpowersCompleteWorktreeAction,
                         sessionId,
                         chatKey,
                         toolId)

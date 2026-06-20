@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
+
 // 设置全局超时时间为5分钟
 test.setTimeout(300000);
 
@@ -22,7 +24,7 @@ test.describe('Git项目导入功能测试', () => {
 
       const passwordInput = page.locator('input[placeholder="Enter password"]');
       await passwordInput.waitFor({ state: 'visible' });
-      await passwordInput.fill('Lusile@0680');
+      await passwordInput.fill(PASSWORD);
       console.log('✅ 输入密码');
 
       // 3. 点击登录按钮，等待导航完成

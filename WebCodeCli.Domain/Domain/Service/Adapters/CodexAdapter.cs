@@ -17,8 +17,8 @@ public class CodexAdapter : ICliToolAdapter
     /// - {session}: 会话恢复参数（兼容自定义模板，格式为 "resume session_id"）
     /// - {cliThreadId}: 仅线程 ID，默认 resume 模板使用
     /// </summary>
-    public const string DefaultArgumentTemplate = "exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {session} \"{prompt}\"";
-    public const string DefaultResumeArgumentTemplate = "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {cliThreadId} \"{prompt}\"";
+    public const string DefaultArgumentTemplate = "exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {session} -- \"{prompt}\"";
+    public const string DefaultResumeArgumentTemplate = "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {cliThreadId} -- \"{prompt}\"";
     public const string DefaultLowInterruptionArgumentTemplate = "exec resume --skip-git-repo-check --json --full-auto {cliThreadId}";
 
     public string[] SupportedToolIds => new[] { "codex" };
@@ -443,6 +443,13 @@ public class CodexAdapter : ICliToolAdapter
             outputEvent.ItemType = itemTypeElement.GetString();
         }
 
+        if (string.Equals(outputEvent.ItemType, "agent_message", StringComparison.Ordinal)
+            && itemElement.TryGetProperty("phase", out var phaseElement)
+            && phaseElement.ValueKind == JsonValueKind.String)
+        {
+            outputEvent.AssistantPhase = phaseElement.GetString();
+        }
+
         if (itemElement.TryGetProperty("thread_id", out var itemThread) && itemThread.ValueKind == JsonValueKind.String)
         {
             var threadId = itemThread.GetString();
@@ -503,6 +510,13 @@ public class CodexAdapter : ICliToolAdapter
             outputEvent.ItemType = itemTypeElement.GetString();
         }
 
+        if (string.Equals(outputEvent.ItemType, "agent_message", StringComparison.Ordinal)
+            && itemElement.TryGetProperty("phase", out var phaseElement)
+            && phaseElement.ValueKind == JsonValueKind.String)
+        {
+            outputEvent.AssistantPhase = phaseElement.GetString();
+        }
+
         if (itemElement.TryGetProperty("thread_id", out var itemThread) && itemThread.ValueKind == JsonValueKind.String)
         {
             var threadId = itemThread.GetString();
@@ -537,6 +551,13 @@ public class CodexAdapter : ICliToolAdapter
         if (itemElement.TryGetProperty("type", out var itemTypeElement) && itemTypeElement.ValueKind == JsonValueKind.String)
         {
             outputEvent.ItemType = itemTypeElement.GetString();
+        }
+
+        if (string.Equals(outputEvent.ItemType, "agent_message", StringComparison.Ordinal)
+            && itemElement.TryGetProperty("phase", out var phaseElement)
+            && phaseElement.ValueKind == JsonValueKind.String)
+        {
+            outputEvent.AssistantPhase = phaseElement.GetString();
         }
 
         if (itemElement.TryGetProperty("thread_id", out var itemThread) && itemThread.ValueKind == JsonValueKind.String)
@@ -795,6 +816,16 @@ public class CodexAdapter : ICliToolAdapter
         if (string.IsNullOrWhiteSpace(attachmentArguments))
         {
             return template;
+        }
+
+        if (template.Contains("-- \"{prompt}\"", StringComparison.Ordinal))
+        {
+            return template.Replace("-- \"{prompt}\"", $"{attachmentArguments} -- \"{{prompt}}\"", StringComparison.Ordinal);
+        }
+
+        if (template.Contains("-- {prompt}", StringComparison.Ordinal))
+        {
+            return template.Replace("-- {prompt}", $"{attachmentArguments} -- {{prompt}}", StringComparison.Ordinal);
         }
 
         if (template.Contains("\"{prompt}\"", StringComparison.Ordinal))

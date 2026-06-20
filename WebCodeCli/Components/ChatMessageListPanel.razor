@@ -123,6 +123,14 @@
                                     </svg>
                                     <span>@ExecuteSubagentPlanText</span>
                                 </button>
+                                <button @onclick="@(() => OnExecuteSuperpowersCompleteWorktree.InvokeAsync(message))"
+                                        disabled="@SuperpowersQuickActionDisabled"
+                                        class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors @(SuperpowersQuickActionDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
+                                    <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                    </svg>
+                                    <span>@CompleteWorktreeText</span>
+                                </button>
                             </div>
                         }
                         <input @bind:get="SuperpowersQuickInput"
@@ -290,6 +298,13 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
                                         </svg>
                                         <span>@ExecuteSubagentPlanText</span>
+                                    </button>
+                                    <button disabled="true"
+                                            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-400">
+                                        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                        </svg>
+                                        <span>@CompleteWorktreeText</span>
                                     </button>
                                 </div>
                             }
@@ -506,6 +521,7 @@
     [Parameter] public bool ContinueSuperpowersActionDisabled { get; set; }
     [Parameter] public string ExecutePlanText { get; set; } = SuperpowersQuickActionDefaults.ExecutePlanButtonText;
     [Parameter] public string ExecuteSubagentPlanText { get; set; } = SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText;
+    [Parameter] public string CompleteWorktreeText { get; set; } = SuperpowersQuickActionDefaults.CompleteWorktreeButtonText;
     [Parameter] public bool ShowStopSuperpowersAction { get; set; }
     [Parameter] public bool StopSuperpowersActionDisabled { get; set; }
     [Parameter] public string StopSuperpowersActionText { get; set; } = "停止";
@@ -517,6 +533,7 @@
     [Parameter] public EventCallback<ChatMessage> OnContinueSuperpowersAction { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnExecuteSuperpowersPlan { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnExecuteSuperpowersSubagentPlan { get; set; }
+    [Parameter] public EventCallback<ChatMessage> OnExecuteSuperpowersCompleteWorktree { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnStopSuperpowersAction { get; set; }
     [Parameter] public EventCallback<ChatMessage> OnRetrySuperpowersCapability { get; set; }
     [Parameter] public string? GoalQuickActionMessageId { get; set; }
@@ -560,7 +577,8 @@
             || (ShowSuperpowersPlanActions
                 && (!OnContinueSuperpowersAction.HasDelegate
                     || !OnExecuteSuperpowersPlan.HasDelegate
-                    || !OnExecuteSuperpowersSubagentPlan.HasDelegate)))
+                    || !OnExecuteSuperpowersSubagentPlan.HasDelegate
+                    || !OnExecuteSuperpowersCompleteWorktree.HasDelegate)))
         {
             return false;
         }
@@ -584,7 +602,8 @@
         return !ShowSuperpowersPlanActions
             || (OnContinueSuperpowersAction.HasDelegate
                 && OnExecuteSuperpowersPlan.HasDelegate
-                && OnExecuteSuperpowersSubagentPlan.HasDelegate);
+                && OnExecuteSuperpowersSubagentPlan.HasDelegate
+                && OnExecuteSuperpowersCompleteWorktree.HasDelegate);
     }
 
     private bool ShouldShowGoalQuickActions(ChatMessage message)

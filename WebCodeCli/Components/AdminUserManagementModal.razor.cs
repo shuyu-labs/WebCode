@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 using WebCodeCli.Domain.Domain.Model;
-using WebCodeCli.Domain.Domain.Model.Channels;
 using WebCodeCli.Domain.Domain.Service;
 using WebCodeCli.Helpers;
 
@@ -23,7 +22,6 @@ public partial class AdminUserManagementModal : ComponentBase
     private bool _isSaving;
     private bool _isDeletingFeishuConfig;
     private bool _isRefreshingFeishuStatus;
-    private bool _isRefreshingReplyTtsPlatform;
     private bool _isStartingFeishuBot;
     private bool _isStoppingFeishuBot;
     private string _errorMessage = string.Empty;
@@ -36,16 +34,8 @@ public partial class AdminUserManagementModal : ComponentBase
     private List<UserSummaryDto> _users = new();
     private EditableUserModel _editor = EditableUserModel.CreateNew();
     private UserFeishuBotRuntimeStatusModel _feishuBotStatus = new();
-    private FeishuReplyTtsHealthStatus _replyTtsHealth = new();
-    private IReadOnlyList<FeishuReplyTtsVoiceOption> _replyTtsVoices = [];
 
-    private bool IsBusy => _isLoadingUsers || _isLoadingDetail || _isSaving || _isDeletingFeishuConfig || _isRefreshingFeishuStatus || _isRefreshingReplyTtsPlatform || _isStartingFeishuBot || _isStoppingFeishuBot;
-    private AdminUserManagementReplyTtsUiStateResult ReplyTtsUiState => AdminUserManagementReplyTtsUiState.Create(
-        _editor.FeishuBot.ReplyTtsEnabled,
-        _editor.FeishuBot.ReplyTtsVoiceId,
-        _replyTtsVoices,
-        _replyTtsHealth.IsAvailable,
-        _replyTtsHealth.Message);
+    private bool IsBusy => _isLoadingUsers || _isLoadingDetail || _isSaving || _isDeletingFeishuConfig || _isRefreshingFeishuStatus || _isStartingFeishuBot || _isStoppingFeishuBot;
 
     private IEnumerable<UserSummaryDto> FilteredUsers => _users.Where(user =>
         string.IsNullOrWhiteSpace(_userSearch) ||
@@ -62,7 +52,6 @@ public partial class AdminUserManagementModal : ComponentBase
         _successMessage = string.Empty;
         _userSearch = string.Empty;
         _allTools = CliExecutorService.GetAvailableTools();
-        await RefreshReplyTtsPlatformAsync();
         var usersLoaded = await LoadUsersAsync();
         if (!usersLoaded)
         {
@@ -97,7 +86,6 @@ public partial class AdminUserManagementModal : ComponentBase
     private async Task RefreshAsync()
     {
         _allTools = CliExecutorService.GetAvailableTools();
-        await RefreshReplyTtsPlatformAsync();
         var usersLoaded = await LoadUsersAsync();
         if (!usersLoaded)
         {
@@ -413,56 +401,6 @@ public partial class AdminUserManagementModal : ComponentBase
         }
     }
 
-    private async Task RefreshReplyTtsPlatformAsync()
-    {
-        _isRefreshingReplyTtsPlatform = true;
-        StateHasChanged();
-
-        FeishuReplyTtsHealthStatus? refreshedHealth = null;
-        List<FeishuReplyTtsVoiceOption>? refreshedVoices = null;
-        string? healthError = null;
-        string? voicesError = null;
-
-        try
-        {
-            try
-            {
-                refreshedHealth = await Http.GetFromJsonAsync<FeishuReplyTtsHealthStatus>("/api/admin/feishu-tts/health")
-                    ?? new FeishuReplyTtsHealthStatus();
-            }
-            catch (Exception ex)
-            {
-                healthError = ex.Message;
-            }
-
-            try
-            {
-                refreshedVoices = await Http.GetFromJsonAsync<List<FeishuReplyTtsVoiceOption>>("/api/admin/feishu-tts/voices")
-                    ?? [];
-            }
-            catch (Exception ex)
-            {
-                voicesError = ex.Message;
-            }
-
-            var mergedState = MergeReplyTtsPlatformState(
-                _replyTtsHealth,
-                _replyTtsVoices,
-                refreshedHealth,
-                refreshedVoices,
-                healthError,
-                voicesError);
-
-            _replyTtsHealth = mergedState.Health;
-            _replyTtsVoices = mergedState.Voices;
-        }
-        finally
-        {
-            _isRefreshingReplyTtsPlatform = false;
-            StateHasChanged();
-        }
-    }
-
     private async Task StartFeishuBotAsync()
     {
         if (!_editor.IsExistingUser || string.IsNullOrWhiteSpace(_editor.Username))
@@ -659,50 +597,6 @@ public partial class AdminUserManagementModal : ComponentBase
         };
     }
 
-    private static (FeishuReplyTtsHealthStatus Health, IReadOnlyList<FeishuReplyTtsVoiceOption> Voices) MergeReplyTtsPlatformState(
-        FeishuReplyTtsHealthStatus currentHealth,
-        IReadOnlyList<FeishuReplyTtsVoiceOption> currentVoices,
-        FeishuReplyTtsHealthStatus? refreshedHealth,
-        IReadOnlyList<FeishuReplyTtsVoiceOption>? refreshedVoices,
-        string? healthError,
-        string? voicesError)
-    {
-        var nextHealth = refreshedHealth != null
-            ? CloneReplyTtsHealth(refreshedHealth)
-            : !string.IsNullOrWhiteSpace(healthError)
-                ? new FeishuReplyTtsHealthStatus
-                {
-                    IsAvailable = false,
-                    Message = healthError.Trim()
-                }
-                : CloneReplyTtsHealth(currentHealth);
-
-        var nextVoices = refreshedVoices ?? currentVoices;
-
-        if (!string.IsNullOrWhiteSpace(voicesError))
-        {
-            var voiceRefreshMessage = $"Voice list may be stale because refresh failed: {voicesError.Trim()}";
-            nextHealth = CloneReplyTtsHealth(nextHealth);
-            nextHealth.Message = string.IsNullOrWhiteSpace(nextHealth.Message)
-                ? voiceRefreshMessage
-                : $"{nextHealth.Message} {voiceRefreshMessage}";
-        }
-
-        return (nextHealth, nextVoices);
-    }
-
-    private static FeishuReplyTtsHealthStatus CloneReplyTtsHealth(FeishuReplyTtsHealthStatus health)
-    {
-        return new FeishuReplyTtsHealthStatus
-        {
-            IsAvailable = health.IsAvailable,
-            Message = health.Message,
-            DefaultVoiceId = health.DefaultVoiceId,
-            StorageRoot = health.StorageRoot,
-            TempRoot = health.TempRoot
-        };
-    }
-
     private static bool HasCustomFeishuConfig(EditableFeishuBotConfigModel config)
     {
         return AdminUserManagementFormHelper.HasCustomFeishuConfig(
@@ -713,19 +607,116 @@ public partial class AdminUserManagementModal : ComponentBase
                    config.VerificationToken,
                    config.DefaultCardTitle,
                    config.ThinkingMessage,
+                   config.DocumentAdminOpenId,
                    config.HttpTimeoutSeconds,
                    config.StreamingThrottleMs)
-               || config.ReplyTtsEnabled
-               || !string.IsNullOrWhiteSpace(config.ReplyTtsVoiceId);
+               || config.FullReplyDocEnabled
+               || config.FinalReplyDocEnabled
+               || config.AudioFullReplyDocEnabled
+               || config.AudioFinalReplyDocEnabled
+               || config.ReferencedMarkdownDocImportEnabled;
     }
 
     private sealed class UserSummaryDto { public string Username { get; set; } = string.Empty; public string? DisplayName { get; set; } public string Role { get; set; } = UserAccessConstants.UserRole; public string Status { get; set; } = UserAccessConstants.EnabledStatus; public DateTime? LastLoginAt { get; set; } public DateTime CreatedAt { get; set; } }
     private sealed class SaveUserPayload { public string Username { get; set; } = string.Empty; public string? DisplayName { get; set; } public string? Password { get; set; } public string Role { get; set; } = UserAccessConstants.UserRole; public string Status { get; set; } = UserAccessConstants.EnabledStatus; }
     private sealed class SaveToolPolicyPayload { public List<string> AllowedToolIds { get; set; } = new(); }
     private sealed class SaveWorkspacePolicyPayload { public List<string> AllowedDirectories { get; set; } = new(); }
-    private sealed class UserFeishuBotConfigModel { public string? Username { get; set; } public bool IsEnabled { get; set; } public string? AppId { get; set; } public string? AppSecret { get; set; } public string? EncryptKey { get; set; } public string? VerificationToken { get; set; } public string? DefaultCardTitle { get; set; } public string? ThinkingMessage { get; set; } public int? HttpTimeoutSeconds { get; set; } public int? StreamingThrottleMs { get; set; } public bool ReplyTtsEnabled { get; set; } public string? ReplyTtsVoiceId { get; set; } }
+    private sealed class UserFeishuBotConfigModel
+    {
+        public string? Username { get; set; }
+        public bool IsEnabled { get; set; }
+        public string? AppId { get; set; }
+        public string? AppSecret { get; set; }
+        public string? EncryptKey { get; set; }
+        public string? VerificationToken { get; set; }
+        public string? DefaultCardTitle { get; set; }
+        public string? ThinkingMessage { get; set; }
+        public string? DocumentAdminOpenId { get; set; }
+        public int? HttpTimeoutSeconds { get; set; }
+        public int? StreamingThrottleMs { get; set; }
+        public bool FullReplyDocEnabled { get; set; }
+        public bool FinalReplyDocEnabled { get; set; }
+        public bool AudioFullReplyDocEnabled { get; set; }
+        public bool AudioFinalReplyDocEnabled { get; set; }
+        public bool ReferencedMarkdownDocImportEnabled { get; set; }
+    }
     private sealed class UserFeishuBotRuntimeStatusModel { public string Username { get; set; } = string.Empty; public string? AppId { get; set; } public string State { get; set; } = nameof(UserFeishuBotRuntimeState.NotConfigured); public bool IsConfigured { get; set; } public bool CanStart { get; set; } public bool ShouldAutoStart { get; set; } public string? Message { get; set; } public string? LastError { get; set; } public DateTime? LastStartedAt { get; set; } public DateTime UpdatedAt { get; set; } public UserFeishuBotRuntimeStatusModel Clone() => new() { Username = Username, AppId = AppId, State = State, IsConfigured = IsConfigured, CanStart = CanStart, ShouldAutoStart = ShouldAutoStart, Message = Message, LastError = LastError, LastStartedAt = LastStartedAt, UpdatedAt = UpdatedAt }; }
-    private sealed class EditableFeishuBotConfigModel { public bool IsEnabled { get; set; } public string? AppId { get; set; } public string? AppSecret { get; set; } public string? EncryptKey { get; set; } public string? VerificationToken { get; set; } public string? DefaultCardTitle { get; set; } public string? ThinkingMessage { get; set; } public int? HttpTimeoutSeconds { get; set; } public int? StreamingThrottleMs { get; set; } public bool ReplyTtsEnabled { get; set; } public string? ReplyTtsVoiceId { get; set; } public EditableFeishuBotConfigModel Clone() => new() { IsEnabled = IsEnabled, AppId = AppId, AppSecret = AppSecret, EncryptKey = EncryptKey, VerificationToken = VerificationToken, DefaultCardTitle = DefaultCardTitle, ThinkingMessage = ThinkingMessage, HttpTimeoutSeconds = HttpTimeoutSeconds, StreamingThrottleMs = StreamingThrottleMs, ReplyTtsEnabled = ReplyTtsEnabled, ReplyTtsVoiceId = ReplyTtsVoiceId }; public static EditableFeishuBotConfigModel From(UserFeishuBotConfigModel model) => new() { IsEnabled = model.IsEnabled, AppId = model.AppId, AppSecret = model.AppSecret, EncryptKey = model.EncryptKey, VerificationToken = model.VerificationToken, DefaultCardTitle = model.DefaultCardTitle, ThinkingMessage = model.ThinkingMessage, HttpTimeoutSeconds = model.HttpTimeoutSeconds, StreamingThrottleMs = model.StreamingThrottleMs, ReplyTtsEnabled = model.ReplyTtsEnabled, ReplyTtsVoiceId = model.ReplyTtsVoiceId }; public UserFeishuBotConfigModel ToPayload(string username) => new() { Username = username, IsEnabled = IsEnabled, AppId = TrimToNull(AppId), AppSecret = TrimToNull(AppSecret), EncryptKey = TrimToNull(EncryptKey), VerificationToken = TrimToNull(VerificationToken), DefaultCardTitle = TrimToNull(DefaultCardTitle), ThinkingMessage = TrimToNull(ThinkingMessage), HttpTimeoutSeconds = HttpTimeoutSeconds, StreamingThrottleMs = StreamingThrottleMs, ReplyTtsEnabled = ReplyTtsEnabled, ReplyTtsVoiceId = TrimToNull(ReplyTtsVoiceId) }; }
+    private sealed class EditableFeishuBotConfigModel
+    {
+        public bool IsEnabled { get; set; }
+        public string? AppId { get; set; }
+        public string? AppSecret { get; set; }
+        public string? EncryptKey { get; set; }
+        public string? VerificationToken { get; set; }
+        public string? DefaultCardTitle { get; set; }
+        public string? ThinkingMessage { get; set; }
+        public string? DocumentAdminOpenId { get; set; }
+        public int? HttpTimeoutSeconds { get; set; }
+        public int? StreamingThrottleMs { get; set; }
+        public bool FullReplyDocEnabled { get; set; }
+        public bool FinalReplyDocEnabled { get; set; }
+        public bool AudioFullReplyDocEnabled { get; set; }
+        public bool AudioFinalReplyDocEnabled { get; set; }
+        public bool ReferencedMarkdownDocImportEnabled { get; set; }
+
+        public EditableFeishuBotConfigModel Clone() => new()
+        {
+            IsEnabled = IsEnabled,
+            AppId = AppId,
+            AppSecret = AppSecret,
+            EncryptKey = EncryptKey,
+            VerificationToken = VerificationToken,
+            DefaultCardTitle = DefaultCardTitle,
+            ThinkingMessage = ThinkingMessage,
+            DocumentAdminOpenId = DocumentAdminOpenId,
+            HttpTimeoutSeconds = HttpTimeoutSeconds,
+            StreamingThrottleMs = StreamingThrottleMs,
+            FullReplyDocEnabled = FullReplyDocEnabled,
+            FinalReplyDocEnabled = FinalReplyDocEnabled,
+            AudioFullReplyDocEnabled = AudioFullReplyDocEnabled,
+            AudioFinalReplyDocEnabled = AudioFinalReplyDocEnabled,
+            ReferencedMarkdownDocImportEnabled = ReferencedMarkdownDocImportEnabled
+        };
+
+        public static EditableFeishuBotConfigModel From(UserFeishuBotConfigModel model) => new()
+        {
+            IsEnabled = model.IsEnabled,
+            AppId = model.AppId,
+            AppSecret = model.AppSecret,
+            EncryptKey = model.EncryptKey,
+            VerificationToken = model.VerificationToken,
+            DefaultCardTitle = model.DefaultCardTitle,
+            ThinkingMessage = model.ThinkingMessage,
+            DocumentAdminOpenId = model.DocumentAdminOpenId,
+            HttpTimeoutSeconds = model.HttpTimeoutSeconds,
+            StreamingThrottleMs = model.StreamingThrottleMs,
+            FullReplyDocEnabled = model.FullReplyDocEnabled,
+            FinalReplyDocEnabled = model.FinalReplyDocEnabled,
+            AudioFullReplyDocEnabled = model.AudioFullReplyDocEnabled,
+            AudioFinalReplyDocEnabled = model.AudioFinalReplyDocEnabled,
+            ReferencedMarkdownDocImportEnabled = model.ReferencedMarkdownDocImportEnabled
+        };
+
+        public UserFeishuBotConfigModel ToPayload(string username) => new()
+        {
+            Username = username,
+            IsEnabled = IsEnabled,
+            AppId = TrimToNull(AppId),
+            AppSecret = TrimToNull(AppSecret),
+            EncryptKey = TrimToNull(EncryptKey),
+            VerificationToken = TrimToNull(VerificationToken),
+            DefaultCardTitle = TrimToNull(DefaultCardTitle),
+            ThinkingMessage = TrimToNull(ThinkingMessage),
+            DocumentAdminOpenId = TrimToNull(DocumentAdminOpenId),
+            HttpTimeoutSeconds = HttpTimeoutSeconds,
+            StreamingThrottleMs = StreamingThrottleMs,
+            FullReplyDocEnabled = FullReplyDocEnabled,
+            FinalReplyDocEnabled = FinalReplyDocEnabled,
+            AudioFullReplyDocEnabled = AudioFullReplyDocEnabled,
+            AudioFinalReplyDocEnabled = AudioFinalReplyDocEnabled,
+            ReferencedMarkdownDocImportEnabled = ReferencedMarkdownDocImportEnabled
+        };
+    }
     private sealed class EditableUserModel { public string Username { get; set; } = string.Empty; public string DisplayName { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; public string Role { get; set; } = UserAccessConstants.UserRole; public bool Enabled { get; set; } = true; public bool IsExistingUser { get; set; } public bool HasStoredFeishuConfig { get; set; } public DateTime? LastLoginAt { get; set; } public DateTime? CreatedAt { get; set; } public HashSet<string> AllowedToolIds { get; set; } = new(StringComparer.OrdinalIgnoreCase); public string AllowedDirectoriesText { get; set; } = string.Empty; public EditableFeishuBotConfigModel FeishuBot { get; set; } = new(); public static EditableUserModel CreateNew() => new() { AllowedToolIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) }; public static EditableUserModel FromSummary(UserSummaryDto user) => new() { Username = user.Username, DisplayName = user.DisplayName ?? string.Empty, Role = user.Role, Enabled = IsEnabled(user.Status), IsExistingUser = true, LastLoginAt = user.LastLoginAt, CreatedAt = user.CreatedAt, AllowedToolIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) }; }
     private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

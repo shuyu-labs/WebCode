@@ -2373,6 +2373,11 @@ public partial class CodeAssistant : ComponentBase, IAsyncDisposable
         await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.ExecuteSubagentPlan);
     }
 
+    private async Task OnExecuteSuperpowersCompleteWorktreeAsync(ChatMessage sourceMessage)
+    {
+        await SubmitSuperpowersQuickActionAsync(sourceMessage, SuperpowersQuickActionRequestType.ExecuteCompleteWorktree);
+    }
+
     private async Task OnStopSuperpowersActionAsync(ChatMessage sourceMessage)
     {
         var eligibility = CurrentSuperpowersQuickActionEligibility;

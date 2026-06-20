@@ -652,6 +652,14 @@
                                                     </svg>
                                                     <span>@SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText</span>
                                                 </button>
+                                                <button @onclick="() => OnExecuteSuperpowersCompleteWorktreeAsync(message)"
+                                                        disabled="@superpowersViewState.IsDisabled"
+                                                        class="inline-flex items-center justify-center gap-1.5 rounded-full border border-blue-200 px-3 py-1.5 text-xs font-medium transition-colors @(superpowersViewState.IsDisabled ? "cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-blue-700 hover:bg-blue-100")">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                                    </svg>
+                                                    <span>@SuperpowersQuickActionDefaults.CompleteWorktreeButtonText</span>
+                                                </button>
                                                 </div>
                                             }
                                             <input @bind="_superpowersQuickInput"
@@ -876,6 +884,13 @@
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
                                                 </svg>
                                                 <span>@SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText</span>
+                                            </button>
+                                            <button disabled="true"
+                                                    class="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                                                </svg>
+                                                <span>@SuperpowersQuickActionDefaults.CompleteWorktreeButtonText</span>
                                             </button>
                                             </div>
                                         }

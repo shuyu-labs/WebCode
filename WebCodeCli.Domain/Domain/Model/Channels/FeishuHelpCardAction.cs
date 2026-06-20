@@ -19,14 +19,24 @@ public class FeishuHelpCardAction
     public const string ClearGoalAction = "clear_goal";
     public const string ResumeGoalAction = "resume_goal";
     public const string TemporarilyExitGoalRuntimeAction = "temporarily_exit_goal_runtime";
+    public const string TemporarilyExitAndCompleteWorktreeAction = "temporarily_exit_and_complete_worktree";
     public const string ContinueSuperpowersAction = "continue_superpowers";
     public const string StopStreamingExecutionAction = "stop_streaming_execution";
     public const string ExecuteSuperpowersPlanAction = "execute_superpowers_plan";
     public const string ExecuteSuperpowersSubagentPlanAction = "execute_superpowers_subagent_plan";
+    public const string ExecuteSuperpowersCompleteWorktreeAction = "execute_superpowers_complete_worktree";
+    public const string ExecuteSuperpowersGoalPlanAction = "execute_superpowers_goal_plan";
     public const string ConfirmBoundSuperpowersAction = "confirm_bound_superpowers_action";
     public const string ConfirmCurrentSuperpowersAction = "confirm_current_superpowers_action";
     public const string RetrySuperpowersCapabilityDetectionAction = "retry_superpowers_capability_detection";
-    public const string ToggleReplyTtsAction = "toggle_reply_tts";
+    public const string ToggleFullReplyDocAction = "toggle_full_reply_doc";
+    public const string ToggleFinalReplyDocAction = "toggle_final_reply_doc";
+    public const string ToggleAudioFullReplyDocAction = "toggle_audio_full_reply_doc";
+    public const string ToggleAudioFinalReplyDocAction = "toggle_audio_final_reply_doc";
+    public const string ToggleReferencedMarkdownDocImportAction = "toggle_referenced_markdown_doc_import";
+    public const string SetDocumentAdminOpenIdAction = "set_document_admin_openid";
+    public const string ToggleReplyTtsAction = ToggleFullReplyDocAction;
+    public const string ToggleFinalOnlyReplyTtsAction = ToggleFinalReplyDocAction;
 
     /// <summary>
     /// 动作类型
@@ -136,6 +146,12 @@ public class FeishuHelpCardAction
     /// </summary>
     [JsonPropertyName("show_all_sessions")]
     public bool? ShowAllSessions { get; set; }
+
+    /// <summary>
+    /// 会话管理分页页码（从 0 开始）
+    /// </summary>
+    [JsonPropertyName("session_page")]
+    public int? SessionPage { get; set; }
 
     /// <summary>
     /// 表单中的模型值（会话启动设置时使用）

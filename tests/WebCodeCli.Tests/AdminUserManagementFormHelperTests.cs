@@ -51,10 +51,11 @@ public sealed class AdminUserManagementFormHelperTests
     }
 
     [Theory]
-    [InlineData(true, null, null, null, null, null, null, null, null, true)]
-    [InlineData(false, "app-id", null, null, null, null, null, null, null, true)]
-    [InlineData(false, null, null, null, null, null, null, 30, null, true)]
-    [InlineData(false, null, null, null, null, null, null, null, null, false)]
+    [InlineData(true, null, null, null, null, null, null, null, null, null, true)]
+    [InlineData(false, "app-id", null, null, null, null, null, null, null, null, true)]
+    [InlineData(false, null, null, null, null, null, null, "ou_admin", null, null, true)]
+    [InlineData(false, null, null, null, null, null, null, null, 30, null, true)]
+    [InlineData(false, null, null, null, null, null, null, null, null, null, false)]
     public void HasCustomFeishuConfig_DetectsWhetherOverrideExists(
         bool isEnabled,
         string? appId,
@@ -63,6 +64,7 @@ public sealed class AdminUserManagementFormHelperTests
         string? verificationToken,
         string? defaultCardTitle,
         string? thinkingMessage,
+        string? documentAdminOpenId,
         int? httpTimeoutSeconds,
         int? streamingThrottleMs,
         bool expected)
@@ -75,6 +77,7 @@ public sealed class AdminUserManagementFormHelperTests
             verificationToken,
             defaultCardTitle,
             thinkingMessage,
+            documentAdminOpenId,
             httpTimeoutSeconds,
             streamingThrottleMs);
 

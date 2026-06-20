@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 
 const BASE_URL = 'http://localhost:5000';
 const USERNAME = 'luhaiyan';
-const PASSWORD = 'Lusile@0680';
+const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
 
 // 测试目录路径
 const TEST_DIRECTORY = 'D:\\\\VSWorkshop\\\\TestWebCode';

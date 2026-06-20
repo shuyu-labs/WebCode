@@ -1161,10 +1161,9 @@ public class FeishuChannelServiceTests
     {
         var repository = CreateRepository(out var repositoryProxy);
         var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
-        var cardKit = new StreamingRecordingFeishuCardKitClient
-        {
-            FailUpdateOnAttempt = 2
-        };
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailUpdateAttemptSequence.Enqueue(2);
+        cardKit.FailUpdateAttemptSequence.Enqueue(1);
         var chatSessionService = new RecordingChatSessionService();
         var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-disconnect-{Guid.NewGuid():N}");
         var workspacePath = Path.Combine(workspaceRoot, "superpowers");
@@ -1231,19 +1230,670 @@ public class FeishuChannelServiceTests
                 Content = "输出两段内容"
             });
 
-            var handle = Assert.Single(cardKit.Handles);
-            Assert.Equal(2, handle.UpdateAttemptCount);
-            Assert.Single(handle.Updates);
-            Assert.Equal("第一段", handle.Updates[0]);
-            Assert.NotNull(handle.FinalContent);
-            Assert.Contains("第一段", handle.FinalContent!, StringComparison.Ordinal);
-            Assert.Contains("**错误：飞书流式更新断连，已停止继续推送卡片。**", handle.FinalContent!, StringComparison.Ordinal);
-            Assert.Contains("执行出错", handle.FinalStatusMarkdown, StringComparison.Ordinal);
-            Assert.Equal(0, cardKit.ReplyTextCallCount);
-            Assert.Null(cardKit.LastReplyTextContent);
+            Assert.Equal(3, cardKit.Handles.Count);
+            Assert.Equal(2, cardKit.Handles[0].UpdateAttemptCount);
+            Assert.Equal(1, cardKit.Handles[1].UpdateAttemptCount);
+            Assert.Equal(0, cardKit.Handles[2].UpdateAttemptCount);
+            Assert.Single(cardKit.Handles[0].Updates);
+            Assert.Equal("第一段", cardKit.Handles[0].Updates[0]);
+            Assert.Equal(
+                "第一段\n第二段\n\n当前回复已停止：当前卡片已停止更新，请查看新卡片继续结果。",
+                cardKit.Handles[0].FinalContent);
+            Assert.Contains("已停止", cardKit.Handles[0].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[1].InitialContent);
+            Assert.Empty(cardKit.Handles[1].Updates);
+            Assert.Equal(
+                "第一段\n第二段\n\n当前回复已停止：当前卡片已停止更新，请查看新卡片继续结果。",
+                cardKit.Handles[1].FinalContent);
+            Assert.Contains("已停止", cardKit.Handles[1].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[2].InitialContent);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[2].FinalContent);
+            Assert.Contains("已完成", cardKit.Handles[2].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal(1, cardKit.ReplyTextCallCount);
+            Assert.StartsWith("当前会话：superpowers", cardKit.LastReplyTextContent, StringComparison.Ordinal);
+            Assert.EndsWith("\n已完成", cardKit.LastReplyTextContent, StringComparison.Ordinal);
             Assert.Contains(
                 chatSessionService.Messages[sessionId],
                 message => message.Role == "assistant" && message.Content == "第一段\n第二段");
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_ReplacesBrokenStreamingCardOnceAndFinishesOnReplacement()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailUpdateAttemptSequence.Enqueue(1);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-recovery-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "第一段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "第二段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_recovery_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_recovery_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-recovery",
+                Content = "输出两段内容"
+            });
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal(
+                "第一段\n\n当前回复已停止：当前卡片已停止更新，请查看新卡片继续结果。",
+                cardKit.Handles[0].FinalContent);
+            Assert.Contains("已停止", cardKit.Handles[0].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal("第一段", cardKit.Handles[1].InitialContent);
+            Assert.Contains("第一段\n第二段", cardKit.Handles[1].Updates);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[1].FinalContent);
+            Assert.Contains("已完成", cardKit.Handles[1].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal(1, cardKit.ReplyTextCallCount);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenFinalCardCompletionFails_ReplacesStreamingCardAndFinishesOnReplacement()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailFinishAttemptSequence.Enqueue(1);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-finish-recovery-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "第一段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "第二段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_finish_recovery_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_finish_recovery_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-finish-recovery",
+                Content = "输出两段内容"
+            });
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal(1, cardKit.Handles[0].FinishAttemptCount);
+            Assert.Null(cardKit.Handles[0].FinalContent);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[1].InitialContent);
+            Assert.Equal("第一段\n第二段", cardKit.Handles[1].FinalContent);
+            Assert.Equal(1, cardKit.ReplyTextCallCount);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenExternalHistoryBackfillBreaksCurrentCard_ReplacesStreamingCardBeforeCompletion()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailUpdateAttemptSequence.Enqueue(2);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-history-recovery-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            Adapter = new CodexAdapter(),
+            EnableStreamParsing = true,
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ],
+            StreamChunkDelays =
+            [
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(4200),
+                TimeSpan.Zero
+            ]
+        };
+
+        var historyService = new StubExternalCliSessionHistoryService(
+        [
+            new ExternalCliHistoryMessage
+            {
+                Role = "user",
+                Content = "帮我看下goal命令有执行吗？"
+            },
+            new ExternalCliHistoryMessage
+            {
+                Role = "assistant",
+                Content = "执行了，而且还在执行中。"
+            }
+        ]);
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService(),
+            historyService);
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_history_recovery_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_history_recovery_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-history-recovery",
+                Content = "帮我看下goal命令有执行吗？"
+            });
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal(
+                "执行了，而且还在执行中。\n\n当前回复已停止：当前卡片已停止更新，请查看新卡片继续结果。",
+                cardKit.Handles[0].FinalContent);
+            Assert.Contains("已停止", cardKit.Handles[0].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal("执行了，而且还在执行中。", cardKit.Handles[1].InitialContent);
+            Assert.DoesNotContain("思考中...", cardKit.Handles[1].Updates);
+            Assert.Equal("执行了，而且还在执行中。", cardKit.Handles[1].FinalContent);
+            Assert.Contains("已完成", cardKit.Handles[1].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal("codex", historyService.LastToolId);
+            Assert.Equal("thread-1", historyService.LastCliThreadId);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenReplacementCardAlsoFails_AppendsDisconnectMessage()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        for (var attempt = 0; attempt <= 10; attempt++)
+        {
+            cardKit.FailUpdateAttemptSequence.Enqueue(1);
+        }
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-recovery-fallback-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk { Content = "第1段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第2段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第3段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第4段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第5段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第6段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第7段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第8段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第9段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第10段\n", IsCompleted = false },
+                new StreamOutputChunk { Content = "第11段\n", IsCompleted = true }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_recovery_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_recovery_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-recovery",
+                Content = "输出两段内容"
+            });
+
+            Assert.Equal(11, cardKit.Handles.Count);
+            Assert.NotNull(cardKit.Handles[^1].FinalContent);
+            Assert.Contains("第1段", cardKit.Handles[^1].FinalContent!, StringComparison.Ordinal);
+            Assert.Contains("第11段", cardKit.Handles[^1].FinalContent!, StringComparison.Ordinal);
+            Assert.Contains("**错误：飞书流式更新断连，已停止继续推送卡片。**", cardKit.Handles[^1].FinalContent!, StringComparison.Ordinal);
+            Assert.Contains("执行出错", cardKit.Handles[^1].FinalStatusMarkdown, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenReplacementCardCreationOverflows_FallsBackToPlainTextStreaming()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailUpdateAttemptSequence.Enqueue(1);
+        cardKit.ThrowOverflowOnCreateHandleSequence.Enqueue(false);
+        cardKit.ThrowOverflowOnCreateHandleSequence.Enqueue(true);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-overflow-text-fallback-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "第一段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "第二段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_overflow_fallback_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_overflow_fallback_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-overflow-fallback",
+                Content = "输出两段内容"
+            });
+
+            Assert.Single(cardKit.Handles);
+            Assert.Equal(1, cardKit.Handles[0].UpdateAttemptCount);
+            Assert.Equal(1, cardKit.SendTextCallCount);
+            Assert.True(cardKit.ReplyTextCallCount >= 1);
+            Assert.Contains("飞书卡片已超限，后续改为普通文本继续输出。", cardKit.SentTextMessages[0], StringComparison.Ordinal);
+            Assert.Contains("第一段", cardKit.SentTextMessages[0], StringComparison.Ordinal);
+            Assert.Contains("第二段", string.Join("\n", cardKit.RepliedTextMessages), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenInitialCardCreationOverflows_FallsBackToPlainTextStreaming()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.ThrowOverflowOnCreateHandleSequence.Enqueue(true);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-initial-overflow-text-fallback-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "第一段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "第二段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_initial_overflow_fallback_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_initial_overflow_fallback_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-initial-overflow-fallback",
+                Content = "输出两段内容"
+            });
+
+            Assert.Empty(cardKit.Handles);
+            Assert.Equal(1, cardKit.SendTextCallCount);
+            Assert.True(cardKit.ReplyTextCallCount >= 1);
+            Assert.Contains("飞书卡片已超限，后续改为普通文本继续输出。", cardKit.SentTextMessages[0], StringComparison.Ordinal);
+            Assert.Contains("第一段", string.Join("\n", cardKit.RepliedTextMessages), StringComparison.Ordinal);
+            Assert.Contains("第二段", string.Join("\n", cardKit.RepliedTextMessages), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenReplacementCardFinalCompletionAlsoFails_AppendsDisconnectMessage()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailFinishAttemptSequence.Enqueue(1);
+        cardKit.FailFinishAttemptSequence.Enqueue(1);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-card-finish-fallback-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "第一段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "第二段\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_finish_fallback_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_finish_fallback_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-finish-fallback",
+                Content = "输出两段内容"
+            });
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal(2, cardKit.Handles[1].FinishAttemptCount);
+            Assert.NotNull(cardKit.Handles[1].FinalContent);
+            Assert.Contains("第一段\n第二段", cardKit.Handles[1].FinalContent!, StringComparison.Ordinal);
+            Assert.Contains("**错误：飞书流式更新断连，已停止继续推送卡片。**", cardKit.Handles[1].FinalContent!, StringComparison.Ordinal);
+            Assert.Contains("执行出错", cardKit.Handles[1].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.Equal(0, cardKit.ReplyTextCallCount);
+            Assert.Null(cardKit.LastReplyTextContent);
         }
         finally
         {
@@ -1326,6 +1976,114 @@ public class FeishuChannelServiceTests
             var handle = Assert.Single(cardKit.Handles);
             Assert.Equal("第一段\n第二段", handle.FinalContent);
             Assert.False(string.IsNullOrWhiteSpace(handle.FinalStatusMarkdown));
+            Assert.Equal(1, cardKit.ReplyTextCallCount);
+            Assert.Contains(sessionId[..8], cardKit.LastReplyTextContent, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenBackgroundReplacementHandleUsesCanceledToken_SkipsNormalCompletion()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new BackgroundReplacementTokenAwareFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-stream-complete-race-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            Adapter = new CodexAdapter(),
+            EnableStreamParsing = true,
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ],
+            StreamChunkDelays =
+            [
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(4200),
+                TimeSpan.Zero
+            ]
+        };
+
+        var historyService = new StubExternalCliSessionHistoryService(
+        [
+            new ExternalCliHistoryMessage
+            {
+                Role = "user",
+                Content = "帮我看下goal命令有执行吗？"
+            },
+            new ExternalCliHistoryMessage
+            {
+                Role = "assistant",
+                Content = "执行了，而且还在执行中。"
+            }
+        ]);
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService(),
+            historyService);
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        try
+        {
+            var sessionId = service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_complete_race_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                ChatId = "oc_complete_race_chat",
+                SenderName = "luhaiyan",
+                MessageId = "msg-complete-race",
+                Content = "帮我看下goal命令有执行吗？"
+            });
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal("执行了，而且还在执行中。", cardKit.Handles[1].InitialContent);
+            Assert.Equal("执行了，而且还在执行中。", cardKit.Handles[1].FinalContent);
+            Assert.False(string.IsNullOrWhiteSpace(cardKit.Handles[1].FinalStatusMarkdown));
             Assert.Equal(1, cardKit.ReplyTextCallCount);
             Assert.Contains(sessionId[..8], cardKit.LastReplyTextContent, StringComparison.Ordinal);
         }
@@ -1429,17 +2187,38 @@ public class FeishuChannelServiceTests
     }
 
     [Fact]
-    public async Task HandleIncomingMessageAsync_QueuesReplyTtsAfterSuccessfulCompletionAndAssistantPersistence()
+    public async Task HandleIncomingMessageAsync_QueuesReplyDocumentAfterSuccessfulCompletionAndAssistantPersistence()
     {
         var repository = CreateRepository(out var repositoryProxy);
         var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
         var cardKit = new StreamingRecordingFeishuCardKitClient();
         var chatSessionService = new RecordingChatSessionService();
-        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var replyTtsOrchestrator = new RecordingReplyDocumentOrchestrator();
         var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-success-{Guid.NewGuid():N}");
         var workspacePath = Path.Combine(workspaceRoot, "superpowers");
         Directory.CreateDirectory(workspacePath);
-        var cliExecutor = new PromptCapturingCliExecutor(workspacePath);
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            Adapter = new CodexAdapter(),
+            EnableStreamParsing = true,
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"thread.started","thread_id":"thread-1"}
+                              {"type":"item.updated","item":{"type":"agent_message","text":"过程说明"}}
+                              {"type":"item.updated","item":{"type":"agent_message","text":"结论内容","phase":"final_answer"}}
+                              """ + "\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
         var serviceProvider = new TestServiceProvider(
             repository,
             sessionDirectoryService,
@@ -1474,11 +2253,12 @@ public class FeishuChannelServiceTests
 
             replyTtsOrchestrator.OnQueued = request =>
             {
-                Assert.Equal("补充完成", request.Output);
+                Assert.Equal("过程说明结论内容", request.Output);
+                Assert.Equal("结论内容", request.FinalAnswerOutput);
                 Assert.Contains(
                     chatSessionService.Messages[sessionId],
-                    message => message.Role == "assistant" && message.Content == "补充完成" && message.IsCompleted);
-                Assert.Equal("补充完成", Assert.Single(cardKit.Handles).FinalContent);
+                    message => message.Role == "assistant" && message.Content == "过程说明结论内容" && message.IsCompleted);
+                Assert.Equal("过程说明结论内容", Assert.Single(cardKit.Handles).FinalContent);
                 return Task.CompletedTask;
             };
 
@@ -1493,9 +2273,13 @@ public class FeishuChannelServiceTests
 
             var queued = await replyTtsOrchestrator.WhenQueued.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal("oc_reply_tts_chat", queued.ChatId);
+            Assert.Equal(sessionId, queued.SessionId);
+            Assert.Equal("thread-1", queued.CliThreadId);
+            Assert.Equal("继续", queued.OriginalUserQuestion);
             Assert.Equal("luhaiyan", queued.Username);
             Assert.Equal("cli_test", queued.AppId);
-            Assert.Equal("补充完成", queued.Output);
+            Assert.Equal("过程说明结论内容", queued.Output);
+            Assert.Equal("结论内容", queued.FinalAnswerOutput);
         }
         finally
         {
@@ -1504,13 +2288,13 @@ public class FeishuChannelServiceTests
     }
 
     [Fact]
-    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyTtsWhenExecutionErrors()
+    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyDocumentWhenExecutionErrors()
     {
         var repository = CreateRepository(out var repositoryProxy);
         var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
         var cardKit = new StreamingRecordingFeishuCardKitClient();
         var chatSessionService = new RecordingChatSessionService();
-        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var replyTtsOrchestrator = new RecordingReplyDocumentOrchestrator();
         var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-error-{Guid.NewGuid():N}");
         var workspacePath = Path.Combine(workspaceRoot, "superpowers");
         Directory.CreateDirectory(workspacePath);
@@ -1564,13 +2348,13 @@ public class FeishuChannelServiceTests
     }
 
     [Fact]
-    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyTtsForSupersededExecution()
+    public async Task HandleIncomingMessageAsync_DoesNotQueueReplyDocumentForSupersededExecution()
     {
         var repository = CreateRepository(out var repositoryProxy);
         var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
         var cardKit = new StreamingRecordingFeishuCardKitClient();
         var chatSessionService = new RecordingChatSessionService();
-        var replyTtsOrchestrator = new RecordingReplyTtsOrchestrator();
+        var replyTtsOrchestrator = new RecordingReplyDocumentOrchestrator();
         var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-reply-tts-superseded-{Guid.NewGuid():N}");
         var workspacePath = Path.Combine(workspaceRoot, "superpowers");
         Directory.CreateDirectory(workspacePath);
@@ -1741,11 +2525,13 @@ public class FeishuChannelServiceTests
                 "execution_control_row",
                 "execution_control_row",
                 "plan_action_row",
-                "plan_action_row"
+                "plan_action_row",
+                "goal_plan_action_row",
+                "goal_plan_action_row"
             ],
             initialChrome.BottomActions.Select(action => action.RowKey).ToArray());
 
-            Assert.Equal(7, chrome.BottomActions.Count);
+            Assert.Equal(9, chrome.BottomActions.Count);
             Assert.Equal(
             [
                 GoalQuickActionDefaults.StatusButtonText,
@@ -1754,12 +2540,16 @@ public class FeishuChannelServiceTests
                 GoalQuickActionDefaults.ResumeButtonText,
                 SuperpowersQuickActionDefaults.ContinueButtonText,
                 SuperpowersQuickActionDefaults.ExecutePlanButtonText,
-                SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText
+                SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText,
+                SuperpowersQuickActionDefaults.ExecuteGoalPlanButtonText,
+                SuperpowersQuickActionDefaults.CompleteWorktreeButtonText
             ],
             chrome.BottomActions.Select(action => action.Text).ToArray());
             Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecutePlanButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteGoalPlanButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.CompleteWorktreeButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == "/goal");
             Assert.Contains(chrome.BottomActions, action => action.Text == "/goal pause");
             Assert.Contains(chrome.BottomActions, action => action.Text == "/goal clear");
@@ -1779,6 +2569,16 @@ public class FeishuChannelServiceTests
                 $"\"action\":\"{FeishuHelpCardAction.ExecuteSuperpowersSubagentPlanAction}\"",
                 JsonSerializer.Serialize(
                     Assert.Single(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText).Value),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"\"action\":\"{FeishuHelpCardAction.ExecuteSuperpowersGoalPlanAction}\"",
+                JsonSerializer.Serialize(
+                    Assert.Single(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteGoalPlanButtonText).Value),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"\"action\":\"{FeishuHelpCardAction.ExecuteSuperpowersCompleteWorktreeAction}\"",
+                JsonSerializer.Serialize(
+                    Assert.Single(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.CompleteWorktreeButtonText).Value),
                 StringComparison.Ordinal);
             Assert.Contains(
                 "\"action\":\"status_goal\"",
@@ -2052,11 +2852,13 @@ public class FeishuChannelServiceTests
         IExternalCliSessionHistoryService? externalCliSessionHistoryService = null,
         ISuperpowersCapabilityService? superpowersCapabilityService = null,
         IGoalCapabilityService? goalCapabilityService = null,
+        IReplyDocumentOrchestrator? replyTtsOrchestrator = null,
         IFeishuAttachmentDraftService? attachmentDraftService = null) : IServiceProvider, IServiceScopeFactory, IServiceScope
     {
         private readonly IExternalCliSessionHistoryService _externalCliSessionHistoryService = externalCliSessionHistoryService ?? new StubExternalCliSessionHistoryService([]);
         private readonly ISuperpowersCapabilityService _superpowersCapabilityService = superpowersCapabilityService ?? new StubSuperpowersCapabilityService();
         private readonly IGoalCapabilityService _goalCapabilityService = goalCapabilityService ?? new StubGoalCapabilityService();
+        private readonly IReplyDocumentOrchestrator? _replyTtsOrchestrator = replyTtsOrchestrator;
         private readonly IFeishuAttachmentDraftService _attachmentDraftService = attachmentDraftService ?? new FeishuAttachmentDraftService();
 
         public object? GetService(Type serviceType)
@@ -2104,6 +2906,11 @@ public class FeishuChannelServiceTests
             if (serviceType == typeof(IGoalCapabilityService))
             {
                 return _goalCapabilityService;
+            }
+
+            if (serviceType == typeof(IReplyDocumentOrchestrator))
+            {
+                return _replyTtsOrchestrator;
             }
 
             if (serviceType == typeof(IFeishuAttachmentDraftService))
@@ -2277,15 +3084,15 @@ public class FeishuChannelServiceTests
                 });
     }
 
-    private sealed class RecordingReplyTtsOrchestrator : IReplyTtsOrchestrator
+    private sealed class RecordingReplyDocumentOrchestrator : IReplyDocumentOrchestrator
     {
-        public List<FeishuCompletedReplyTtsRequest> Requests { get; } = new();
+        public List<FeishuCompletedReplyDocumentRequest> Requests { get; } = new();
 
-        public TaskCompletionSource<FeishuCompletedReplyTtsRequest> WhenQueued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<FeishuCompletedReplyDocumentRequest> WhenQueued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Func<FeishuCompletedReplyTtsRequest, Task>? OnQueued { get; set; }
+        public Func<FeishuCompletedReplyDocumentRequest, Task>? OnQueued { get; set; }
 
-        public async Task QueueCompletedReplyAsync(FeishuCompletedReplyTtsRequest request)
+        public async Task QueueCompletedReplyAsync(FeishuCompletedReplyDocumentRequest request)
         {
             Requests.Add(request);
             WhenQueued.TrySetResult(request);
@@ -2372,9 +3179,15 @@ public class FeishuChannelServiceTests
     {
         public List<StreamingHandleRecord> Handles { get; } = new();
 
+        public int SendTextCallCount { get; private set; }
+
         public int ReplyTextCallCount { get; private set; }
 
         public string? LastReplyTextContent { get; private set; }
+
+        public List<string> SentTextMessages { get; } = [];
+
+        public List<string> RepliedTextMessages { get; } = [];
 
         public (byte[] Content, string FileName, string MimeType) DownloadedResource { get; set; }
             = (Array.Empty<byte>(), "attachment.bin", "application/octet-stream");
@@ -2386,6 +3199,12 @@ public class FeishuChannelServiceTests
         public string? LastDownloadedResourceType { get; private set; }
 
         public int? FailUpdateOnAttempt { get; set; }
+
+        public Queue<int?> FailUpdateAttemptSequence { get; } = new();
+
+        public Queue<int?> FailFinishAttemptSequence { get; } = new();
+
+        public Queue<bool> ThrowOverflowOnCreateHandleSequence { get; } = new();
 
         public string? LastReplyRawCardMessageId { get; private set; }
 
@@ -2401,7 +3220,11 @@ public class FeishuChannelServiceTests
             => Task.FromResult($"message-{cardId}");
 
         public Task<string> SendTextMessageAsync(string chatId, string content, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
-            => Task.FromResult("message-text");
+        {
+            SendTextCallCount++;
+            SentTextMessages.Add(content);
+            return Task.FromResult($"message-text-{SendTextCallCount}");
+        }
 
         public Task<string> ReplyCardMessageAsync(string replyMessageId, string cardId, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
             => Task.FromResult($"reply-{cardId}");
@@ -2410,6 +3233,7 @@ public class FeishuChannelServiceTests
         {
             ReplyTextCallCount++;
             LastReplyTextContent = content;
+            RepliedTextMessages.Add(content);
             return Task.FromResult($"reply-text-{ReplyTextCallCount}");
         }
 
@@ -2421,6 +3245,17 @@ public class FeishuChannelServiceTests
 
         public Task<FeishuStreamingHandle> CreateStreamingHandleAsync(string chatId, string? replyMessageId, string initialContent, string? title = null, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null, FeishuStreamingCardChrome? chrome = null)
         {
+            if (ThrowOverflowOnCreateHandleSequence.Count > 0 && ThrowOverflowOnCreateHandleSequence.Dequeue())
+            {
+                throw new InvalidOperationException("Create CardKit card failed: card over max size (code: 200860)");
+            }
+
+            var failUpdateOnAttempt = FailUpdateAttemptSequence.Count > 0
+                ? FailUpdateAttemptSequence.Dequeue()
+                : FailUpdateOnAttempt;
+            var failFinishOnAttempt = FailFinishAttemptSequence.Count > 0
+                ? FailFinishAttemptSequence.Dequeue()
+                : null;
             var record = new StreamingHandleRecord
             {
                 CardId = $"card-{Handles.Count + 1}",
@@ -2443,7 +3278,7 @@ public class FeishuChannelServiceTests
                 (content, _) =>
                 {
                     record.UpdateAttemptCount++;
-                    if (FailUpdateOnAttempt.HasValue && record.UpdateAttemptCount >= FailUpdateOnAttempt.Value)
+                    if (failUpdateOnAttempt.HasValue && record.UpdateAttemptCount >= failUpdateOnAttempt.Value)
                     {
                         return Task.FromResult(false);
                     }
@@ -2457,6 +3292,12 @@ public class FeishuChannelServiceTests
                 },
                 (content, _) =>
                 {
+                    record.FinishAttemptCount++;
+                    if (failFinishOnAttempt.HasValue && record.FinishAttemptCount == failFinishOnAttempt.Value)
+                    {
+                        return Task.FromResult(false);
+                    }
+
                     record.FinalContent = content;
                     record.FinalStatusMarkdown = chrome?.StatusMarkdown;
                     record.FinalChromeSnapshot = CloneChrome(chrome);
@@ -2613,6 +3454,110 @@ public class FeishuChannelServiceTests
         }
     }
 
+    private sealed class BackgroundReplacementTokenAwareFeishuCardKitClient : IFeishuCardKitClient
+    {
+        public List<StreamingHandleRecord> Handles { get; } = new();
+
+        public int ReplyTextCallCount { get; private set; }
+
+        public string? LastReplyTextContent { get; private set; }
+
+        public Task<string> CreateCardAsync(string initialContent, string? title = null, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => Task.FromResult($"card-{Handles.Count + 1}");
+
+        public Task<bool> UpdateCardAsync(string cardId, string content, int sequence, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => Task.FromResult(true);
+
+        public Task<string> SendCardMessageAsync(string chatId, string cardId, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => Task.FromResult($"message-{cardId}");
+
+        public Task<string> SendTextMessageAsync(string chatId, string content, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => Task.FromResult("message-text-1");
+
+        public Task<string> ReplyCardMessageAsync(string replyMessageId, string cardId, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => Task.FromResult($"reply-{cardId}");
+
+        public Task<string> ReplyTextMessageAsync(string replyMessageId, string content, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+        {
+            ReplyTextCallCount++;
+            LastReplyTextContent = content;
+            return Task.FromResult($"reply-text-{ReplyTextCallCount}");
+        }
+
+        public Task<FeishuDownloadedAttachment> DownloadIncomingAttachmentAsync(
+            FeishuIncomingAttachment attachment,
+            CancellationToken cancellationToken = default,
+            FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
+
+        public Task<FeishuStreamingHandle> CreateStreamingHandleAsync(
+            string chatId,
+            string? replyMessageId,
+            string initialContent,
+            string? title = null,
+            CancellationToken cancellationToken = default,
+            FeishuOptions? optionsOverride = null,
+            FeishuStreamingCardChrome? chrome = null)
+        {
+            var isReplacementHandle = Handles.Count > 0;
+            var record = new StreamingHandleRecord
+            {
+                CardId = $"card-{Handles.Count + 1}",
+                MessageId = $"message-{Handles.Count + 1}",
+                ReplyMessageId = replyMessageId,
+                InitialContent = initialContent,
+                Chrome = chrome,
+                InitialStatusMarkdown = chrome?.StatusMarkdown
+            };
+            Handles.Add(record);
+
+            return Task.FromResult(new FeishuStreamingHandle(
+                record.CardId,
+                record.MessageId,
+                (content, _) =>
+                {
+                    record.UpdateAttemptCount++;
+                    if (!isReplacementHandle && record.UpdateAttemptCount >= 2)
+                    {
+                        return Task.FromResult(false);
+                    }
+
+                    record.Updates.Add(content);
+                    return Task.FromResult(true);
+                },
+                (content, _) =>
+                {
+                    record.FinishAttemptCount++;
+                    if (isReplacementHandle && cancellationToken.IsCancellationRequested)
+                    {
+                        return Task.FromResult(false);
+                    }
+
+                    record.FinalContent = content;
+                    record.FinalStatusMarkdown = chrome?.StatusMarkdown;
+                    return Task.FromResult(true);
+                },
+                throttleMs: 0));
+        }
+
+        public Task<string> SendRawCardAsync(string chatId, string cardJson, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
+
+        public Task<string> ReplyElementsCardAsync(string replyMessageId, FeishuNetSdk.Im.Dtos.ElementsCardV2Dto card, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
+
+        public Task<string> ReplyRawCardAsync(string replyMessageId, string cardJson, CancellationToken cancellationToken = default, FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
+
+        public Task<(byte[] Content, string FileName, string MimeType)> DownloadMessageResourceAsync(
+            string messageId,
+            string fileKey,
+            string resourceType,
+            CancellationToken cancellationToken = default,
+            FeishuOptions? optionsOverride = null)
+            => throw new NotSupportedException();
+    }
+
     private static string? TryGetActionName(object value)
     {
         var element = JsonSerializer.SerializeToElement(value);
@@ -2636,6 +3581,8 @@ public class FeishuChannelServiceTests
         public List<string> Updates { get; } = new();
 
         public int UpdateAttemptCount { get; set; }
+
+        public int FinishAttemptCount { get; set; }
 
         public string? FinalContent { get; set; }
 
@@ -2914,6 +3861,8 @@ public class FeishuChannelServiceTests
 
         public string FinalContent { get; set; } = "\u8865\u5145\u5b8c\u6210\n";
 
+        public TimeSpan CompletionDelay { get; set; } = TimeSpan.Zero;
+
         public ICliToolAdapter? Adapter { get; set; }
 
         public bool EnableStreamParsing { get; set; }
@@ -2921,6 +3870,8 @@ public class FeishuChannelServiceTests
         public bool UsePersistentProcess { get; set; } = true;
 
         public List<StreamOutputChunk>? StreamChunks { get; set; }
+
+        public List<TimeSpan>? StreamChunkDelays { get; set; }
 
         public ICliToolAdapter? GetAdapter(CliToolConfig tool) => Adapter;
 
@@ -2959,9 +3910,14 @@ public class FeishuChannelServiceTests
 
             if (StreamChunks is { Count: > 0 })
             {
-                foreach (var chunk in StreamChunks)
+                for (var index = 0; index < StreamChunks.Count; index++)
                 {
-                    yield return chunk;
+                    if (StreamChunkDelays is { Count: > 0 } && index < StreamChunkDelays.Count && StreamChunkDelays[index] > TimeSpan.Zero)
+                    {
+                        await Task.Delay(StreamChunkDelays[index], cancellationToken);
+                    }
+
+                    yield return StreamChunks[index];
                 }
 
                 yield break;
@@ -2972,6 +3928,11 @@ public class FeishuChannelServiceTests
                 Content = FinalContent,
                 IsCompleted = false
             };
+
+            if (CompletionDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(CompletionDelay, cancellationToken);
+            }
 
             yield return new StreamOutputChunk
             {
@@ -2996,9 +3957,14 @@ public class FeishuChannelServiceTests
 
             if (StreamChunks is { Count: > 0 })
             {
-                foreach (var chunk in StreamChunks)
+                for (var index = 0; index < StreamChunks.Count; index++)
                 {
-                    yield return chunk;
+                    if (StreamChunkDelays is { Count: > 0 } && index < StreamChunkDelays.Count && StreamChunkDelays[index] > TimeSpan.Zero)
+                    {
+                        await Task.Delay(StreamChunkDelays[index], cancellationToken);
+                    }
+
+                    yield return StreamChunks[index];
                 }
 
                 yield break;
@@ -3009,6 +3975,11 @@ public class FeishuChannelServiceTests
                 Content = FinalContent,
                 IsCompleted = false
             };
+
+            if (CompletionDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(CompletionDelay, cancellationToken);
+            }
 
             yield return new StreamOutputChunk
             {
@@ -3272,9 +4243,11 @@ public class FeishuChannelServiceTests
             Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ClearButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.ResumeButtonText);
             Assert.Contains(chrome.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText);
+            Assert.Contains(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.CompleteWorktreeButtonText);
             Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ContinueButtonText);
             Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecutePlanButtonText);
             Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteSubagentPlanButtonText);
+            Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.ExecuteGoalPlanButtonText);
             Assert.DoesNotContain(chrome.BottomActions, action => action.Text == SuperpowersQuickActionDefaults.StopButtonText);
             Assert.Equal(
             [
@@ -3282,9 +4255,284 @@ public class FeishuChannelServiceTests
                 "goal_row_1",
                 "goal_row_2",
                 "goal_row_2",
+                "goal_row_3",
                 "goal_row_3"
             ],
             chrome.BottomActions.Select(action => action.RowKey).ToArray());
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenGoalRuntimeTurnBoundary_RotatesToNewCardAndKeepsGoalButtonsOnLatestTurn()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        var chatSessionService = new RecordingChatSessionService();
+        var replyTtsOrchestrator = new RecordingReplyDocumentOrchestrator();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-goal-runtime-turn-boundary-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        const string sessionId = "44444444-goal-runtime-turn-boundary";
+        repositoryProxy.Store(new ChatSessionEntity
+        {
+            SessionId = sessionId,
+            Username = "luhaiyan",
+            WorkspacePath = workspacePath,
+            ToolId = "codex",
+            ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new SessionToolLaunchOverride
+                    {
+                        UsePersistentProcess = false,
+                        UseGoalRuntime = true
+                    }
+                }),
+            FeishuChatKey = "oc_goal_runtime_turn_boundary_chat",
+            IsFeishuActive = true,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            Adapter = new CodexAdapter(),
+            EnableStreamParsing = true,
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"thread.started","thread_id":"thread-1"}
+                              {"type":"item.updated","item":{"type":"agent_message","text":"第一轮过程"}}
+                              {"type":"item.completed","item":{"type":"agent_message","text":"第一轮结论","phase":"final_answer"}}
+                              """ + "\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsTurnBoundary = true,
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"item.updated","item":{"type":"agent_message","text":"第二轮过程"}}
+                              {"type":"item.completed","item":{"type":"agent_message","text":"第二轮结论","phase":"final_answer"}}
+                              """ + "\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = string.Empty,
+                    IsCompleted = true
+                }
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService(),
+            replyTtsOrchestrator: replyTtsOrchestrator);
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService,
+            replyTtsOrchestrator);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                MessageId = "msg-goal-runtime-turn-boundary",
+                ChatId = "oc_goal_runtime_turn_boundary_chat",
+                Content = "继续",
+                SenderName = "luhaiyan"
+            });
+
+            Assert.Equal(2, replyTtsOrchestrator.Requests.Count);
+            Assert.Equal("第一轮过程第一轮结论", replyTtsOrchestrator.Requests[0].Output);
+            Assert.Equal("第一轮结论", replyTtsOrchestrator.Requests[0].FinalAnswerOutput);
+            Assert.Equal("第二轮过程第二轮结论", replyTtsOrchestrator.Requests[1].Output);
+            Assert.Equal("第二轮结论", replyTtsOrchestrator.Requests[1].FinalAnswerOutput);
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal("第一轮过程第一轮结论", cardKit.Handles[0].FinalContent);
+            Assert.Contains("Goal继续中", cardKit.Handles[0].FinalStatusMarkdown, StringComparison.Ordinal);
+            Assert.NotNull(cardKit.Handles[0].FinalChromeSnapshot);
+            Assert.Null(cardKit.Handles[0].FinalChromeSnapshot!.BottomPrompt);
+            Assert.Empty(cardKit.Handles[0].FinalChromeSnapshot.AdditionalBottomPrompts);
+            Assert.DoesNotContain(cardKit.Handles[0].FinalChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.StatusButtonText);
+            Assert.DoesNotContain(cardKit.Handles[0].FinalChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.PauseButtonText);
+            Assert.DoesNotContain(cardKit.Handles[0].FinalChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.ClearButtonText);
+            Assert.DoesNotContain(cardKit.Handles[0].FinalChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.ResumeButtonText);
+            Assert.DoesNotContain(cardKit.Handles[0].FinalChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText);
+
+            Assert.NotNull(cardKit.Handles[1].InitialChromeSnapshot);
+            Assert.Null(cardKit.Handles[1].InitialChromeSnapshot!.BottomPrompt);
+            Assert.Single(cardKit.Handles[1].InitialChromeSnapshot.AdditionalBottomPrompts);
+            Assert.Contains(cardKit.Handles[1].InitialChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.StatusButtonText);
+            Assert.Contains(cardKit.Handles[1].InitialChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.PauseButtonText);
+            Assert.Contains(cardKit.Handles[1].InitialChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.ClearButtonText);
+            Assert.Contains(cardKit.Handles[1].InitialChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.ResumeButtonText);
+            Assert.Contains(cardKit.Handles[1].InitialChromeSnapshot.BottomActions, action => action.Text == GoalQuickActionDefaults.TemporaryExitButtonText);
+            Assert.False(string.IsNullOrWhiteSpace(cardKit.Handles[1].InitialContent));
+            Assert.DoesNotContain("第一轮过程第一轮结论", cardKit.Handles[1].InitialContent, StringComparison.Ordinal);
+            Assert.Equal("第二轮过程第二轮结论", cardKit.Handles[1].FinalContent);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            Directory.Delete(workspaceRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_WhenGoalRuntimeCardUpdateFails_DelaysReplacementUntilNextNewOutput()
+    {
+        var repository = CreateRepository(out var repositoryProxy);
+        var sessionDirectoryService = new RecordingSessionDirectoryService(repositoryProxy);
+        var cardKit = new StreamingRecordingFeishuCardKitClient();
+        cardKit.FailUpdateAttemptSequence.Enqueue(1);
+        var chatSessionService = new RecordingChatSessionService();
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), $"feishu-goal-runtime-deferred-replacement-{Guid.NewGuid():N}");
+        var workspacePath = Path.Combine(workspaceRoot, "superpowers");
+        Directory.CreateDirectory(workspacePath);
+
+        var cliExecutor = new PromptCapturingCliExecutor(workspacePath)
+        {
+            Adapter = new CodexAdapter(),
+            EnableStreamParsing = true,
+            StreamChunks =
+            [
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"thread.started","thread_id":"thread-goal-runtime-deferred"}
+                              {"type":"item.updated","item":{"type":"agent_message","text":"第一段"}}
+                              """ + "\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"item.updated","item":{"type":"agent_message","text":"第二段"}}
+                              """ + "\n",
+                    IsCompleted = false
+                },
+                new StreamOutputChunk
+                {
+                    Content = """
+                              {"type":"item.completed","item":{"type":"agent_message","text":"最终结论","phase":"final_answer"}}
+                              """ + "\n",
+                    IsCompleted = true
+                }
+            ],
+            StreamChunkDelays =
+            [
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(1200),
+                TimeSpan.Zero
+            ]
+        };
+
+        var serviceProvider = new TestServiceProvider(
+            repository,
+            sessionDirectoryService,
+            new StubFeishuUserBindingService(),
+            new StubUserFeishuBotConfigService(),
+            new StubUserContextService());
+
+        var service = new FeishuChannelService(
+            Options.Create(new FeishuOptions
+            {
+                Enabled = true,
+                AppId = "cli_test",
+                AppSecret = "secret"
+            }),
+            NullLogger<FeishuChannelService>.Instance,
+            cardKit,
+            serviceProvider,
+            cliExecutor,
+            chatSessionService);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            service.CreateNewSession(
+                new FeishuIncomingMessage
+                {
+                    ChatId = "oc_goal_runtime_deferred_replacement_chat",
+                    SenderName = "luhaiyan"
+                },
+                workspacePath,
+                "codex");
+
+            var sessionId = service.GetCurrentSession("oc_goal_runtime_deferred_replacement_chat", "luhaiyan");
+            Assert.NotNull(sessionId);
+
+            await repositoryProxy.UpdateAsync(new ChatSessionEntity
+            {
+                SessionId = sessionId!,
+                Username = "luhaiyan",
+                ToolId = "codex",
+                WorkspacePath = workspacePath,
+                FeishuChatKey = "oc_goal_runtime_deferred_replacement_chat",
+                IsWorkspaceValid = true,
+                IsFeishuActive = true,
+                ToolLaunchOverridesJson = SessionLaunchOverrideHelper.Serialize(
+                    new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["codex"] = new SessionToolLaunchOverride
+                        {
+                            UsePersistentProcess = false,
+                            UseGoalRuntime = true
+                        }
+                    }),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+                UpdatedAt = DateTime.UtcNow
+            });
+
+            var handleMessageTask = service.HandleIncomingMessageAsync(new FeishuIncomingMessage
+            {
+                MessageId = "msg-goal-runtime-deferred-replacement",
+                ChatId = "oc_goal_runtime_deferred_replacement_chat",
+                Content = "继续",
+                SenderName = "luhaiyan"
+            });
+
+            await Task.Delay(400, TestContext.Current.CancellationToken);
+
+            Assert.Single(cardKit.Handles);
+            Assert.Null(cardKit.Handles[0].FinalContent);
+
+            await handleMessageTask;
+
+            Assert.Equal(2, cardKit.Handles.Count);
+            Assert.Equal(
+                "第一段第二段\n\n当前回复已停止：当前卡片已停止更新，请查看新卡片继续结果。",
+                cardKit.Handles[0].FinalContent);
+            Assert.Equal("第一段第二段最终结论", cardKit.Handles[1].FinalContent);
         }
         finally
         {
@@ -3329,6 +4577,12 @@ public class FeishuChannelServiceTests
             LastCliThreadId = cliThreadId;
             return Task.FromResult(_messages.TakeLast(maxCount).ToList());
         }
+
+        public Task<string?> GetCodexFinalAnswerTextAsync(
+            string cliThreadId,
+            string? workspacePath = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
     }
 
     private sealed class ErrorCliExecutor(string workspacePath) : ICliExecutorService
@@ -3516,6 +4770,12 @@ public class FeishuChannelServiceTests
         public void Store(ChatSessionEntity session)
         {
             _sessions[session.SessionId] = Clone(session);
+        }
+
+        public Task<bool> UpdateAsync(ChatSessionEntity session)
+        {
+            _sessions[session.SessionId] = Clone(session);
+            return Task.FromResult(true);
         }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)

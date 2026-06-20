@@ -1,6 +1,7 @@
 @namespace WebCodeCli.Components
 @using Microsoft.AspNetCore.Components.Forms
 @using WebCodeCli.Domain.Domain.Model
+@using WebCodeCli.Domain.Domain.Model.Channels
 
 @if (_isVisible)
 {
@@ -210,53 +211,54 @@
                                         <input type="checkbox" @bind="_editor.FeishuBot.IsEnabled" class="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
                                     </label>
                                     <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 space-y-3">
-                                        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                            <div class="space-y-1">
-                                                <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.replyTtsTitle", "回复语音播报", "Reply TTS")</div>
-                                                <p class="text-xs text-gray-500">@Tx("adminUserManagement.replyTtsHint", "开启后会为飞书回复生成语音；语音列表来自当前平台运行时。", "When enabled, Feishu replies can generate speech using the current runtime voice catalog.")</p>
-                                            </div>
-                                            <button @onclick="RefreshReplyTtsPlatformAsync" disabled="@_isRefreshingReplyTtsPlatform" type="button" class="px-3 py-2 rounded-xl bg-gray-100 text-sm text-gray-700 hover:bg-gray-200 transition-colors disabled:opacity-50">
-                                                @(_isRefreshingReplyTtsPlatform ? Tx("adminUserManagement.refreshingReplyTts", "刷新中...", "Refreshing...") : Tx("adminUserManagement.refreshReplyTts", "刷新语音", "Refresh voices"))
-                                            </button>
+                                        <div class="space-y-1">
+                                            <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.replyDocsTitle", "回复文档", "Reply Documents")</div>
+                                            <p class="text-xs text-gray-500">@Tx("adminUserManagement.replyDocsHint", "保存回复后可自动把内容写入飞书云文档，并将链接单独发送到聊天窗口。", "After a reply is saved, WebCode can write it to Feishu docs and send the links as separate chat messages.")</p>
                                         </div>
-                                        <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-center justify-between gap-3">
-                                            <span class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.replyTtsEnabled", "启用回复 TTS", "Enable reply TTS")</span>
-                                            <input type="checkbox" @bind="_editor.FeishuBot.ReplyTtsEnabled" class="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
-                                        </label>
-                                        <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 md:items-end">
-                                            <label class="space-y-2">
-                                                <span class="text-xs text-gray-500">@Tx("adminUserManagement.replyTtsVoice", "语音", "Voice")</span>
-                                                <InputSelect @bind-Value="_editor.FeishuBot.ReplyTtsVoiceId" disabled="@ReplyTtsUiState.IsVoiceSelectorDisabled" class="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-gray-400 focus:bg-white disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400">
-                                                    <option value="">@Tx("adminUserManagement.replyTtsVoiceAuto", "跟随平台默认语音", "Use platform default voice")</option>
-                                                    @foreach (var voice in ReplyTtsUiState.VoiceOptions)
-                                                    {
-                                                        <option value="@voice.VoiceId">@voice.DisplayName</option>
-                                                    }
-                                                </InputSelect>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-start gap-3">
+                                                <input type="checkbox" @bind="_editor.FeishuBot.FullReplyDocEnabled" class="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+                                                <div class="min-w-0">
+                                                    <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.fullReplyDocTitle", "完整回复文档", "Full reply document")</div>
+                                                    <div class="text-xs text-gray-500">@Tx("adminUserManagement.fullReplyDocHint", "将完整回复正文写入单独的飞书云文档。", "Write the full reply body into a separate Feishu doc.")</div>
+                                                </div>
                                             </label>
-                                            <div class="text-xs text-gray-500 md:text-right">
-                                                @if (_replyTtsHealth.IsAvailable)
-                                                {
-                                                    <span>@Tx("adminUserManagement.replyTtsVoiceCount", "可用语音数", "Available voices"): @ReplyTtsUiState.VoiceOptions.Count</span>
-                                                    @if (!string.IsNullOrWhiteSpace(_replyTtsHealth.DefaultVoiceId))
-                                                    {
-                                                        <span class="block">@Tx("adminUserManagement.replyTtsDefaultVoice", "默认语音", "Default voice"): @_replyTtsHealth.DefaultVoiceId</span>
-                                                    }
-                                                }
-                                                else
-                                                {
-                                                    <span>@Tx("adminUserManagement.replyTtsUnavailable", "平台当前不可用", "Platform currently unavailable")</span>
-                                                }
-                                            </div>
+                                            <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-start gap-3">
+                                                <input type="checkbox" @bind="_editor.FeishuBot.FinalReplyDocEnabled" class="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+                                                <div class="min-w-0">
+                                                    <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.finalReplyDocTitle", "结论回复文档", "Conclusion reply document")</div>
+                                                    <div class="text-xs text-gray-500">@Tx("adminUserManagement.finalReplyDocHint", "仅将结构化 final_answer 内容写入单独的飞书云文档。", "Write only structured final_answer content into a separate Feishu doc.")</div>
+                                                </div>
+                                            </label>
                                         </div>
-                                        @if (!string.IsNullOrWhiteSpace(ReplyTtsUiState.WarningMessage))
-                                        {
-                                            <div class="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800 break-words">@ReplyTtsUiState.WarningMessage</div>
-                                        }
-                                        else if (!string.IsNullOrWhiteSpace(_replyTtsHealth.Message))
-                                        {
-                                            <div class="text-xs text-gray-500 break-words">@_replyTtsHealth.Message</div>
-                                        }
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-start gap-3">
+                                                <input type="checkbox" @bind="_editor.FeishuBot.AudioFullReplyDocEnabled" class="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+                                                <div class="min-w-0">
+                                                    <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.audioFullReplyDocTitle", "听完整文档", "Listen full document")</div>
+                                                    <div class="text-xs text-gray-500">@Tx("adminUserManagement.audioFullReplyDocHint", "写入适合听文档的完整回复版本，会将文件路径改写为易听的映射占位符。", "Write a listening-friendly full reply doc and replace file references with spoken placeholders.")</div>
+                                                </div>
+                                            </label>
+                                            <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-start gap-3">
+                                                <input type="checkbox" @bind="_editor.FeishuBot.AudioFinalReplyDocEnabled" class="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+                                                <div class="min-w-0">
+                                                    <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.audioFinalReplyDocTitle", "听结论文档", "Listen conclusion document")</div>
+                                                    <div class="text-xs text-gray-500">@Tx("adminUserManagement.audioFinalReplyDocHint", "只写入可听的结论文档版本，只处理 final_answer 内容。", "Write only the listening-friendly conclusion doc from final_answer content.")</div>
+                                                </div>
+                                            </label>
+                                            <label class="rounded-2xl border border-gray-200 bg-white px-4 py-3 flex items-start gap-3">
+                                                <input type="checkbox" @bind="_editor.FeishuBot.ReferencedMarkdownDocImportEnabled" class="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500" />
+                                                <div class="min-w-0">
+                                                    <div class="text-sm font-medium text-gray-800">MD转在线文档</div>
+                                                    <div class="text-xs text-gray-500">Import referenced local Markdown files into Feishu online docs after reply completion.</div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                        <div class="space-y-2">
+                                            <div class="text-sm font-medium text-gray-800">@Tx("adminUserManagement.documentAdminTitle", "文档管理员 OpenID", "Document admin OpenID")</div>
+                                            <input value="@(_editor.FeishuBot.DocumentAdminOpenId ?? string.Empty)" readonly type="text" placeholder="@Tx("adminUserManagement.documentAdminPlaceholder", "可在飞书帮助卡片点击按钮保存当前操作者", "Use the Feishu help-card button to save the current operator.")" class="w-full rounded-2xl border border-gray-200 bg-gray-100 px-4 py-3 text-sm text-gray-700 outline-none font-mono" />
+                                            <div class="text-xs text-gray-500">@Tx("adminUserManagement.documentAdminHint", "该值由飞书帮助卡片中的“设为文档管理员”按钮写入。后续生成的回复文档会自动授予该 OpenID 管理权限。", "This value is written from the Feishu help-card button. Future reply documents automatically grant this OpenID admin access.")</div>
+                                        </div>
                                     </div>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <input @bind="_editor.FeishuBot.AppId" @bind:event="oninput" type="text" placeholder="App ID" class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm outline-none transition focus:border-gray-400 focus:bg-white" />

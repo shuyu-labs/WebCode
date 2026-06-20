@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using WebCodeCli.Domain.Common.Options;
 using WebCodeCli.Domain.Domain.Model;
 using WebCodeCli.Domain.Domain.Model.Channels;
 using WebCodeCli.Domain.Domain.Service;
-using WebCodeCli.Domain.Domain.Service.Channels;
 using WebCodeCli.Domain.Repositories.Base.UserAccount;
 using WebCodeCli.Domain.Repositories.Base.UserFeishuBotConfig;
 
@@ -20,7 +20,7 @@ public class AdminController : ControllerBase
     private readonly IUserFeishuBotConfigService _userFeishuBotConfigService;
     private readonly IUserFeishuBotRuntimeService _userFeishuBotRuntimeService;
     private readonly ICliExecutorService _cliExecutorService;
-    private readonly IFeishuReplyTtsPlatformService _feishuReplyTtsPlatformService;
+    private readonly IFeishuDocumentAdminGrantService _feishuDocumentAdminGrantService;
 
     public AdminController(
         IUserAccountService userAccountService,
@@ -29,7 +29,7 @@ public class AdminController : ControllerBase
         IUserFeishuBotConfigService userFeishuBotConfigService,
         IUserFeishuBotRuntimeService userFeishuBotRuntimeService,
         ICliExecutorService cliExecutorService,
-        IFeishuReplyTtsPlatformService feishuReplyTtsPlatformService)
+        IFeishuDocumentAdminGrantService feishuDocumentAdminGrantService)
     {
         _userAccountService = userAccountService;
         _userToolPolicyService = userToolPolicyService;
@@ -37,7 +37,7 @@ public class AdminController : ControllerBase
         _userFeishuBotConfigService = userFeishuBotConfigService;
         _userFeishuBotRuntimeService = userFeishuBotRuntimeService;
         _cliExecutorService = cliExecutorService;
-        _feishuReplyTtsPlatformService = feishuReplyTtsPlatformService;
+        _feishuDocumentAdminGrantService = feishuDocumentAdminGrantService;
     }
 
     [HttpGet("users")]
@@ -142,7 +142,16 @@ public class AdminController : ControllerBase
         var config = await _userFeishuBotConfigService.GetByUsernameAsync(username);
         if (config == null)
         {
-            return Ok(new UserFeishuBotConfigDto { Username = username, IsEnabled = false });
+            return Ok(new UserFeishuBotConfigDto
+            {
+                Username = username,
+                IsEnabled = false,
+                FullReplyDocEnabled = false,
+                FinalReplyDocEnabled = false,
+                AudioFullReplyDocEnabled = false,
+                AudioFinalReplyDocEnabled = false,
+                ReferencedMarkdownDocImportEnabled = false
+            });
         }
 
         return Ok(MapFeishuConfig(config));
@@ -151,6 +160,12 @@ public class AdminController : ControllerBase
     [HttpPut("users/{username}/feishu-bot")]
     public async Task<ActionResult> SaveFeishuBotConfig(string username, [FromBody] UserFeishuBotConfigDto request)
     {
+        var legacyReplyTtsMode = ReplyTtsModes.Resolve(request.ReplyTtsMode, request.ReplyTtsEnabled);
+        var fullReplyDocEnabled = request.FullReplyDocEnabled
+            || string.Equals(legacyReplyTtsMode, ReplyTtsModes.FullReply, StringComparison.Ordinal);
+        var finalReplyDocEnabled = request.FinalReplyDocEnabled
+            || string.Equals(legacyReplyTtsMode, ReplyTtsModes.FinalOnly, StringComparison.Ordinal);
+
         var result = await _userFeishuBotConfigService.SaveAsync(new UserFeishuBotConfigEntity
         {
             Username = username.Trim(),
@@ -163,8 +178,12 @@ public class AdminController : ControllerBase
             ThinkingMessage = request.ThinkingMessage,
             HttpTimeoutSeconds = request.HttpTimeoutSeconds,
             StreamingThrottleMs = request.StreamingThrottleMs,
-            ReplyTtsEnabled = request.ReplyTtsEnabled,
-            ReplyTtsVoiceId = request.ReplyTtsVoiceId
+            FullReplyDocEnabled = fullReplyDocEnabled,
+            FinalReplyDocEnabled = finalReplyDocEnabled,
+            AudioFullReplyDocEnabled = request.AudioFullReplyDocEnabled,
+            AudioFinalReplyDocEnabled = request.AudioFinalReplyDocEnabled,
+            ReferencedMarkdownDocImportEnabled = request.ReferencedMarkdownDocImportEnabled,
+            DocumentAdminOpenId = request.DocumentAdminOpenId
         });
 
         if (!result.Success)
@@ -177,15 +196,8 @@ public class AdminController : ControllerBase
             return StatusCode(500, new { error = result.ErrorMessage ?? "保存飞书机器人配置失败。" });
         }
 
-        FeishuReplyTtsHealthStatus? ttsHealth = null;
-        if (request.ReplyTtsEnabled)
-        {
-            ttsHealth = await _feishuReplyTtsPlatformService.EnsureServiceStartedAsync(
-                HttpContext?.RequestAborted ?? CancellationToken.None);
-        }
-
         var status = await _userFeishuBotRuntimeService.StopAsync(username);
-        return Ok(new { success = true, status = MapFeishuRuntimeStatus(status), ttsHealth });
+        return Ok(new { success = true, status = MapFeishuRuntimeStatus(status) });
     }
 
     [HttpDelete("users/{username}/feishu-bot")]
@@ -234,18 +246,55 @@ public class AdminController : ControllerBase
         return Ok(MapFeishuRuntimeStatus(status));
     }
 
-    [HttpGet("feishu-tts/health")]
-    public async Task<ActionResult<FeishuReplyTtsHealthStatus>> GetFeishuTtsHealth()
+    [HttpPost("users/{username}/feishu-bot/grant-document-admin")]
+    public async Task<ActionResult> GrantFeishuDocumentAdmin(string username, [FromBody] GrantFeishuDocumentAdminRequestDto request)
     {
-        var health = await _feishuReplyTtsPlatformService.GetHealthAsync(HttpContext?.RequestAborted ?? CancellationToken.None);
-        return Ok(health);
+        var result = await _feishuDocumentAdminGrantService.GrantConfiguredAdminAsync(username, request.DocumentId);
+        return ToGrantResponse(result);
     }
 
-    [HttpGet("feishu-tts/voices")]
-    public async Task<ActionResult<List<FeishuReplyTtsVoiceOption>>> GetFeishuTtsVoices()
+    [HttpPost("users/{username}/feishu-bot/grant-document-admin/batch")]
+    public async Task<ActionResult> GrantFeishuDocumentAdminBatch(string username, [FromBody] GrantFeishuDocumentAdminBatchRequestDto request)
     {
-        var voices = await _feishuReplyTtsPlatformService.GetVoicesAsync(HttpContext?.RequestAborted ?? CancellationToken.None);
-        return Ok(voices.ToList());
+        if (request.DocumentIds == null || request.DocumentIds.Count == 0)
+        {
+            return BadRequest(new { error = "文档 ID 列表不能为空。" });
+        }
+
+        var result = await _feishuDocumentAdminGrantService.GrantConfiguredAdminBatchAsync(username, request.DocumentIds);
+        return Ok(new
+        {
+            success = result.FailureCount == 0,
+            successCount = result.SuccessCount,
+            failureCount = result.FailureCount,
+            results = result.Results
+        });
+    }
+
+    private ActionResult ToGrantResponse(FeishuDocumentAdminGrantResult result)
+    {
+        if (result.Success)
+        {
+            return Ok(new
+            {
+                success = true,
+                username = result.Username,
+                documentId = result.DocumentId,
+                openId = result.OpenId
+            });
+        }
+
+        if (result.StatusCode == 404)
+        {
+            return NotFound(new { error = result.ErrorMessage });
+        }
+
+        if (result.StatusCode == 400)
+        {
+            return BadRequest(new { error = result.ErrorMessage });
+        }
+
+        return StatusCode(500, new { error = result.ErrorMessage ?? "授予文档管理员权限失败。" });
     }
 
     private static UserAccountResponseDto MapUser(UserAccountEntity account)
@@ -276,8 +325,12 @@ public class AdminController : ControllerBase
             ThinkingMessage = config.ThinkingMessage,
             HttpTimeoutSeconds = config.HttpTimeoutSeconds,
             StreamingThrottleMs = config.StreamingThrottleMs,
-            ReplyTtsEnabled = config.ReplyTtsEnabled,
-            ReplyTtsVoiceId = config.ReplyTtsVoiceId
+            FullReplyDocEnabled = config.FullReplyDocEnabled,
+            FinalReplyDocEnabled = config.FinalReplyDocEnabled,
+            AudioFullReplyDocEnabled = config.AudioFullReplyDocEnabled,
+            AudioFinalReplyDocEnabled = config.AudioFinalReplyDocEnabled,
+            ReferencedMarkdownDocImportEnabled = config.ReferencedMarkdownDocImportEnabled,
+            DocumentAdminOpenId = config.DocumentAdminOpenId
         };
     }
 
@@ -346,8 +399,14 @@ public sealed class UserFeishuBotConfigDto
     public string? ThinkingMessage { get; set; }
     public int? HttpTimeoutSeconds { get; set; }
     public int? StreamingThrottleMs { get; set; }
+    public string? ReplyTtsMode { get; set; }
     public bool ReplyTtsEnabled { get; set; }
-    public string? ReplyTtsVoiceId { get; set; }
+    public bool FullReplyDocEnabled { get; set; }
+    public bool FinalReplyDocEnabled { get; set; }
+    public bool AudioFullReplyDocEnabled { get; set; }
+    public bool AudioFinalReplyDocEnabled { get; set; }
+    public bool ReferencedMarkdownDocImportEnabled { get; set; }
+    public string? DocumentAdminOpenId { get; set; }
 }
 
 public sealed class UserFeishuBotRuntimeStatusDto
@@ -362,4 +421,14 @@ public sealed class UserFeishuBotRuntimeStatusDto
     public string? LastError { get; set; }
     public DateTime? LastStartedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+}
+
+public sealed class GrantFeishuDocumentAdminRequestDto
+{
+    public string DocumentId { get; set; } = string.Empty;
+}
+
+public sealed class GrantFeishuDocumentAdminBatchRequestDto
+{
+    public List<string> DocumentIds { get; set; } = new();
 }

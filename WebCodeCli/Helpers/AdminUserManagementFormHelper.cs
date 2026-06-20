@@ -62,6 +62,7 @@ public static class AdminUserManagementFormHelper
         string? verificationToken,
         string? defaultCardTitle,
         string? thinkingMessage,
+        string? documentAdminOpenId,
         int? httpTimeoutSeconds,
         int? streamingThrottleMs)
     {
@@ -72,6 +73,7 @@ public static class AdminUserManagementFormHelper
                !string.IsNullOrWhiteSpace(verificationToken) ||
                !string.IsNullOrWhiteSpace(defaultCardTitle) ||
                !string.IsNullOrWhiteSpace(thinkingMessage) ||
+               !string.IsNullOrWhiteSpace(documentAdminOpenId) ||
                httpTimeoutSeconds.HasValue ||
                streamingThrottleMs.HasValue;
     }

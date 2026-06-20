@@ -76,6 +76,46 @@ public class CliExecutionRequestAdapterTests
     }
 
     [Fact]
+    public void CodexAdapter_BuildArguments_WithNativeAttachmentAndDashPrefixedPrompt_PlacesAttachmentsBeforeArgumentTerminator()
+    {
+        var adapter = new CodexAdapter();
+        var tool = new CliToolConfig
+        {
+            Id = "codex",
+            Name = "Codex",
+            Command = "codex",
+            Enabled = true
+        };
+        var request = new CliExecutionRequest
+        {
+            SessionId = "session-123",
+            ToolId = "codex",
+            PromptText = "- Docs/superpowers/plans/test.md",
+            SessionContext = new CliSessionContext
+            {
+                SessionId = "session-123",
+                WorkingDirectory = Path.GetTempPath()
+            },
+            NativeAttachments =
+            [
+                new CliExecutionAttachment
+                {
+                    DisplayName = "diagram.png",
+                    Kind = MessageAttachmentKind.Image,
+                    AbsolutePath = @"D:\attachments\diagram.png",
+                    WorkspaceRelativePath = ".webcode/message-inputs/submission-1/diagram.png"
+                }
+            ]
+        };
+
+        var arguments = adapter.BuildArguments(tool, request);
+
+        Assert.Equal(
+            "exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json -i \"D:\\attachments\\diagram.png\" -- \"- Docs/superpowers/plans/test.md\"",
+            arguments);
+    }
+
+    [Fact]
     public void ClaudeCodeAdapter_BuildArguments_RequestOverload_IncludesReferenceAttachmentPreamble()
     {
         var adapter = new ClaudeCodeAdapter();

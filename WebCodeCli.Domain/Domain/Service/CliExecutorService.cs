@@ -24,6 +24,8 @@ namespace WebCodeCli.Domain.Domain.Service;
 public class CliExecutorService : ICliExecutorService
 {
     private const string CodexLaunchBaseConfigFileName = "config.webcode.base.toml";
+    private const string GoalRuntimeContinuationPromptPrefix = "Continue working toward the current active goal";
+    private static readonly Encoding CodexTransportEncoding = new UTF8Encoding(false);
 
     private readonly ILogger<CliExecutorService> _logger;
     private readonly CliToolsOption _options;
@@ -199,6 +201,13 @@ public class CliExecutorService : ICliExecutorService
             return null;
         }
 
+        var liveThreadId = _codexAppServerSessionManager.GetRunningThreadId(sessionId);
+        if (!string.IsNullOrWhiteSpace(liveThreadId))
+        {
+            RepairCliThreadIdCache(sessionId, liveThreadId, logRepair: true);
+            return liveThreadId;
+        }
+
         lock (_cliSessionLock)
         {
             if (_cliThreadIds.TryGetValue(sessionId, out var cached) && !string.IsNullOrWhiteSpace(cached))
@@ -266,7 +275,20 @@ public class CliExecutorService : ICliExecutorService
     public void SetCliThreadId(string sessionId, string threadId)
     {
         if (string.IsNullOrEmpty(threadId)) return;
-        
+
+        var liveThreadId = _codexAppServerSessionManager.GetRunningThreadId(sessionId);
+        if (!string.IsNullOrWhiteSpace(liveThreadId)
+            && !string.Equals(liveThreadId, threadId, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogDebug(
+                "忽略与活动 Codex goal runtime 主线程不一致的 CLI ThreadId: Session={SessionId}, ObservedThread={ObservedThread}, LiveThread={LiveThread}",
+                sessionId,
+                threadId,
+                liveThreadId);
+            RepairCliThreadIdCache(sessionId, liveThreadId, logRepair: false);
+            return;
+        }
+
         lock (_cliSessionLock)
         {
             _cliThreadIds[sessionId] = threadId;
@@ -283,6 +305,44 @@ public class CliExecutorService : ICliExecutorService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "鎸佷箙鍖?CLI ThreadId 澶辫触: {SessionId}", sessionId);
+        }
+    }
+
+    private void RepairCliThreadIdCache(string sessionId, string authoritativeThreadId, bool logRepair)
+    {
+        string? cachedThreadId;
+        lock (_cliSessionLock)
+        {
+            _cliThreadIds.TryGetValue(sessionId, out cachedThreadId);
+            _cliThreadIds[sessionId] = authoritativeThreadId;
+        }
+
+        if (string.Equals(cachedThreadId, authoritativeThreadId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (logRepair)
+        {
+            _logger.LogDebug(
+                "使用活动 Codex goal runtime 主线程修正会话线程绑定: Session={SessionId}, PreviousThread={PreviousThread}, LiveThread={LiveThread}",
+                sessionId,
+                cachedThreadId,
+                authoritativeThreadId);
+        }
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var repo = scope.ServiceProvider.GetService<IChatSessionRepository>();
+            if (repo != null)
+            {
+                _ = repo.UpdateCliThreadIdAsync(sessionId, authoritativeThreadId).GetAwaiter().GetResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "修正 CLI ThreadId 持久化失败: {SessionId}", sessionId);
         }
     }
 
@@ -1500,6 +1560,7 @@ public class CliExecutorService : ICliExecutorService
             RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            StandardInputEncoding = IsCodexExecution(tool, adapter) ? GetCodexTransportEncoding() : Encoding.UTF8,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
@@ -1620,7 +1681,7 @@ public class CliExecutorService : ICliExecutorService
 
         RegisterActiveSessionProcess(sessionId, process);
 
-        WriteStandardInput(process, BuildStandardInput(tool, adapter, sessionContext, useLowInterruption, lowInterruptionPrompt));
+        WriteStandardInput(process, BuildStandardInput(tool, adapter, requestWithContext, sessionContext, useLowInterruption, lowInterruptionPrompt));
         
         _logger.LogInformation("进程已启动，PID: {ProcessId}，开始读取输出流", process.Id);
 
@@ -2859,10 +2920,16 @@ public class CliExecutorService : ICliExecutorService
     private static string? BuildStandardInput(
         CliToolConfig tool,
         ICliToolAdapter? adapter,
+        CliExecutionRequest request,
         CliSessionContext sessionContext,
         bool useLowInterruption,
         string? lowInterruptionPrompt)
     {
+        if (!useLowInterruption && IsCodexExecution(tool, adapter))
+        {
+            return request.BuildPromptText();
+        }
+
         if (!useLowInterruption)
         {
             return null;
@@ -3195,17 +3262,6 @@ public class CliExecutorService : ICliExecutorService
                             goal.TokenBudget,
                             threadId,
                             cancellationToken);
-
-                        turnRun = await StartGoalTurnWithRetryAsync(
-                            sessionId,
-                            resolvedCommand,
-                            tool,
-                            workingDirectory,
-                            environmentVariables,
-                            sessionContext,
-                            goal.Objective,
-                            threadId,
-                            cancellationToken);
                     }
                     catch (Exception ex)
                     {
@@ -3224,18 +3280,25 @@ public class CliExecutorService : ICliExecutorService
                         yield break;
                     }
 
-                    if (turnRun != null)
+                    yield return new StreamOutputChunk
                     {
-                        yield return new StreamOutputChunk
-                        {
-                            Content = "已恢复 goal，正在继续推进...",
-                            IsCompleted = false
-                        };
+                        Content = "已恢复 goal，正在继续推进...",
+                        IsCompleted = false
+                    };
 
-                        await foreach (var chunk in turnRun.Output.WithCancellation(cancellationToken))
-                        {
-                            yield return chunk;
-                        }
+                    await foreach (var chunk in StreamGoalRuntimeTurnsWhileActiveAsync(
+                                       sessionId,
+                                       resolvedCommand,
+                                       tool,
+                                       workingDirectory,
+                                       environmentVariables,
+                                       sessionContext,
+                                       threadId,
+                                       goal.Objective,
+                                       goal.Objective,
+                                       cancellationToken))
+                    {
+                        yield return chunk;
                     }
 
                     yield break;
@@ -3266,17 +3329,6 @@ public class CliExecutorService : ICliExecutorService
                             null,
                             threadId,
                             cancellationToken);
-
-                        turnRun = await StartGoalTurnWithRetryAsync(
-                            sessionId,
-                            resolvedCommand,
-                            tool,
-                            workingDirectory,
-                            environmentVariables,
-                            sessionContext,
-                            goalObjective,
-                            threadId,
-                            cancellationToken);
                     }
                     catch (Exception ex)
                     {
@@ -3295,18 +3347,25 @@ public class CliExecutorService : ICliExecutorService
                         yield break;
                     }
 
-                    if (turnRun != null)
+                    yield return new StreamOutputChunk
                     {
-                        yield return new StreamOutputChunk
-                        {
-                            Content = $"已提交 goal：{goalObjective}{Environment.NewLine}正在围绕该目标持续推进...",
-                            IsCompleted = false
-                        };
+                        Content = $"已提交 goal：{goalObjective}{Environment.NewLine}正在围绕该目标持续推进...",
+                        IsCompleted = false
+                    };
 
-                        await foreach (var chunk in turnRun.Output.WithCancellation(cancellationToken))
-                        {
-                            yield return chunk;
-                        }
+                    await foreach (var chunk in StreamGoalRuntimeTurnsWhileActiveAsync(
+                                       sessionId,
+                                       resolvedCommand,
+                                       tool,
+                                       workingDirectory,
+                                       environmentVariables,
+                                       sessionContext,
+                                       threadId,
+                                       goalObjective,
+                                       goalObjective,
+                                       cancellationToken))
+                    {
+                        yield return chunk;
                     }
 
                     yield break;
@@ -3357,6 +3416,132 @@ public class CliExecutorService : ICliExecutorService
                 yield return chunk;
             }
         }
+    }
+
+    private async IAsyncEnumerable<StreamOutputChunk> StreamGoalRuntimeTurnsWhileActiveAsync(
+        string sessionId,
+        string commandPath,
+        CliToolConfig tool,
+        string workingDirectory,
+        Dictionary<string, string>? environmentVariables,
+        CliSessionContext sessionContext,
+        string threadId,
+        string initialTurnPrompt,
+        string goalObjective,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var nextTurnPrompt = initialTurnPrompt;
+        var currentGoalObjective = goalObjective;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            AppServerTurnRun? turnRun = null;
+            StreamOutputChunk? terminalChunk = null;
+            try
+            {
+                turnRun = await StartGoalTurnWithRetryAsync(
+                    sessionId,
+                    commandPath,
+                    tool,
+                    workingDirectory,
+                    environmentVariables,
+                    sessionContext,
+                    nextTurnPrompt,
+                    threadId,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "启动下一轮 goal runtime turn 失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                terminalChunk = new StreamOutputChunk
+                {
+                    IsError = true,
+                    IsCompleted = true,
+                    ErrorMessage = $"Codex goal runtime 执行失败: {ex.Message}"
+                };
+            }
+
+            if (terminalChunk != null)
+            {
+                yield return terminalChunk;
+                yield break;
+            }
+
+            await foreach (var chunk in turnRun!.Output.WithCancellation(cancellationToken))
+            {
+                if (chunk.IsError)
+                {
+                    yield return chunk;
+                    yield break;
+                }
+
+                if (chunk.IsCompleted)
+                {
+                    break;
+                }
+
+                yield return chunk;
+            }
+
+            AppServerGoalSnapshot? goalSnapshot = null;
+            try
+            {
+                goalSnapshot = await _codexAppServerSessionManager.GetGoalAsync(
+                    sessionId,
+                    commandPath,
+                    tool,
+                    workingDirectory,
+                    environmentVariables,
+                    sessionContext,
+                    threadId,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "读取 goal runtime 后续状态失败: Session={SessionId}, Thread={ThreadId}", sessionId, threadId);
+                terminalChunk = new StreamOutputChunk
+                {
+                    IsError = true,
+                    IsCompleted = true,
+                    ErrorMessage = $"查询 goal 状态失败: {ex.Message}"
+                };
+            }
+
+            if (terminalChunk != null)
+            {
+                yield return terminalChunk;
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(goalSnapshot?.Objective))
+            {
+                currentGoalObjective = goalSnapshot.Objective;
+            }
+
+            if (!string.Equals(goalSnapshot?.Status, "active", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new StreamOutputChunk
+                {
+                    IsCompleted = true
+                };
+                yield break;
+            }
+
+            yield return new StreamOutputChunk
+            {
+                IsTurnBoundary = true
+            };
+
+            nextTurnPrompt = BuildGoalRuntimeContinuationPrompt(currentGoalObjective);
+        }
+    }
+
+    private static string BuildGoalRuntimeContinuationPrompt(string goalObjective)
+    {
+        var trimmedObjective = goalObjective?.Trim();
+        return string.IsNullOrWhiteSpace(trimmedObjective)
+            ? $"{GoalRuntimeContinuationPromptPrefix}. Reuse the current thread context, do not restart from scratch, and keep going until the goal is complete or blocked on user input."
+            : $"{GoalRuntimeContinuationPromptPrefix}: {trimmedObjective}. Reuse the current thread context, do not restart from scratch, and keep going until the goal is complete or blocked on user input.";
     }
 
     private async Task<AppServerTurnRun> StartGoalTurnWithRetryAsync(
@@ -3596,6 +3781,11 @@ public class CliExecutorService : ICliExecutorService
                || adapter is CodexAdapter
                || (adapter?.SupportedToolIds.Any(static id =>
                    string.Equals(id, "codex", StringComparison.OrdinalIgnoreCase)) ?? false);
+    }
+
+    internal static Encoding GetCodexTransportEncoding()
+    {
+        return CodexTransportEncoding;
     }
 
     private static void WriteStandardInput(Process process, string? standardInput)
@@ -3968,6 +4158,87 @@ public class CliExecutorService : ICliExecutorService
             cancellationToken);
     }
 
+    public async Task<AppServerGoalSnapshot?> TryGetGoalRuntimeGoalAsync(
+        string sessionId,
+        string? toolId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return null;
+        }
+
+        var session = await TryGetChatSessionAsync(sessionId);
+        if (session == null)
+        {
+            return null;
+        }
+
+        var effectiveToolId = SessionLaunchOverrideHelper.ResolveEffectiveToolId(
+            toolId ?? session.ToolId,
+            session.CcSwitchSnapshotToolId);
+        if (!string.Equals(effectiveToolId, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var launchOverride = await GetEffectiveSessionLaunchOverrideAsync(sessionId, effectiveToolId);
+        if (launchOverride?.UseGoalRuntime != true)
+        {
+            return null;
+        }
+
+        var cliThreadId = GetCliThreadId(sessionId);
+        if (string.IsNullOrWhiteSpace(cliThreadId)
+            || !_codexAppServerSessionManager.HasRunningSession(sessionId, cliThreadId))
+        {
+            return null;
+        }
+
+        var username = ResolveUsernameForToolOperation(null, sessionId);
+        var tool = GetTool(effectiveToolId, username);
+        if (tool == null)
+        {
+            return null;
+        }
+
+        tool = ApplySessionLaunchOverride(tool, launchOverride);
+
+        var sessionWorkspace = !string.IsNullOrWhiteSpace(session.WorkspacePath)
+            ? session.WorkspacePath
+            : GetOrCreateSessionWorkspace(sessionId);
+        var workingDirectory = !string.IsNullOrWhiteSpace(tool.WorkingDirectory)
+            ? tool.WorkingDirectory
+            : sessionWorkspace;
+        var environmentVariables = await GetToolEnvironmentVariablesAsync(tool.Id, username);
+        var sessionContext = await BuildCliSessionContextAsync(
+            sessionId,
+            tool.Id,
+            sessionWorkspace,
+            cliThreadId,
+            environmentVariables,
+            cancellationToken);
+        sessionContext.WorkingDirectory = workingDirectory;
+
+        try
+        {
+            return await _codexAppServerSessionManager.GetGoalAsync(
+                sessionId,
+                ResolveCommandPath(tool.Command),
+                tool,
+                workingDirectory,
+                environmentVariables,
+                sessionContext,
+                cliThreadId,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "读取 Goal runtime goal 状态失败: Session={SessionId}", sessionId);
+            return null;
+        }
+    }
+
     private async Task BestEffortSyncCodexGoalRuntimeThreadProviderAsync(
         string sessionId,
         string sessionWorkspace,
@@ -3976,6 +4247,15 @@ public class CliExecutorService : ICliExecutorService
     {
         if (string.IsNullOrWhiteSpace(cliThreadId))
         {
+            return;
+        }
+
+        if (_codexAppServerSessionManager.HasRunningSession(sessionId, cliThreadId))
+        {
+            _logger.LogDebug(
+                "复用现有 Codex goal runtime 会话，跳过线程 Provider 同步: Session={SessionId}, Thread={ThreadId}",
+                sessionId,
+                cliThreadId);
             return;
         }
 

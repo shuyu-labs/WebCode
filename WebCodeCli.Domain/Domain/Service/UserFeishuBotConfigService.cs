@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using WebCodeCli.Domain.Common.Extensions;
 using WebCodeCli.Domain.Common.Options;
+using WebCodeCli.Domain.Domain.Model.Channels;
 using WebCodeCli.Domain.Repositories.Base.UserFeishuBotConfig;
 
 namespace WebCodeCli.Domain.Domain.Service;
@@ -27,7 +28,13 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
             return null;
         }
 
-        return await _repository.GetByUsernameAsync(username.Trim());
+        var config = await _repository.GetByUsernameAsync(username.Trim());
+        if (config != null)
+        {
+            NormalizeConfig(config);
+        }
+
+        return config;
     }
 
     public async Task<UserFeishuBotConfigEntity?> GetByAppIdAsync(string appId)
@@ -39,6 +46,11 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
         }
 
         var configs = await _repository.GetListAsync(x => x.AppId != null);
+        foreach (var config in configs)
+        {
+            NormalizeConfig(config);
+        }
+
         return configs.FirstOrDefault(x => string.Equals(
             NormalizeValue(x.AppId),
             normalizedAppId,
@@ -82,8 +94,15 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
         existing.ThinkingMessage = config.ThinkingMessage;
         existing.HttpTimeoutSeconds = config.HttpTimeoutSeconds;
         existing.StreamingThrottleMs = config.StreamingThrottleMs;
-        existing.ReplyTtsEnabled = config.ReplyTtsEnabled;
-        existing.ReplyTtsVoiceId = config.ReplyTtsVoiceId;
+        existing.FullReplyDocEnabled = config.FullReplyDocEnabled;
+        existing.FinalReplyDocEnabled = config.FinalReplyDocEnabled;
+        existing.AudioFullReplyDocEnabled = config.AudioFullReplyDocEnabled;
+        existing.AudioFinalReplyDocEnabled = config.AudioFinalReplyDocEnabled;
+        existing.ReferencedMarkdownDocImportEnabled = config.ReferencedMarkdownDocImportEnabled;
+        existing.DocumentAdminOpenId = config.DocumentAdminOpenId;
+        existing.LegacyReplyTtsEnabled = config.LegacyReplyTtsEnabled;
+        existing.LegacyReplyTtsMode = config.LegacyReplyTtsMode;
+        existing.LegacyReplyTtsVoiceId = config.LegacyReplyTtsVoiceId;
         existing.UpdatedAt = now;
 
         return await _repository.UpdateAsync(existing)
@@ -117,6 +136,11 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
     public async Task<List<UserFeishuBotConfigEntity>> GetAutoStartCandidatesAsync()
     {
         var configs = await _repository.GetListAsync(x => x.AutoStartEnabled && x.IsEnabled && x.AppId != null && x.AppSecret != null);
+        foreach (var config in configs)
+        {
+            NormalizeConfig(config);
+        }
+
         return configs
             .Where(UserFeishuBotOptionsFactory.HasUsableCredentials)
             .ToList();
@@ -183,7 +207,21 @@ public class UserFeishuBotConfigService : IUserFeishuBotConfigService
         config.VerificationToken = NormalizeValue(config.VerificationToken);
         config.DefaultCardTitle = NormalizeValue(config.DefaultCardTitle);
         config.ThinkingMessage = NormalizeValue(config.ThinkingMessage);
-        config.ReplyTtsVoiceId = NormalizeValue(config.ReplyTtsVoiceId);
+        config.LegacyReplyTtsMode = NormalizeValue(config.LegacyReplyTtsMode);
+        config.LegacyReplyTtsVoiceId = NormalizeValue(config.LegacyReplyTtsVoiceId);
+        config.DocumentAdminOpenId = NormalizeValue(config.DocumentAdminOpenId);
+        var legacyReplyTtsMode = ReplyTtsModes.Resolve(config.LegacyReplyTtsMode, config.LegacyReplyTtsEnabled == true);
+        config.FullReplyDocEnabled = config.FullReplyDocEnabled
+            || string.Equals(legacyReplyTtsMode, ReplyTtsModes.FullReply, StringComparison.Ordinal);
+        config.FinalReplyDocEnabled = config.FinalReplyDocEnabled
+            || string.Equals(legacyReplyTtsMode, ReplyTtsModes.FinalOnly, StringComparison.Ordinal);
+        config.LegacyReplyTtsEnabled = config.FullReplyDocEnabled || config.FinalReplyDocEnabled;
+        config.LegacyReplyTtsMode = config.FullReplyDocEnabled
+            ? ReplyTtsModes.FullReply
+            : config.FinalReplyDocEnabled
+                ? ReplyTtsModes.FinalOnly
+                : ReplyTtsModes.Off;
+        config.LegacyReplyTtsVoiceId = null;
     }
 
     private static string? NormalizeValue(string? value)

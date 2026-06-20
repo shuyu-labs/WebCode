@@ -240,6 +240,16 @@ public class UserFeishuBotRuntimeService : IUserFeishuBotRuntimeService, IHosted
         }
     }
 
+    public async Task RecoverAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _logger.LogInformation("开始重建飞书机器人运行态");
+        await ((IHostedService)this).StopAsync(cancellationToken);
+        await ((IHostedService)this).StartAsync(cancellationToken);
+        _logger.LogInformation("飞书机器人运行态重建完成");
+    }
+
     async Task IHostedService.StartAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();

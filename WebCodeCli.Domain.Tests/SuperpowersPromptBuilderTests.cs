@@ -11,6 +11,7 @@ public class SuperpowersPromptBuilderTests
         Assert.Equal(
             SuperpowersQuickActionDefaults.ContinuePrompt,
             SuperpowersPromptBuilder.BuildContinuePrompt());
+        Assert.StartsWith("可以，认可", SuperpowersPromptBuilder.BuildContinuePrompt(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -29,10 +30,18 @@ public class SuperpowersPromptBuilderTests
             SuperpowersPromptBuilder.BuildSubagentExecutePlanPrompt());
     }
 
+    [Fact]
+    public void BuildCompleteWorktreePrompt_ReturnsApprovedPrompt()
+    {
+        Assert.Equal(
+            SuperpowersQuickActionDefaults.CompleteWorktreePrompt,
+            SuperpowersPromptBuilder.BuildCompleteWorktreePrompt());
+    }
+
     [Theory]
-    [InlineData("写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
-    [InlineData("$superpowers ，使用superpowers技能，写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
-    [InlineData("  写一个执行步骤  ", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.")]
+    [InlineData("写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation in English only. 代码注释需要使用中英文双语。 Keep exception and error messages in Chinese.")]
+    [InlineData("$superpowers ，使用superpowers技能，写一个执行步骤", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation in English only. 代码注释需要使用中英文双语。 Keep exception and error messages in Chinese.")]
+    [InlineData("  写一个执行步骤  ", "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation in English only. 代码注释需要使用中英文双语。 Keep exception and error messages in Chinese.")]
     public void BuildQuickSkillPrompt_AppliesPrefixOnlyWhenMissing(string input, string expected)
     {
         Assert.Equal(expected, SuperpowersPromptBuilder.BuildQuickSkillPrompt(input));
@@ -41,7 +50,7 @@ public class SuperpowersPromptBuilderTests
     [Fact]
     public void BuildQuickSkillPrompt_DoesNotDuplicateLanguagePolicy()
     {
-        var input = "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation and code comments in English only. Keep exception and error messages in Chinese.";
+        var input = "$using-superpowers ，使用superpowers技能，写一个执行步骤\n\nReply to the user in Chinese. Write documentation in English only. 代码注释需要使用中英文双语。 Keep exception and error messages in Chinese.";
 
         Assert.Equal(input, SuperpowersPromptBuilder.BuildQuickSkillPrompt(input));
     }

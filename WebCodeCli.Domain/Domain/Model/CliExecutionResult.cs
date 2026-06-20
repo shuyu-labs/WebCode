@@ -56,6 +56,8 @@ public class StreamOutputChunk
     /// </summary>
     public bool IsCompleted { get; set; }
 
+    public bool IsTurnBoundary { get; set; }
+
     /// <summary>
     /// 错误信息
     /// </summary>

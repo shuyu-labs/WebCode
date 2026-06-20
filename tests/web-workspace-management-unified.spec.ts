@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 // 测试配置
 const BASE_URL = 'http://localhost:5000';
 const USERNAME = 'luhaiyan';
-const PASSWORD = 'Lusile@0680';
+const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
 const SCREEN_SIZE = { width: 1200, height: 800 };
 const TEST_DIRECTORY = 'D:\\\\VSWorkshop\\\\TestWebCode'; // 测试用的工作目录
 

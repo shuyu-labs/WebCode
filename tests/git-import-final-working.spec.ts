@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
+
 // 设置全局超时时间为2分钟，足够Git克隆完成（手动克隆仅需20秒）
 test.setTimeout(120000);
 
@@ -13,7 +15,7 @@ test('新建会话时导入Git项目完全测试', async ({ page }) => {
 
     // 输入用户名密码
     await page.locator('input[placeholder="Enter username"]').fill('luhaiyan');
-    await page.locator('input[placeholder="Enter password"]').fill('Lusile@0680');
+    await page.locator('input[placeholder="Enter password"]').fill(PASSWORD);
 
     // 点击登录并等待跳转
     await Promise.all([

@@ -166,6 +166,12 @@ public interface ICliExecutorService
         string? toolId = null,
         CancellationToken cancellationToken = default);
 
+    Task<AppServerGoalSnapshot?> TryGetGoalRuntimeGoalAsync(
+        string sessionId,
+        string? toolId = null,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<AppServerGoalSnapshot?>(null);
+
     /// <summary>
     /// 保存指定工具的环境变量配置到数据库
     /// </summary>

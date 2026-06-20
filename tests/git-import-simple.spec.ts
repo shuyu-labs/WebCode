@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
+
 // 设置全局超时时间为5分钟
 test.setTimeout(300000);
 
@@ -8,7 +10,7 @@ test('新建会话时导入Git项目成功', async ({ page }) => {
     // 1. 登录
     await page.goto('http://localhost:5000', { waitUntil: 'networkidle' });
     await page.locator('input[placeholder="Enter username"]').fill('luhaiyan');
-    await page.locator('input[placeholder="Enter password"]').fill('Lusile@0680');
+    await page.locator('input[placeholder="Enter password"]').fill(PASSWORD);
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle' }),
       page.locator('button:has-text("Login")').click()

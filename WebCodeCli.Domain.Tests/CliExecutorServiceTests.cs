@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using SqlSugar;
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using WebCodeCli.Domain.Common.Options;
 using WebCodeCli.Domain.Domain.Model;
 using WebCodeCli.Domain.Domain.Service;
@@ -326,6 +327,11 @@ public class CliExecutorServiceTests
                 });
             var serviceProvider = new NullServiceProvider(repository, new StubSessionOutputService(), threadSyncService);
 
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "complete", null, 12, 6));
+
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
                 Options.Create(new CliToolsOption
@@ -382,6 +388,7 @@ public class CliExecutorServiceTests
     [Fact]
     public async Task ExecuteStreamAsync_WhenGoalUsesOneTimeProcess_ExecutesWithoutPersistentProcessGate()
     {
+        const string sessionId = "session-goal-one-time";
         var tool = new CliToolConfig
         {
             Id = "codex",
@@ -391,6 +398,11 @@ public class CliExecutorServiceTests
             UsePersistentProcess = false,
             Enabled = true
         };
+
+        var stubManager = new StubCodexAppServerSessionManager();
+        stubManager.QueueGoalSnapshots(
+            sessionId,
+            new AppServerGoalSnapshot("ship this task", "complete", null, 1, 1));
 
         var service = new CliExecutorService(
             NullLogger<CliExecutorService>.Instance,
@@ -404,10 +416,10 @@ public class CliExecutorServiceTests
             new StubChatSessionService(),
             new StubCliAdapterFactory(),
             new StubCcSwitchService(includeBuiltInManagedTools: false),
-            codexAppServerSessionManager: new StubCodexAppServerSessionManager());
+            codexAppServerSessionManager: stubManager);
 
         var chunks = new List<StreamOutputChunk>();
-        await foreach (var chunk in service.ExecuteStreamAsync("session-goal-one-time", tool.Id, "/goal ship this task"))
+        await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
         {
             chunks.Add(chunk);
         }
@@ -457,6 +469,11 @@ public class CliExecutorServiceTests
                 TimeoutSeconds = 5
             };
 
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "complete", null, 12, 6));
+
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
                 Options.Create(new CliToolsOption
@@ -483,7 +500,7 @@ public class CliExecutorServiceTests
                         StatusMessage = "Codex 已由 cc-switch 管理并可直接启动。"
                     }
                 }),
-                codexAppServerSessionManager: new StubCodexAppServerSessionManager());
+                codexAppServerSessionManager: stubManager);
 
             var chunks = new List<StreamOutputChunk>();
             await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
@@ -568,6 +585,9 @@ public class CliExecutorServiceTests
 
             var threadSyncService = new RecordingCodexThreadProviderSyncService();
             var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "complete", null, 12, 6));
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
                 Options.Create(new CliToolsOption
@@ -609,6 +629,308 @@ public class CliExecutorServiceTests
             Assert.Equal(cliThreadId, request.ThreadId);
             Assert.Equal("provider-new", request.TargetProviderId);
             Assert.True(stubManager.EnsureThreadCalls >= 1);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRuntimeControlCommandReusesLiveAppServerSession_SkipsProviderSync()
+    {
+        const string sessionId = "session-goal-control-live-session";
+        const string cliThreadId = "thread-goal-control-live-session";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        var overrideJson = SessionLaunchOverrideHelper.Serialize(new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { UseGoalRuntime = true }
+        });
+
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "provider = \"provider-live\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CliThreadId = cliThreadId,
+                    ToolLaunchOverridesJson = overrideJson,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var threadSyncService = new RecordingCodexThreadProviderSyncService();
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.SeedRunningSession(sessionId, cliThreadId);
+            stubManager.SeedGoal(sessionId, new AppServerGoalSnapshot("ship this task", "active", 200, 12, 34));
+            stubManager.SeedActiveTurn(sessionId, "turn-live-1");
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService(), threadSyncService),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-live",
+                        ActiveProviderName = "Provider Live",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal pause"))
+            {
+                chunks.Add(chunk);
+            }
+
+            Assert.DoesNotContain(chunks, c => c.IsError && c.IsCompleted);
+            Assert.Empty(threadSyncService.Requests);
+            Assert.Equal(1, stubManager.LegacyInterruptCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TryGetGoalRuntimeGoalAsync_WhenStoredThreadDriftedToSubagent_PrefersLiveAppServerThread()
+    {
+        const string sessionId = "session-goal-live-thread-preferred";
+        const string parentThreadId = "thread-goal-parent";
+        const string subagentThreadId = "thread-goal-subagent";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var codexConfigDirectory = Path.Combine(workspacePath, ".codex");
+        var sessionSnapshotRelativePath = Path.Combine(".codex", "config.toml");
+        var sessionSnapshotPath = Path.Combine(workspacePath, sessionSnapshotRelativePath);
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        var overrideJson = SessionLaunchOverrideHelper.Serialize(new Dictionary<string, SessionToolLaunchOverride>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["codex"] = new() { UseGoalRuntime = true }
+        });
+
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(codexConfigDirectory);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "provider = \"provider-live\"\n");
+        await File.WriteAllTextAsync(sessionSnapshotPath, "model_provider = \"provider-live\"\nprovider = \"provider-live\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CliThreadId = subagentThreadId,
+                    UsesCcSwitchSnapshot = true,
+                    CcSwitchSnapshotToolId = "codex",
+                    CcSwitchSnapshotRelativePath = sessionSnapshotRelativePath,
+                    CcSwitchProviderId = "provider-live",
+                    ToolLaunchOverridesJson = overrideJson,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.SeedRunningSession(sessionId, parentThreadId);
+            stubManager.SeedGoal(sessionId, new AppServerGoalSnapshot("keep shipping", "active", 100, 12, 34));
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService()),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-live",
+                        ActiveProviderName = "Provider Live",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var goal = await service.TryGetGoalRuntimeGoalAsync(sessionId, "codex");
+
+            Assert.NotNull(goal);
+            Assert.Equal("keep shipping", goal!.Objective);
+            Assert.Equal("active", goal.Status);
+            Assert.Equal(parentThreadId, service.GetCliThreadId(sessionId));
+            Assert.Equal(parentThreadId, repository.GetById(sessionId).CliThreadId);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_WhenGoalRemainsActive_AutoContinuesNextTurnBeforeCompletingOuterStream()
+    {
+        const string sessionId = "session-goal-auto-continue";
+        var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(tempRoot, "workspace");
+        var liveConfigDirectory = Path.Combine(tempRoot, "live");
+        var liveConfigPath = Path.Combine(liveConfigDirectory, "config.toml");
+        Directory.CreateDirectory(workspacePath);
+        Directory.CreateDirectory(liveConfigDirectory);
+        await File.WriteAllTextAsync(liveConfigPath, "model = \"gpt-5.4\"\nprovider = \"provider-a\"\n");
+
+        try
+        {
+            var repository = new StubChatSessionRepository(
+            [
+                new ChatSessionEntity
+                {
+                    SessionId = sessionId,
+                    Username = "luhaiyan",
+                    ToolId = "codex",
+                    WorkspacePath = workspacePath,
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now
+                }
+            ]);
+
+            var tool = new CliToolConfig
+            {
+                Id = "codex",
+                Name = "Codex",
+                Command = "powershell.exe",
+                UsePersistentProcess = false,
+                Enabled = true
+            };
+
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueTurnOutputs(
+                sessionId,
+                [new StreamOutputChunk { Content = "round-1" }],
+                [new StreamOutputChunk { Content = "round-2" }]);
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "active", null, 10, 5),
+                new AppServerGoalSnapshot("ship this task", "complete", null, 20, 10));
+
+            var service = new CliExecutorService(
+                NullLogger<CliExecutorService>.Instance,
+                Options.Create(new CliToolsOption
+                {
+                    TempWorkspaceRoot = tempRoot,
+                    Tools = [tool]
+                }),
+                NullLogger<PersistentProcessManager>.Instance,
+                new NullServiceProvider(repository, new StubSessionOutputService()),
+                new StubChatSessionService(),
+                new StubCliAdapterFactory(),
+                new StubCcSwitchService(new Dictionary<string, CcSwitchToolStatus>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new()
+                    {
+                        ToolId = "codex",
+                        ToolName = "Codex",
+                        IsManaged = true,
+                        IsLaunchReady = true,
+                        ActiveProviderId = "provider-a",
+                        ActiveProviderName = "Provider A",
+                        ActiveProviderCategory = "custom",
+                        LiveConfigPath = liveConfigPath,
+                        StatusMessage = "Codex ok"
+                    }
+                }),
+                codexAppServerSessionManager: stubManager);
+
+            var chunks = new List<StreamOutputChunk>();
+            await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal ship this task"))
+            {
+                chunks.Add(chunk);
+            }
+
+            var firstCompletedIndex = chunks.FindIndex(static chunk => chunk.IsCompleted);
+            var roundTwoIndex = chunks.FindIndex(chunk => string.Equals(chunk.Content, "round-2", StringComparison.Ordinal));
+
+            Assert.Equal(2, stubManager.StartTurnCalls);
+            Assert.Contains(chunks, chunk => string.Equals(chunk.Content, "round-1", StringComparison.Ordinal));
+            Assert.Contains(chunks, chunk => string.Equals(chunk.Content, "round-2", StringComparison.Ordinal));
+            Assert.True(roundTwoIndex >= 0);
+            Assert.True(firstCompletedIndex > roundTwoIndex);
+            Assert.Equal(1, chunks.Count(chunk => chunk.IsCompleted));
+            Assert.Equal(1, chunks.Count(chunk => chunk.IsTurnBoundary));
+            Assert.True(chunks.FindIndex(chunk => chunk.IsTurnBoundary) > chunks.FindIndex(chunk => string.Equals(chunk.Content, "round-1", StringComparison.Ordinal)));
+            Assert.True(chunks.FindIndex(chunk => chunk.IsTurnBoundary) < roundTwoIndex);
         }
         finally
         {
@@ -666,6 +988,9 @@ public class CliExecutorServiceTests
 
             var threadSyncService = new RecordingCodexThreadProviderSyncService();
             var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "complete", null, 12, 6));
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
                 Options.Create(new CliToolsOption
@@ -755,6 +1080,9 @@ public class CliExecutorServiceTests
                 ThrowOnStartWithActiveTurn = true
             };
             stubManager.SeedActiveTurn(sessionId, "turn-stale");
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "complete", null, 12, 6));
 
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
@@ -844,6 +1172,10 @@ public class CliExecutorServiceTests
 
             var stubManager = new StubCodexAppServerSessionManager();
             stubManager.SeedGoal(sessionId, new AppServerGoalSnapshot("ship this task", "paused", null, 12, 34));
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("ship this task", "paused", null, 12, 34),
+                new AppServerGoalSnapshot("ship this task", "complete", null, 20, 40));
 
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
@@ -943,6 +1275,11 @@ public class CliExecutorServiceTests
                 Enabled = true
             };
 
+            var stubManager = new StubCodexAppServerSessionManager();
+            stubManager.QueueGoalSnapshots(
+                sessionId,
+                new AppServerGoalSnapshot("keep working", "complete", null, 1, 1));
+
             var service = new CliExecutorService(
                 NullLogger<CliExecutorService>.Instance,
                 Options.Create(new CliToolsOption
@@ -969,7 +1306,7 @@ public class CliExecutorServiceTests
                         StatusMessage = "Codex 已由 cc-switch 管理并可直接启动。"
                     }
                 }),
-                codexAppServerSessionManager: new StubCodexAppServerSessionManager());
+                codexAppServerSessionManager: stubManager);
 
             var chunks = new List<StreamOutputChunk>();
             await foreach (var chunk in service.ExecuteStreamAsync(sessionId, tool.Id, "/goal keep working"))
@@ -1068,7 +1405,7 @@ public class CliExecutorServiceTests
             Assert.Contains(
                 chunks,
                 c => !string.IsNullOrWhiteSpace(c.Content)
-                     && c.Content.Contains($"exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {cliThreadId} \"/goal keep working\"", StringComparison.Ordinal));
+                     && c.Content.Contains($"exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json {cliThreadId} -- \"/goal keep working\"", StringComparison.Ordinal));
             Assert.Contains(
                 chunks,
                 c => !string.IsNullOrWhiteSpace(c.Content) && c.Content.Contains("\"turn.completed\"", StringComparison.Ordinal));
@@ -1209,7 +1546,39 @@ public class CliExecutorServiceTests
         var arguments = adapter.BuildArguments(tool, request);
 
         Assert.Equal(
-            "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json thread-123 \"/goal resume\"",
+            "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json thread-123 -- \"/goal resume\"",
+            arguments);
+    }
+
+    [Fact]
+    public void CodexAdapter_BuildArguments_WhenPromptStartsWithDash_InsertsArgumentTerminator()
+    {
+        var adapter = new CodexAdapter();
+        var tool = new CliToolConfig
+        {
+            Id = "codex",
+            Name = "Codex",
+            Command = "codex",
+            Enabled = true
+        };
+        var context = new CliSessionContext
+        {
+            SessionId = "session-resume",
+            CliThreadId = "thread-123",
+            WorkingDirectory = Path.GetTempPath()
+        };
+        var request = new CliExecutionRequest
+        {
+            SessionId = "session-resume",
+            ToolId = "codex",
+            PromptText = "- Docs/superpowers/plans/test.md",
+            SessionContext = context
+        };
+
+        var arguments = adapter.BuildArguments(tool, request);
+
+        Assert.Equal(
+            "exec resume --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json thread-123 -- \"- Docs/superpowers/plans/test.md\"",
             arguments);
     }
 
@@ -1519,6 +1888,60 @@ public class CliExecutorServiceTests
                 chunk.Content?.Trim(),
                 "finish the remaining backlog items",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteStreamAsync_ForCodexOneTimeProcess_WritesPromptToStandardInput()
+    {
+        var tool = new CliToolConfig
+        {
+            Id = "codex-like-stdin",
+            Name = "Codex-like stdin",
+            Command = "powershell.exe",
+            Enabled = true
+        };
+        var adapter = new RecordingCodexOneTimeInputAdapter();
+        var service = new CliExecutorService(
+            NullLogger<CliExecutorService>.Instance,
+            Options.Create(new CliToolsOption
+            {
+                TempWorkspaceRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N")),
+                Tools = [tool]
+            }),
+            NullLogger<PersistentProcessManager>.Instance,
+            new NullServiceProvider(),
+            new StubChatSessionService(),
+            new StubCliAdapterFactory(adapter),
+            new StubCcSwitchService(includeBuiltInManagedTools: false));
+
+        var request = new CliExecutionRequest
+        {
+            SessionId = "session-one-time-stdin",
+            ToolId = tool.Id,
+            PromptText = "keep prompt for image submission"
+        };
+
+        var chunks = new List<StreamOutputChunk>();
+        await foreach (var chunk in service.ExecuteStreamAsync(request))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.Contains(
+            chunks,
+            chunk => string.Equals(
+                chunk.Content?.Trim(),
+                "keep prompt for image submission",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GetCodexTransportEncoding_ReturnsUtf8WithoutBom()
+    {
+        Encoding encoding = CliExecutorService.GetCodexTransportEncoding();
+
+        Assert.Equal("utf-8", encoding.WebName);
+        Assert.Empty(encoding.GetPreamble());
     }
 
     [Fact]
@@ -4058,6 +4481,20 @@ args = ["mcp", "serve"]
     }
 
     [Fact]
+    public void CodexAdapter_ParseOutputLine_WhenAgentMessageHasPhase_PreservesAssistantPhase()
+    {
+        var adapter = new CodexAdapter();
+
+        var outputEvent = adapter.ParseOutputLine(
+            """{"type":"item.updated","item":{"type":"agent_message","text":"hello","phase":"final_answer"}}""");
+
+        var agentMessageEvent = Assert.IsType<CliOutputEvent>(outputEvent);
+        Assert.Equal("agent_message", agentMessageEvent.ItemType);
+        Assert.Equal("hello", adapter.ExtractAssistantMessage(agentMessageEvent));
+        Assert.Equal("final_answer", agentMessageEvent.AssistantPhase);
+    }
+
+    [Fact]
     public void RewriteCodexLaunchToNode_WhenCommandIsCmdWrapper_RewritesToNodeJsEntry()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "WebCodeCli.Tests", Guid.NewGuid().ToString("N"));
@@ -4601,6 +5038,40 @@ args = ["mcp", "serve"]
         public string GetEventBadgeLabel(CliOutputEvent outputEvent) => string.Empty;
     }
 
+    private sealed class RecordingCodexOneTimeInputAdapter : ICliToolAdapter
+    {
+        public string[] SupportedToolIds => ["codex"];
+
+        public bool SupportsStreamParsing => false;
+
+        public bool CanHandle(CliToolConfig tool)
+            => string.Equals(tool.Id, "codex-like-stdin", StringComparison.OrdinalIgnoreCase);
+
+        public CliAttachmentCapabilities GetAttachmentCapabilities(CliToolConfig tool)
+            => CliAttachmentCapabilities.ReferenceOnly();
+
+        public string BuildArguments(CliToolConfig tool, CliExecutionRequest request)
+            => "-NoProfile -Command \"$inputText = [Console]::In.ReadToEnd(); Write-Output $inputText\"";
+
+        public string BuildArguments(CliToolConfig tool, string prompt, CliSessionContext context)
+            => throw new NotSupportedException();
+
+        public string BuildLowInterruptionArguments(CliToolConfig tool, CliSessionContext context)
+            => throw new NotSupportedException();
+
+        public CliOutputEvent? ParseOutputLine(string line) => null;
+
+        public string? ExtractSessionId(CliOutputEvent outputEvent) => null;
+
+        public string? ExtractAssistantMessage(CliOutputEvent outputEvent) => null;
+
+        public string GetEventTitle(CliOutputEvent outputEvent) => outputEvent.Title ?? string.Empty;
+
+        public string GetEventBadgeClass(CliOutputEvent outputEvent) => string.Empty;
+
+        public string GetEventBadgeLabel(CliOutputEvent outputEvent) => string.Empty;
+    }
+
     private sealed class RecordingExecutionRequestAdapter : ICliToolAdapter
     {
         public string[] SupportedToolIds => ["recording-request-tool"];
@@ -4729,6 +5200,10 @@ args = ["mcp", "serve"]
         private readonly Dictionary<string, string> _threadIds = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, AppServerGoalSnapshot> _goals = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _activeTurnIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _serverSideLingeringTurnWithoutCachedActiveTurn = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _runningSessionIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Queue<List<StreamOutputChunk>>> _queuedTurnOutputs = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Queue<AppServerGoalSnapshot>> _queuedGoalSnapshots = new(StringComparer.OrdinalIgnoreCase);
         private int _nextTurnId;
 
         public int SimpleInterruptCalls { get; private set; }
@@ -4743,9 +5218,30 @@ args = ["mcp", "serve"]
             _activeTurnIds[sessionId] = turnId;
         }
 
+        public void SeedServerSideLingeringTurnWithoutCachedActiveTurn(string sessionId)
+        {
+            _serverSideLingeringTurnWithoutCachedActiveTurn.Add(sessionId);
+        }
+
+        public void SeedRunningSession(string sessionId, string threadId)
+        {
+            _runningSessionIds.Add(sessionId);
+            _threadIds[sessionId] = threadId;
+        }
+
         public void SeedGoal(string sessionId, AppServerGoalSnapshot goal)
         {
             _goals[sessionId] = goal;
+        }
+
+        public void QueueTurnOutputs(string sessionId, params List<StreamOutputChunk>[] turnOutputs)
+        {
+            _queuedTurnOutputs[sessionId] = new Queue<List<StreamOutputChunk>>(turnOutputs);
+        }
+
+        public void QueueGoalSnapshots(string sessionId, params AppServerGoalSnapshot[] goals)
+        {
+            _queuedGoalSnapshots[sessionId] = new Queue<AppServerGoalSnapshot>(goals);
         }
 
         public void Dispose()
@@ -4753,6 +5249,10 @@ args = ["mcp", "serve"]
             _threadIds.Clear();
             _goals.Clear();
             _activeTurnIds.Clear();
+            _serverSideLingeringTurnWithoutCachedActiveTurn.Clear();
+            _runningSessionIds.Clear();
+            _queuedTurnOutputs.Clear();
+            _queuedGoalSnapshots.Clear();
         }
 
         public Task<string> EnsureThreadAsync(
@@ -4779,6 +5279,8 @@ args = ["mcp", "serve"]
                 _threadIds[sessionId] = threadId;
             }
 
+            _runningSessionIds.Add(sessionId);
+
             return Task.FromResult(threadId);
         }
 
@@ -4796,7 +5298,9 @@ args = ["mcp", "serve"]
             StartTurnCalls++;
             StartedTurnPrompts.Add(userPrompt);
 
-            if (ThrowOnStartWithActiveTurn && _activeTurnIds.ContainsKey(sessionId))
+            if (ThrowOnStartWithActiveTurn
+                && (_activeTurnIds.ContainsKey(sessionId)
+                    || _serverSideLingeringTurnWithoutCachedActiveTurn.Contains(sessionId)))
             {
                 throw new InvalidOperationException("当前 app-server 运行中已有一个 turn，无法再启动新的 turn。");
             }
@@ -4813,6 +5317,7 @@ args = ["mcp", "serve"]
 
             var turnId = $"turn-{Interlocked.Increment(ref _nextTurnId)}";
             _activeTurnIds[sessionId] = turnId;
+            _runningSessionIds.Add(sessionId);
 
             return new AppServerTurnRun(threadId, turnId, EmitTurnOutputAsync(sessionId, userPrompt, cancellationToken));
         }
@@ -4828,6 +5333,12 @@ args = ["mcp", "serve"]
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (_queuedGoalSnapshots.TryGetValue(sessionId, out var queuedGoals) && queuedGoals.Count > 0)
+            {
+                var queuedGoal = queuedGoals.Dequeue();
+                _goals[sessionId] = queuedGoal;
+            }
+
             _goals.TryGetValue(sessionId, out var goal);
             return Task.FromResult<AppServerGoalSnapshot?>(goal);
         }
@@ -4887,7 +5398,9 @@ args = ["mcp", "serve"]
         {
             cancellationToken.ThrowIfCancellationRequested();
             LegacyInterruptCalls++;
-            return Task.FromResult(_activeTurnIds.Remove(sessionId));
+            var removed = _activeTurnIds.Remove(sessionId);
+            removed = _serverSideLingeringTurnWithoutCachedActiveTurn.Remove(sessionId) || removed;
+            return Task.FromResult(removed);
         }
 
         public Task<bool> InterruptActiveTurnAsync(
@@ -4896,17 +5409,35 @@ args = ["mcp", "serve"]
         {
             cancellationToken.ThrowIfCancellationRequested();
             SimpleInterruptCalls++;
-            return Task.FromResult(_activeTurnIds.Remove(sessionId));
+            var removed = _activeTurnIds.Remove(sessionId);
+            removed = _serverSideLingeringTurnWithoutCachedActiveTurn.Remove(sessionId) || removed;
+            return Task.FromResult(removed);
         }
 
         public bool HasActiveTurn(string sessionId)
             => _activeTurnIds.ContainsKey(sessionId);
+
+        public bool HasRunningSession(string sessionId, string? threadId = null)
+            => _runningSessionIds.Contains(sessionId)
+               && (string.IsNullOrWhiteSpace(threadId)
+                   || (_threadIds.TryGetValue(sessionId, out var currentThreadId)
+                       && string.Equals(currentThreadId, threadId, StringComparison.OrdinalIgnoreCase)));
+
+        public string? GetRunningThreadId(string sessionId)
+            => _runningSessionIds.Contains(sessionId)
+               && _threadIds.TryGetValue(sessionId, out var currentThreadId)
+                ? currentThreadId
+                : null;
 
         public bool CleanupSession(string sessionId)
         {
             var removed = _threadIds.Remove(sessionId);
             removed = _goals.Remove(sessionId) || removed;
             removed = _activeTurnIds.Remove(sessionId) || removed;
+            removed = _serverSideLingeringTurnWithoutCachedActiveTurn.Remove(sessionId) || removed;
+            removed = _runningSessionIds.Remove(sessionId) || removed;
+            removed = _queuedTurnOutputs.Remove(sessionId) || removed;
+            removed = _queuedGoalSnapshots.Remove(sessionId) || removed;
             return removed;
         }
 
@@ -4916,8 +5447,18 @@ args = ["mcp", "serve"]
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var emittedTerminalChunk = false;
 
-            if (userPrompt.Contains("keep working", StringComparison.OrdinalIgnoreCase))
+            if (_queuedTurnOutputs.TryGetValue(sessionId, out var queuedTurnOutputs) && queuedTurnOutputs.Count > 0)
+            {
+                var scriptedTurnOutputs = queuedTurnOutputs.Dequeue();
+                foreach (var chunk in scriptedTurnOutputs)
+                {
+                    emittedTerminalChunk |= chunk.IsCompleted;
+                    yield return chunk;
+                }
+            }
+            else if (userPrompt.Contains("keep working", StringComparison.OrdinalIgnoreCase))
             {
                 yield return new StreamOutputChunk
                 {
@@ -4937,10 +5478,13 @@ args = ["mcp", "serve"]
             }
 
             _activeTurnIds.Remove(sessionId);
-            yield return new StreamOutputChunk
+            if (!emittedTerminalChunk)
             {
-                IsCompleted = true
-            };
+                yield return new StreamOutputChunk
+                {
+                    IsCompleted = true
+                };
+            }
 
             await Task.CompletedTask;
         }

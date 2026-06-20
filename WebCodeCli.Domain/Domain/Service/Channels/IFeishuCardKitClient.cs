@@ -1,6 +1,7 @@
 using WebCodeCli.Domain.Common.Options;
 using WebCodeCli.Domain.Domain.Model.Channels;
 using FeishuNetSdk.Im.Dtos;
+using System.Text.Json;
 
 namespace WebCodeCli.Domain.Domain.Service.Channels;
 
@@ -89,6 +90,136 @@ public interface IFeishuCardKitClient
         CancellationToken cancellationToken = default,
         FeishuOptions? optionsOverride = null);
 
+    Task<FeishuCloudDocumentInfo> CreateCloudDocumentAsync(
+        string title,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null,
+        string? folderToken = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task AppendCloudDocumentTextAsync(
+        string documentId,
+        string blockId,
+        string text,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task SetCloudDocumentTenantReadableAsync(
+        string documentId,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task GrantCloudDocumentMemberFullAccessAsync(
+        string documentId,
+        string openId,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task GrantCloudFolderMemberFullAccessAsync(
+        string folderToken,
+        string openId,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<string> EnsureCloudFolderAsync(
+        string folderName,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task MoveCloudDocumentToFolderAsync(
+        string documentId,
+        string folderToken,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<JsonElement> ConvertMarkdownToCloudDocumentBlocksAsync(
+        string markdown,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task AppendCloudDocumentBlocksAsync(
+        string documentId,
+        string blockId,
+        IReadOnlyCollection<JsonElement> blocks,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<IReadOnlyList<string>> ListCloudDocumentChildBlockIdsAsync(
+        string documentId,
+        string blockId,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task DeleteCloudDocumentChildBlocksAsync(
+        string documentId,
+        string blockId,
+        int startIndex,
+        int endIndex,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<FeishuCloudDocumentInfo?> FindCloudDocumentInFolderByTitleAsync(
+        string folderToken,
+        string title,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<string> UploadCloudFileAsync(
+        string fileName,
+        byte[] content,
+        string? folderToken,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
+    Task<FeishuCloudDocumentInfo> ImportMarkdownFileAsCloudDocumentAsync(
+        string fileName,
+        byte[] content,
+        string title,
+        string? folderToken,
+        CancellationToken cancellationToken = default,
+        FeishuOptions? optionsOverride = null)
+    {
+        throw new NotSupportedException();
+    }
+
     Task<FeishuDownloadedAttachment> DownloadIncomingAttachmentAsync(
         FeishuIncomingAttachment attachment,
         CancellationToken cancellationToken = default,
@@ -106,25 +237,6 @@ public interface IFeishuCardKitClient
     /// <param name="title">卡片标题</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>流式回复句柄</returns>
-    Task<string> UploadAudioFileAsync(
-        string filePath,
-        int durationMs,
-        CancellationToken cancellationToken = default,
-        FeishuOptions? optionsOverride = null)
-    {
-        throw new NotSupportedException();
-    }
-
-    Task<string> SendAudioMessageAsync(
-        string chatId,
-        string fileKey,
-        int durationMs,
-        CancellationToken cancellationToken = default,
-        FeishuOptions? optionsOverride = null)
-    {
-        throw new NotSupportedException();
-    }
-
     Task<FeishuStreamingHandle> CreateStreamingHandleAsync(
         string chatId,
         string? replyMessageId,

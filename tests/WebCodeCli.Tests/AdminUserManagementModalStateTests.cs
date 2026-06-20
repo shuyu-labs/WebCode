@@ -1,7 +1,6 @@
 using System.Reflection;
 using WebCodeCli.Components;
 using WebCodeCli.Domain.Domain.Model;
-using WebCodeCli.Domain.Domain.Model.Channels;
 using Xunit;
 
 namespace WebCodeCli.Tests;
@@ -29,8 +28,10 @@ public sealed class AdminUserManagementModalStateTests
 
         var currentFeishu = Activator.CreateInstance(feishuType, nonPublic: true)!;
         SetProperty(currentFeishu, "AppId", "app-123");
-        SetProperty(currentFeishu, "ReplyTtsEnabled", true);
-        SetProperty(currentFeishu, "ReplyTtsVoiceId", "voice-a");
+        SetProperty(currentFeishu, "FullReplyDocEnabled", true);
+        SetProperty(currentFeishu, "FinalReplyDocEnabled", false);
+        SetProperty(currentFeishu, "AudioFullReplyDocEnabled", true);
+        SetProperty(currentFeishu, "AudioFinalReplyDocEnabled", true);
         SetProperty(currentEditor, "FeishuBot", currentFeishu);
 
         var selectedUser = Activator.CreateInstance(summaryType, nonPublic: true)!;
@@ -55,45 +56,52 @@ public sealed class AdminUserManagementModalStateTests
         Assert.NotSame(GetProperty<HashSet<string>>(currentEditor, "AllowedToolIds"), seededTools);
         Assert.Equal(["git", "shell"], seededTools.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase).ToArray());
         Assert.Equal("app-123", GetProperty<string>(seededFeishu, "AppId"));
-        Assert.Equal("voice-a", GetProperty<string>(seededFeishu, "ReplyTtsVoiceId"));
-        Assert.True(GetProperty<bool>(seededFeishu, "ReplyTtsEnabled"));
+        Assert.True(GetProperty<bool>(seededFeishu, "FullReplyDocEnabled"));
+        Assert.False(GetProperty<bool>(seededFeishu, "FinalReplyDocEnabled"));
+        Assert.True(GetProperty<bool>(seededFeishu, "AudioFullReplyDocEnabled"));
+        Assert.True(GetProperty<bool>(seededFeishu, "AudioFinalReplyDocEnabled"));
     }
 
     [Fact]
-    public void MergeReplyTtsPlatformState_PreservesVoiceCatalog_WhenVoiceRefreshFails()
+    public void CreateDetailEditorSeed_PreservesReferencedMarkdownDocImportEnabled_WhenReloadingSameUser()
     {
-        var method = GetStaticMethod("MergeReplyTtsPlatformState");
-        var currentHealth = new FeishuReplyTtsHealthStatus
-        {
-            IsAvailable = true,
-            Message = "Healthy",
-            DefaultVoiceId = "voice-a"
-        };
-        IReadOnlyList<FeishuReplyTtsVoiceOption> currentVoices =
-        [
-            new FeishuReplyTtsVoiceOption
-            {
-                VoiceId = "voice-a",
-                DisplayName = "Voice A"
-            }
-        ];
-        var refreshedHealth = new FeishuReplyTtsHealthStatus
-        {
-            IsAvailable = true,
-            Message = "Healthy",
-            DefaultVoiceId = "voice-a"
-        };
+        var editorType = GetNestedType("EditableUserModel");
+        var feishuType = GetNestedType("EditableFeishuBotConfigModel");
+        var summaryType = GetNestedType("UserSummaryDto");
+        var method = GetStaticMethod("CreateDetailEditorSeed");
 
-        var merged = method.Invoke(null, [currentHealth, currentVoices, refreshedHealth, null, null, "voice endpoint timed out"])!;
-        var mergedType = merged.GetType();
-        var mergedHealth = (FeishuReplyTtsHealthStatus)mergedType.GetField("Item1")!.GetValue(merged)!;
-        var mergedVoices = (IReadOnlyList<FeishuReplyTtsVoiceOption>)mergedType.GetField("Item2")!.GetValue(merged)!;
+        var currentEditor = Activator.CreateInstance(editorType, nonPublic: true)!;
+        SetProperty(currentEditor, "Username", "alice");
 
-        Assert.True(mergedHealth.IsAvailable);
-        Assert.Contains("voice endpoint timed out", mergedHealth.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Same(currentVoices, mergedVoices);
-        Assert.Single(mergedVoices);
-        Assert.Equal("voice-a", mergedVoices[0].VoiceId);
+        var currentFeishu = Activator.CreateInstance(feishuType, nonPublic: true)!;
+        SetOptionalProperty(currentFeishu, "ReferencedMarkdownDocImportEnabled", true);
+        SetProperty(currentEditor, "FeishuBot", currentFeishu);
+
+        var selectedUser = Activator.CreateInstance(summaryType, nonPublic: true)!;
+        SetProperty(selectedUser, "Username", "alice");
+        SetProperty(selectedUser, "DisplayName", "Alice");
+        SetProperty(selectedUser, "Role", UserAccessConstants.UserRole);
+        SetProperty(selectedUser, "Status", UserAccessConstants.EnabledStatus);
+        SetProperty(selectedUser, "CreatedAt", new DateTime(2026, 6, 9, 9, 0, 0, DateTimeKind.Utc));
+
+        var seededEditor = method.Invoke(null, [selectedUser, currentEditor])!;
+        var seededFeishu = GetProperty<object>(seededEditor, "FeishuBot");
+
+        Assert.True(GetOptionalBooleanProperty(seededFeishu, "ReferencedMarkdownDocImportEnabled"));
+    }
+
+    [Fact]
+    public void HasCustomFeishuConfig_ReturnsTrue_WhenOnlyReferencedMarkdownDocImportEnabled()
+    {
+        var feishuType = GetNestedType("EditableFeishuBotConfigModel");
+        var method = GetStaticMethod("HasCustomFeishuConfig");
+        var config = Activator.CreateInstance(feishuType, nonPublic: true)!;
+
+        SetOptionalProperty(config, "ReferencedMarkdownDocImportEnabled", true);
+
+        var result = method.Invoke(null, [config]);
+
+        Assert.Equal(true, result);
     }
 
     private static Type GetNestedType(string name)
@@ -117,6 +125,19 @@ public sealed class AdminUserManagementModalStateTests
     private static void SetProperty(object instance, string propertyName, object? value)
     {
         GetPropertyInfo(instance.GetType(), propertyName).SetValue(instance, value);
+    }
+
+    private static void SetOptionalProperty(object instance, string propertyName, object? value)
+    {
+        instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.SetValue(instance, value);
+    }
+
+    private static bool GetOptionalBooleanProperty(object instance, string propertyName)
+    {
+        return instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(instance) as bool?
+            ?? false;
     }
 
     private static PropertyInfo GetPropertyInfo(Type type, string propertyName)

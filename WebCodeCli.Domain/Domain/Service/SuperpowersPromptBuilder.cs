@@ -15,6 +15,9 @@ public static class SuperpowersPromptBuilder
     public static string BuildSubagentExecutePlanPrompt()
         => SuperpowersQuickActionDefaults.ExecuteSubagentPlanPrompt;
 
+    public static string BuildCompleteWorktreePrompt()
+        => SuperpowersQuickActionDefaults.CompleteWorktreePrompt;
+
     public static string? BuildQuickSkillPrompt(string? input)
     {
         var trimmed = input?.Trim();

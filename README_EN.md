@@ -94,7 +94,6 @@ The repository already includes a Windows packaging script that builds:
 - portable archive `WebCode-vX.Y.Z-win-x64-portable.zip`
 - checksum file `SHA256SUMS.txt`
 - release notes `RELEASE_NOTES.md`
-- bundled Reply TTS runtime assets under `tts-bundle/`
 - release package page: `https://github.com/lusile2024/WebCode/releases`
 
 ## `cc-switch` Managed Assistant Model

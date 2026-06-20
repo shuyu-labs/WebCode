@@ -239,6 +239,102 @@ public class ExternalCliSessionHistoryServiceTests
     }
 
     [Fact]
+    public async Task GetCodexFinalAnswerTextAsync_WhenRolloutContainsCommentaryAndFinalAnswer_ReturnsLatestFinalOnly()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-final-answer";
+        var workspacePath = sandbox.CreateDirectory("workspace");
+
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "27", $"rollout-2026-05-27T12-00-00-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-05-27T12:00:00Z","type":"session_meta","payload":{"id":"codex-thread-final-answer","cwd":"D:\\workspace"}}
+            {"timestamp":"2026-05-27T12:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"thinking"}]}}
+            {"timestamp":"2026-05-27T12:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"first answer"}]}}
+            {"timestamp":"2026-05-27T12:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"latest answer"}]}}
+            """);
+
+        var service = new TestExternalCliSessionHistoryService();
+
+        var finalAnswer = await service.GetCodexFinalAnswerTextAsync(threadId, workspacePath: workspacePath);
+
+        Assert.Equal("latest answer", finalAnswer);
+    }
+
+    [Fact]
+    public async Task GetCodexFinalAnswerTextAsync_WhenRolloutHasNoFinalAnswer_ReturnsNull()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-no-final-answer";
+        var workspacePath = sandbox.CreateDirectory("workspace");
+
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "27", $"rollout-2026-05-27T12-30-00-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-05-27T12:30:00Z","type":"session_meta","payload":{"id":"codex-thread-no-final-answer","cwd":"D:\\workspace"}}
+            {"timestamp":"2026-05-27T12:30:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"thinking"}]}}
+            {"timestamp":"2026-05-27T12:30:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+            """);
+
+        var service = new TestExternalCliSessionHistoryService();
+
+        var finalAnswer = await service.GetCodexFinalAnswerTextAsync(threadId, workspacePath: workspacePath);
+
+        Assert.Null(finalAnswer);
+    }
+
+    [Fact]
+    public async Task GetCodexFinalAnswerTextAsync_IgnoresNonAssistantAndNonMessageItems()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-ignore-non-assistant";
+        var workspacePath = sandbox.CreateDirectory("workspace");
+
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "27", $"rollout-2026-05-27T13-00-00-{threadId}.jsonl"),
+            """
+            {"timestamp":"2026-05-27T13:00:00Z","type":"session_meta","payload":{"id":"codex-thread-ignore-non-assistant","cwd":"D:\\workspace"}}
+            {"timestamp":"2026-05-27T13:00:01Z","type":"response_item","payload":{"type":"tool_result","role":"assistant","content":[{"type":"output_text","text":"ignore tool result"}]}}
+            {"timestamp":"2026-05-27T13:00:02Z","type":"response_item","payload":{"type":"message","role":"user","phase":"final_answer","content":[{"type":"output_text","text":"ignore user"}]}}
+            {"timestamp":"2026-05-27T13:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"answer"}]}}
+            """);
+
+        var service = new TestExternalCliSessionHistoryService();
+
+        var finalAnswer = await service.GetCodexFinalAnswerTextAsync(threadId, workspacePath: workspacePath);
+
+        Assert.Equal("answer", finalAnswer);
+    }
+
+    [Fact]
+    public async Task GetCodexFinalAnswerTextAsync_WhenFilenameMatchIsAmbiguous_PrefersPayloadIdExactMatch()
+    {
+        using var sandbox = new HistoryTestSandbox();
+        const string threadId = "codex-thread-1";
+        var workspacePath = sandbox.CreateDirectory("workspace");
+
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "27", "rollout-2026-05-27T13-05-00-codex-thread-12.jsonl"),
+            """
+            {"timestamp":"2026-05-27T13:05:00Z","type":"session_meta","payload":{"id":"codex-thread-12","cwd":"D:\\workspace"}}
+            {"timestamp":"2026-05-27T13:05:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"wrong answer"}]}}
+            """);
+
+        sandbox.WriteFile(
+            Path.Combine("workspace", ".codex", "sessions", "2026", "05", "27", "rollout-2026-05-27T13-00-00-codex-thread-1.jsonl"),
+            """
+            {"timestamp":"2026-05-27T13:00:00Z","type":"session_meta","payload":{"id":"codex-thread-1","cwd":"D:\\workspace"}}
+            {"timestamp":"2026-05-27T13:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"correct answer"}]}}
+            """);
+
+        var service = new TestExternalCliSessionHistoryService();
+
+        var finalAnswer = await service.GetCodexFinalAnswerTextAsync(threadId, workspacePath: workspacePath);
+
+        Assert.Equal("correct answer", finalAnswer);
+    }
+
+    [Fact]
     public async Task GetRecentMessagesAsync_ForClaudeCode_ReadsMessagesFromTranscriptFile()
     {
         using var sandbox = new HistoryTestSandbox();

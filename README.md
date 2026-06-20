@@ -4,6 +4,23 @@
   <a href="README.md">简体中文</a> | <a href="README_EN.md">English</a>
 </p>
 
+---
+
+## Feishu Reply Documents
+
+WebCode has removed reply TTS for Feishu responses.
+
+Feishu reply delivery now works through cloud documents:
+
+- Full reply documents keep the complete AI final reply content.
+- Conclusion reply documents keep only the conclusion-focused final content.
+- The generated cloud document link gives the chat a durable record of the AI reply.
+- Users can listen to the AI reply result with Feishu document audio instead of WebCode-managed TTS playback.
+- On mobile Feishu, open the document and use the `...` menu to start document audio.
+- Referenced local Markdown files mentioned in a completed reply can also be imported as Feishu online documents in the same session document folder.
+- When the same local Markdown file changes later, WebCode updates the existing Feishu online document in place so the shared document URL stays stable.
+- Windows installer publishing reads the release version from `Directory.Build.props`; bump the patch version before publishing a new installer so the `vX.Y.Z` tag matches the current commit.
+
 <p align="center">
   <strong>把 AI CLI、Web 会话、移动端和飞书工作流接到同一个控制面板里</strong>
 </p>
@@ -110,7 +127,7 @@ WebCode 是一个基于 `Blazor Server + .NET 10` 的 AI CLI 工作平台。它�
 - 支持图片、文件消息的“待提交附件”卡片流程，先暂存到工作区，再补充说明后提交给 CLI
 - 支持文本框粘贴图片形成的富文本 `post` 消息，直接把内嵌图片和文字一并提交给 CLI
 - 支持会话级 Provider 同步，确保飞书侧也遵循 `cc-switch` 当前激活状态
-- 支持 Reply TTS 相关能力，用于把回复内容进一步转换为语音或语音服务调用链
+- 支持飞书完整回复文档与结论回复文档能力，可在回复完成后自动生成云文档并回发链接
 - 支持帮助卡片、快捷入口卡片、会话管理卡片等多种交互载体
 
 适合的飞书使用场景包括：
@@ -187,7 +204,6 @@ WebCode 是一个基于 `Blazor Server + .NET 10` 的 AI CLI 工作平台。它�
 - 便携版 `WebCode-vX.Y.Z-win-x64-portable.zip`
 - 校验文件 `SHA256SUMS.txt`
 - Release 说明 `RELEASE_NOTES.md`
-- 包含 Reply TTS 服务与运行所需资源的 `tts-bundle/`
 - 发布包页面：`https://github.com/lusile2024/WebCode/releases`
 
 ## `cc-switch` 托管模型
@@ -368,11 +384,10 @@ dotnet run --project WebCodeCli
 powershell -ExecutionPolicy Bypass -File .\tools\build-windows-installer.ps1
 ```
 
-如果你要生成“包含 Reply TTS / Kokoro 能力”的本地 Windows 安装包，应该优先走这条脚本，而不是单独 `dotnet publish`。原因是安装包脚本除了发布主程序外，还会额外处理这些内容：
+如果你要生成本地 Windows 安装包，应该优先走这条脚本，而不是单独 `dotnet publish`。原因是安装包脚本除了发布主程序外，还会额外处理这些内容：
 
 - 调整发布目录里的 `appsettings.json`
-- 拷贝 `tools/sherpa-kokoro-service`
-- 组装 `tts-bundle`
+- 调整发布输出目录结构
 - 生成 Inno Setup 安装包与 portable zip
 
 脚本会读取 [Directory.Build.props](./Directory.Build.props) 中的版本号，并在 `artifacts/windows-installer/vX.Y.Z/` 下生成：
@@ -382,7 +397,6 @@ powershell -ExecutionPolicy Bypass -File .\tools\build-windows-installer.ps1
 - `installer/WebCode-Setup-vX.Y.Z-win-x64.exe`
 - `SHA256SUMS.txt`
 - `RELEASE_NOTES.md`
-- `tts-bundle/`
 
 在 Windows 机器上，如果默认输出目录存在旧文件锁定，或者 Inno Setup 遇到长路径问题，可以显式指定一个较短的输出目录，例如：
 
@@ -390,7 +404,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\build-windows-installer.ps1
 powershell -ExecutionPolicy Bypass -File .\tools\build-windows-installer.ps1 -OutputRoot D:\wci
 ```
 
-这种方式同样会生成完整的安装版、便携版和 TTS 资源目录，适合本地快速出包。
+这种方式同样会生成完整的安装版、便携版以及校验与说明文件，适合本地快速出包。
 
 构建机要求：
 

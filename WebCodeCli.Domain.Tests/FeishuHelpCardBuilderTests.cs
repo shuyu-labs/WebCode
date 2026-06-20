@@ -46,24 +46,150 @@ public class FeishuHelpCardBuilderTests
     }
 
     [Fact]
-    public void BuildCommandListCard_IncludesReplyTtsToggle_WhenEnabled()
+    public void BuildCommandListCard_IncludesReplyDocumentButtons_WhenBothReplyDocumentsEnabled()
     {
-        var cardJson = _builder.BuildCommandListCard(CreateCategories(), replyTtsEnabled: true);
+        var cardJson = _builder.BuildCommandListCard(
+            CreateCategories(),
+            fullReplyDocEnabled: true,
+            finalReplyDocEnabled: true);
         using var document = JsonDocument.Parse(cardJson);
         var elements = document.RootElement.GetProperty("body").GetProperty("elements");
 
-        Assert.True(ContainsStringValue(elements, "语音回复：开"));
-        Assert.True(ContainsAction(elements, "toggle_reply_tts"));
+        Assert.True(ContainsStringValue(elements, "完整回复文档：开"));
+        Assert.True(ContainsStringValue(elements, "结论回复文档：开"));
+        Assert.True(ContainsAction(elements, FeishuHelpCardAction.ToggleFullReplyDocAction));
+        Assert.True(ContainsAction(elements, FeishuHelpCardAction.ToggleFinalReplyDocAction));
     }
 
     [Fact]
-    public void BuildCommandListCardV2_IncludesReplyTtsToggle_WhenDisabled()
+    public void BuildCommandListCard_IncludesListeningReplyDocumentButtons_WhenListeningReplyDocumentsEnabled()
     {
-        var card = _builder.BuildCommandListCardV2(CreateCategories(), replyTtsEnabled: false);
+        var cardJson = _builder.BuildCommandListCard(
+            CreateCategories(),
+            fullReplyDocEnabled: false,
+            finalReplyDocEnabled: false,
+            audioFullReplyDocEnabled: true,
+            audioFinalReplyDocEnabled: true);
+        using var document = JsonDocument.Parse(cardJson);
+        var elements = document.RootElement.GetProperty("body").GetProperty("elements");
+
+        Assert.True(ContainsStringValue(elements, "听完整文档：开"));
+        Assert.True(ContainsStringValue(elements, "听结论文档：开"));
+        Assert.True(ContainsAction(elements, FeishuHelpCardAction.ToggleAudioFullReplyDocAction));
+        Assert.True(ContainsAction(elements, FeishuHelpCardAction.ToggleAudioFinalReplyDocAction));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_IncludesReplyDocumentButtons_WhenOnlyFinalReplyDocumentEnabled()
+    {
+        var card = _builder.BuildCommandListCardV2(
+            CreateCategories(),
+            fullReplyDocEnabled: false,
+            finalReplyDocEnabled: true);
         using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
 
-        Assert.True(ContainsStringValue(bodyDoc.RootElement, "语音回复：关"));
-        Assert.True(ContainsAction(bodyDoc.RootElement, "toggle_reply_tts"));
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "完整回复文档：关"));
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "结论回复文档：开"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFullReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFinalReplyDocAction));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_IncludesSetDocumentAdminButton()
+    {
+        var card = _builder.BuildCommandListCardV2(
+            CreateCategories(),
+            showRefreshButton: true);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsAction(bodyDoc.RootElement, "set_document_admin_openid"));
+        Assert.True(ContainsStringFragment(bodyDoc.RootElement, "OpenID"));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_WhenRefreshButtonHidden_StillIncludesSetDocumentAdminButton()
+    {
+        var card = _builder.BuildCommandListCardV2(
+            CreateCategories(),
+            showRefreshButton: false);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsAction(bodyDoc.RootElement, "set_document_admin_openid"));
+        Assert.True(ContainsStringFragment(bodyDoc.RootElement, "OpenID"));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_WhenRefreshButtonHidden_StillIncludesReplyDocumentButtons()
+    {
+        var card = _builder.BuildCommandListCardV2(
+            CreateCategories(),
+            showRefreshButton: false,
+            fullReplyDocEnabled: true,
+            finalReplyDocEnabled: false,
+            audioFullReplyDocEnabled: true,
+            audioFinalReplyDocEnabled: false);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFullReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFinalReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleAudioFullReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleAudioFinalReplyDocAction));
+    }
+
+    [Fact]
+    public void BuildCommandListCardV2_WhenReferencedMarkdownImportEnabled_ContainsMarkdownImportToggle()
+    {
+        var card = _builder.BuildCommandListCardV2(
+            CreateCategories(),
+            showRefreshButton: false,
+            referencedMarkdownDocImportEnabled: true);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "MD转在线文档：开"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, "toggle_referenced_markdown_doc_import"));
+    }
+
+    [Fact]
+    public void BuildFilteredCardV2_WhenReferencedMarkdownImportDisabled_ContainsMarkdownImportToggle()
+    {
+        var card = _builder.BuildFilteredCardV2(
+            CreateCategories(),
+            "help",
+            referencedMarkdownDocImportEnabled: false);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "MD转在线文档：关"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, "toggle_referenced_markdown_doc_import"));
+    }
+
+    [Fact]
+    public void BuildFilteredCardV2_IncludesListeningReplyDocumentButtons_WhenOnlyListeningFinalReplyDocumentEnabled()
+    {
+        var card = _builder.BuildFilteredCardV2(
+            CreateCategories(),
+            "help",
+            fullReplyDocEnabled: false,
+            finalReplyDocEnabled: false,
+            audioFullReplyDocEnabled: false,
+            audioFinalReplyDocEnabled: true);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "听完整文档：关"));
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "听结论文档：开"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleAudioFullReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleAudioFinalReplyDocAction));
+    }
+
+    [Fact]
+    public void BuildFilteredCardV2_IncludesSetDocumentAdminButton()
+    {
+        var card = _builder.BuildFilteredCardV2(
+            CreateCategories(),
+            "help");
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsAction(bodyDoc.RootElement, "set_document_admin_openid"));
+        Assert.True(ContainsStringFragment(bodyDoc.RootElement, "OpenID"));
     }
 
     [Fact]
@@ -91,6 +217,22 @@ public class FeishuHelpCardBuilderTests
         Assert.Equal("feishuhelp", actionValue.GetProperty("command_id").GetString());
         Assert.False(ContainsProperty(bodyDoc.RootElement, "overflow"));
         Assert.False(ContainsProperty(bodyDoc.RootElement, "extra"));
+    }
+
+    [Fact]
+    public void BuildFilteredCardV2_IncludesReplyDocumentButtons_WhenOnlyFinalReplyDocumentEnabled()
+    {
+        var card = _builder.BuildFilteredCardV2(
+            CreateCategories(),
+            "help",
+            fullReplyDocEnabled: false,
+            finalReplyDocEnabled: true);
+        using var bodyDoc = JsonDocument.Parse(JsonSerializer.Serialize(card.Body!.Elements));
+
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "完整回复文档：关"));
+        Assert.True(ContainsStringValue(bodyDoc.RootElement, "结论回复文档：开"));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFullReplyDocAction));
+        Assert.True(ContainsAction(bodyDoc.RootElement, FeishuHelpCardAction.ToggleFinalReplyDocAction));
     }
 
     [Fact]
@@ -175,7 +317,6 @@ public class FeishuHelpCardBuilderTests
         Assert.True(ContainsStringValue(elements, "/goal pause"));
         Assert.True(ContainsStringValue(elements, "/goal clear"));
         Assert.True(ContainsStringValue(elements, "/goal resume"));
-        Assert.True(ContainsAction(elements, "status_goal"));
         Assert.True(ContainsAction(elements, "pause_goal"));
         Assert.True(ContainsAction(elements, "clear_goal"));
         Assert.True(ContainsAction(elements, "resume_goal"));
@@ -410,6 +551,17 @@ public class FeishuHelpCardBuilderTests
             JsonValueKind.String => string.Equals(element.GetString(), expected, StringComparison.Ordinal),
             JsonValueKind.Object => element.EnumerateObject().Any(property => ContainsStringValue(property.Value, expected)),
             JsonValueKind.Array => element.EnumerateArray().Any(item => ContainsStringValue(item, expected)),
+            _ => false
+        };
+    }
+
+    private static bool ContainsStringFragment(JsonElement element, string expectedFragment)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString()?.Contains(expectedFragment, StringComparison.Ordinal) == true,
+            JsonValueKind.Object => element.EnumerateObject().Any(property => ContainsStringFragment(property.Value, expectedFragment)),
+            JsonValueKind.Array => element.EnumerateArray().Any(item => ContainsStringFragment(item, expectedFragment)),
             _ => false
         };
     }

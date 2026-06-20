@@ -7,6 +7,7 @@ public enum SuperpowersQuickActionRequestType
     Continue,
     ExecutePlan,
     ExecuteSubagentPlan,
+    ExecuteCompleteWorktree,
     QuickInput
 }
 
@@ -19,6 +20,7 @@ public static class SuperpowersQuickActionSubmissionHelper
             SuperpowersQuickActionRequestType.Continue => SuperpowersPromptBuilder.BuildContinuePrompt(),
             SuperpowersQuickActionRequestType.ExecutePlan => SuperpowersPromptBuilder.BuildExecutePlanPrompt(),
             SuperpowersQuickActionRequestType.ExecuteSubagentPlan => SuperpowersPromptBuilder.BuildSubagentExecutePlanPrompt(),
+            SuperpowersQuickActionRequestType.ExecuteCompleteWorktree => SuperpowersPromptBuilder.BuildCompleteWorktreePrompt(),
             SuperpowersQuickActionRequestType.QuickInput => SuperpowersPromptBuilder.BuildQuickSkillPrompt(quickInput),
             _ => null
         };

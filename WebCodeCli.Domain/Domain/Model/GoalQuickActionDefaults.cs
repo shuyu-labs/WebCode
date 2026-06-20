@@ -4,7 +4,7 @@ public static class GoalQuickActionDefaults
 {
     public const string QuickInputFieldName = "goal_quick_input";
     public const string QuickInputPlaceholder = "输入内容后回车，未写前缀时会自动补成 /goal ";
-    public const string InstructionText = "使用 /goal 命令，会自动补前缀：\"/goal \"。用于设置当前工作目标，让 Codex 围绕目标持续推进。";
+    public const string InstructionText = "使用 /goal 不间断执行，会自动补前缀：\"/goal \"。用于在当前 app-server 持续会话中设置或更新工作目标，让 Codex 围绕目标持续推进；可配合 /goal pause、/goal clear、/goal resume 管理执行状态。";
     public const string QuickSubmitButtonText = "提交";
     public const string QuickGoalPrefix = "/goal ";
     public const string StatusButtonText = "/goal";

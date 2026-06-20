@@ -127,11 +127,11 @@ public class FeishuStreamingHandle : IDisposable
     /// <summary>
     /// 完成更新
     /// </summary>
-    public async Task FinishAsync(string finalContent)
+    public async Task<bool> FinishAsync(string finalContent)
     {
         if (_disposed)
         {
-            return;
+            return true;
         }
 
         await _operationLock.WaitAsync();
@@ -139,13 +139,25 @@ public class FeishuStreamingHandle : IDisposable
         {
             if (_disposed)
             {
-                return;
+                return true;
+            }
+
+            if (_isFinished)
+            {
+                return true;
+            }
+
+            var sequence = Interlocked.Increment(ref _sequence);
+            var finished = await _finishAsync(finalContent, sequence);
+            if (!finished)
+            {
+                StopCardUpdates();
+                return false;
             }
 
             _isFinished = true;
-            var sequence = Interlocked.Increment(ref _sequence);
-            await _finishAsync(finalContent, sequence);
             _disposed = true;
+            return true;
         }
         finally
         {

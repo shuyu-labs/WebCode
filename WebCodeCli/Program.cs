@@ -233,26 +233,6 @@ static WebApplicationOptions CreateBuilderOptions(string[] args)
     {
         Args = args,
         WebRootPath = resolvedWebRoot,
-        EnvironmentName = ResolveDefaultEnvironmentName()
+        EnvironmentName = RuntimeEnvironmentResolver.ResolveDefaultEnvironmentName()
     };
-}
-
-static string ResolveDefaultEnvironmentName()
-{
-    var configuredEnvironmentName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-    if (string.IsNullOrWhiteSpace(configuredEnvironmentName))
-    {
-        configuredEnvironmentName = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
-    }
-
-    if (!string.IsNullOrWhiteSpace(configuredEnvironmentName))
-    {
-        return configuredEnvironmentName;
-    }
-
-#if DEBUG
-    return Environments.Development;
-#else
-    return Environments.Production;
-#endif
 }

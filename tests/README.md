@@ -58,7 +58,7 @@ npx playwright test
 
 - **测试环境**: localhost:5000
 - **用户名**: luhaiyan
-- **密码**: Lusile@0680
+- **密码**: 通过环境变量 `WEBCODE_TEST_PASSWORD` 提供；未设置时示例值为 `CHANGEME_TEST_PASSWORD`
 - **测试目录**: D:\\VSWorkshop\\TestWebCode
 - **超时时间**: 120秒
 - **浏览器**: Chromium（带UI界面）

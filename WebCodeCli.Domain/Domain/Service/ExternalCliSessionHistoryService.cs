@@ -27,6 +27,11 @@ public interface IExternalCliSessionHistoryService
         int maxCount = 20,
         string? workspacePath = null,
         CancellationToken cancellationToken = default);
+
+    Task<string?> GetCodexFinalAnswerTextAsync(
+        string cliThreadId,
+        string? workspacePath = null,
+        CancellationToken cancellationToken = default);
 }
 
 [ServiceDescription(typeof(IExternalCliSessionHistoryService), ServiceLifetime.Scoped)]
@@ -130,6 +135,37 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                 normalizedToolId,
                 normalizedThreadId);
             return [];
+        }
+    }
+
+    public async Task<string?> GetCodexFinalAnswerTextAsync(
+        string cliThreadId,
+        string? workspacePath = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(cliThreadId))
+        {
+            return null;
+        }
+
+        try
+        {
+            var filePath = FindCodexRolloutFile(cliThreadId.Trim(), workspacePath, cancellationToken);
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return null;
+            }
+
+            return await ExtractLatestCodexFinalAnswerTextAsync(filePath, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "读取 Codex final_answer rollout 失败: CliThreadId={CliThreadId}, WorkspacePath={WorkspacePath}",
+                cliThreadId,
+                workspacePath);
+            return null;
         }
     }
 
@@ -274,12 +310,39 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .ToList();
 
-                if (directCandidates.Count > 0)
+                foreach (var directCandidate in directCandidates)
                 {
-                    var rolloutPath = directCandidates[0];
-                    RememberCodexRolloutPath(cliThreadId, workspacePath, rolloutPath);
-                    LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, rolloutPath, "filename", directCandidates.Count);
-                    return rolloutPath;
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var firstLine = ReadFirstNonEmptyLine(directCandidate, maxLines: 3);
+                    if (string.IsNullOrWhiteSpace(firstLine))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        using var document = JsonDocument.Parse(firstLine);
+                        var root = document.RootElement;
+                        if (!TryGetProperty(root, "payload", out var payload) || payload.ValueKind != JsonValueKind.Object)
+                        {
+                            continue;
+                        }
+
+                        var sessionId = GetString(payload, "id");
+                        if (!string.Equals(sessionId, cliThreadId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        RememberCodexRolloutPath(cliThreadId, workspacePath, directCandidate);
+                        LogCodexRolloutResolved(cliThreadId, workspacePath, sessionsRoot, directCandidate, "filename", directCandidates.Count);
+                        return directCandidate;
+                    }
+                    catch
+                    {
+                        // ignore broken lines
+                    }
                 }
 
                 foreach (var file in Directory.EnumerateFiles(sessionsRoot.Path, "rollout-*.jsonl", SearchOption.AllDirectories))
@@ -561,6 +624,65 @@ public class ExternalCliSessionHistoryService : IExternalCliSessionHistoryServic
         }
 
         return messages.TakeLast(maxCount).ToList();
+    }
+
+    private async Task<string?> ExtractLatestCodexFinalAnswerTextAsync(
+        string filePath,
+        CancellationToken cancellationToken)
+    {
+        string? latestFinalAnswer = null;
+
+        await foreach (var line in ReadLinesAsync(filePath, cancellationToken))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (!string.Equals(GetString(root, "type"), "response_item", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!TryGetProperty(root, "payload", out var payload) || payload.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(GetString(payload, "type"), "message", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(GetString(payload, "role"), "assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(GetString(payload, "phase"), "final_answer", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var content = ExtractCodexMessageContent(payload);
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    latestFinalAnswer = content;
+                }
+            }
+            catch (JsonException)
+            {
+                // ignore bad lines
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(latestFinalAnswer)
+            ? null
+            : latestFinalAnswer.Trim();
     }
 
     private async Task<List<ExternalCliHistoryMessage>> ParseClaudeTranscriptFileAsync(

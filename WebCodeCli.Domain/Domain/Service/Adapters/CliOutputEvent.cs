@@ -26,6 +26,8 @@ public class CliOutputEvent
     /// </summary>
     public string? ItemType { get; set; }
 
+    public string? AssistantPhase { get; set; }
+
     /// <summary>
     /// 是否为错误事件
     /// </summary>

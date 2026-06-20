@@ -5,6 +5,7 @@ test.describe.configure({ timeout: 120000 });
 test.describe('统一工作区管理功能测试', () => {
   // 测试配置
   const BASE_URL = 'http://localhost:5000';
+  const PASSWORD = process.env.WEBCODE_TEST_PASSWORD ?? 'CHANGEME_TEST_PASSWORD';
   const SCREEN_SIZE = { width: 1200, height: 800 };
   const TEST_DIRECTORY = 'D:\\\\VSWorkshop\\\\TestWebCode'; // 测试用的工作目录
 
@@ -24,7 +25,7 @@ test.describe('统一工作区管理功能测试', () => {
     const loginButton = page.getByRole('button').first();
 
     await usernameInput.fill('luhaiyan');
-    await passwordInput.fill('Lusile@0680');
+    await passwordInput.fill(PASSWORD);
     await loginButton.click();
 
     // 等待登录请求完成

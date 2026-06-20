@@ -73,6 +73,12 @@ public interface ICodexAppServerSessionManager : IDisposable
         string sessionId,
         CancellationToken cancellationToken = default);
 
+    bool HasRunningSession(string sessionId, string? threadId = null)
+        => false;
+
+    string? GetRunningThreadId(string sessionId)
+        => null;
+
     bool HasActiveTurn(string sessionId);
 
     bool CleanupSession(string sessionId);

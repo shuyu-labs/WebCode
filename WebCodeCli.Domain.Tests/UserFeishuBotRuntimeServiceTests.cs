@@ -94,6 +94,41 @@ public class UserFeishuBotRuntimeServiceTests
         Assert.True(afterHostStop!.AutoStartEnabled);
     }
 
+    [Fact]
+    public async Task RecoverAsync_RestartsRememberedBotsWithoutClearingAutoStart()
+    {
+        var configService = new InMemoryUserFeishuBotConfigService();
+        configService.Store(new UserFeishuBotConfigEntity
+        {
+            Username = "alice",
+            IsEnabled = true,
+            AppId = "cli_alice",
+            AppSecret = "secret"
+        });
+
+        var runtimeService = CreateService(configService);
+        var initialHostedService = new TestHostedService();
+        var recoveredHostedService = new TestHostedService();
+        runtimeService.EnqueueHostedService(initialHostedService);
+        runtimeService.EnqueueHostedService(recoveredHostedService);
+
+        await runtimeService.StartAsync("alice");
+        await runtimeService.RecoverAsync();
+
+        var status = await runtimeService.GetStatusAsync("alice");
+        var stored = await configService.GetByUsernameAsync("alice");
+
+        Assert.Equal(2, runtimeService.CreateRuntimeEntryCallCount);
+        Assert.Equal(1, initialHostedService.StartCallCount);
+        Assert.Equal(1, initialHostedService.StopCallCount);
+        Assert.Equal(1, recoveredHostedService.StartCallCount);
+        Assert.Equal(0, recoveredHostedService.StopCallCount);
+        Assert.Equal(UserFeishuBotRuntimeState.Connected, status.State);
+        Assert.True(status.ShouldAutoStart);
+        Assert.NotNull(stored);
+        Assert.True(stored!.AutoStartEnabled);
+    }
+
     private static TestableUserFeishuBotRuntimeService CreateService(InMemoryUserFeishuBotConfigService configService)
     {
         var scopeFactory = new TestScopeFactory(configService);
@@ -273,6 +308,21 @@ public class UserFeishuBotRuntimeServiceTests
 
     private sealed class TestHostedService : BackgroundService
     {
+        public int StartCallCount { get; private set; }
+        public int StopCallCount { get; private set; }
+
+        public override Task StartAsync(CancellationToken cancellationToken)
+        {
+            StartCallCount++;
+            return base.StartAsync(cancellationToken);
+        }
+
+        public override Task StopAsync(CancellationToken cancellationToken)
+        {
+            StopCallCount++;
+            return base.StopAsync(cancellationToken);
+        }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             await Task.Delay(Timeout.Infinite, stoppingToken);

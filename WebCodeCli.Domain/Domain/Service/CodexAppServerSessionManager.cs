@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using WebCodeCli.Domain.Domain.Model;
@@ -16,6 +17,9 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
     {
         PropertyNameCaseInsensitive = true
     };
+    private static readonly Regex InterruptActiveTurnMismatchRegex = new(
+        @"expected active turn id (?<expected>[A-Za-z0-9\-]+) but found (?<found>[A-Za-z0-9\-]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILogger<CodexAppServerSessionManager> _logger;
     private readonly ConcurrentDictionary<string, AppServerSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
@@ -330,17 +334,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             return false;
         }
 
-        await SendRequestAsync<JsonElement>(
-            session,
-            "turn/interrupt",
-            new Dictionary<string, object?>
-            {
-                ["threadId"] = threadId,
-                ["turnId"] = session.ActiveTurnId
-            },
-            cancellationToken);
-
-        return true;
+        return await InterruptActiveTurnCoreAsync(session, threadId, cancellationToken);
     }
 
     public async Task<bool> InterruptActiveTurnAsync(
@@ -359,17 +353,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             return false;
         }
 
-        await SendRequestAsync<JsonElement>(
-            session,
-            "turn/interrupt",
-            new Dictionary<string, object?>
-            {
-                ["threadId"] = session.ThreadId,
-                ["turnId"] = session.ActiveTurnId
-            },
-            cancellationToken);
-
-        return true;
+        return await InterruptActiveTurnCoreAsync(session, session.ThreadId!, cancellationToken);
     }
 
     public bool HasActiveTurn(string sessionId)
@@ -377,6 +361,32 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         return !string.IsNullOrWhiteSpace(sessionId)
             && _sessions.TryGetValue(sessionId, out var session)
             && !string.IsNullOrWhiteSpace(session.ActiveTurnId);
+    }
+
+    public bool HasRunningSession(string sessionId, string? threadId = null)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)
+            || !_sessions.TryGetValue(sessionId, out var session)
+            || !session.IsRunning)
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace(threadId)
+               || string.Equals(session.ThreadId, threadId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public string? GetRunningThreadId(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)
+            || !_sessions.TryGetValue(sessionId, out var session)
+            || !session.IsRunning
+            || string.IsNullOrWhiteSpace(session.ThreadId))
+        {
+            return null;
+        }
+
+        return session.ThreadId;
     }
 
     public bool CleanupSession(string sessionId)
@@ -426,11 +436,17 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
 
                 if (_sessions.TryGetValue(sessionId, out var existing))
                 {
-                    if (existing.IsRunning)
+                    if (existing.IsHealthy)
                     {
                         return existing;
                     }
 
+                    _logger.LogInformation(
+                        "清理不可复用的 Codex app-server 会话: Session={SessionId}, ProcessRunning={ProcessRunning}, OutputReaderCompleted={OutputReaderCompleted}, ErrorReaderCompleted={ErrorReaderCompleted}",
+                        sessionId,
+                        existing.IsRunning,
+                        existing.OutputReaderTask?.IsCompleted == true,
+                        existing.ErrorReaderTask?.IsCompleted == true);
                     CleanupSession(sessionId);
                 }
 
@@ -540,8 +556,12 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         }
 
         var session = new AppServerSession(sessionId, process);
-        session.OutputReaderTask = Task.Run(() => ReadOutputLoopAsync(session, cancellationToken), CancellationToken.None);
-        session.ErrorReaderTask = Task.Run(() => ReadErrorLoopAsync(session, cancellationToken), CancellationToken.None);
+        session.OutputReaderTask = Task.Run(
+            () => ReadOutputLoopAsync(session, session.SessionCancellationTokenSource.Token),
+            CancellationToken.None);
+        session.ErrorReaderTask = Task.Run(
+            () => ReadErrorLoopAsync(session, session.SessionCancellationTokenSource.Token),
+            CancellationToken.None);
 
         await SendRequestAsync<AppServerInitializeResponse>(
             session,
@@ -633,6 +653,62 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         }
 
         return response.Thread.Id;
+    }
+
+    private async Task<bool> InterruptActiveTurnCoreAsync(
+        AppServerSession session,
+        string threadId,
+        CancellationToken cancellationToken)
+    {
+        var currentTurnId = session.ActiveTurnId;
+        if (string.IsNullOrWhiteSpace(currentTurnId))
+        {
+            return false;
+        }
+
+        try
+        {
+            await SendInterruptRequestAsync(session, threadId, currentTurnId, cancellationToken);
+            session.ActiveTurnId = null;
+            return true;
+        }
+        catch (InvalidOperationException ex)
+        {
+            var replacementTurnId = TryResolveReplacementActiveTurnIdForInterruptMismatch(currentTurnId, ex.Message);
+            if (string.IsNullOrWhiteSpace(replacementTurnId))
+            {
+                throw;
+            }
+
+            _logger.LogWarning(
+                "Codex app-server active turn ID mismatch during interrupt, retrying once: Session={SessionId}, Thread={ThreadId}, PreviousTurn={PreviousTurnId}, ReplacementTurn={ReplacementTurnId}",
+                session.SessionId,
+                threadId,
+                currentTurnId,
+                replacementTurnId);
+
+            session.ActiveTurnId = replacementTurnId;
+            await SendInterruptRequestAsync(session, threadId, replacementTurnId, cancellationToken);
+            session.ActiveTurnId = null;
+            return true;
+        }
+    }
+
+    private Task SendInterruptRequestAsync(
+        AppServerSession session,
+        string threadId,
+        string turnId,
+        CancellationToken cancellationToken)
+    {
+        return SendRequestAsync<JsonElement>(
+            session,
+            "turn/interrupt",
+            new Dictionary<string, object?>
+            {
+                ["threadId"] = threadId,
+                ["turnId"] = turnId
+            },
+            cancellationToken);
     }
 
     private async Task<TResponse> SendRequestAsync<TResponse>(
@@ -845,7 +921,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         var errorMessage = string.Equals(method, "error", StringComparison.Ordinal)
             ? ExtractErrorMessage(parameters)
             : null;
-        var suppressTransientError = ShouldSuppressTransientErrorNotification(method, errorMessage);
+        var suppressTransientError = ShouldSuppressTransientErrorNotification(method, parameters, errorMessage);
 
         if (!suppressTransientError && TryBuildCliOutputJsonl(method, parameters) is { Length: > 0 } jsonl)
         {
@@ -922,7 +998,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             "turn/completed" => BuildTurnCompletedPayload(parameters),
             "turn/failed" => BuildTurnFailedPayload(parameters),
             "item/started" => BuildItemPayload("item.started", parameters, includeAgentMessageText: false),
-            "item/completed" => BuildItemPayload("item.completed", parameters, includeAgentMessageText: false),
+            "item/completed" => BuildItemPayload("item.completed", parameters, includeAgentMessageText: true),
             "item/agentMessage/delta" => BuildAgentMessageDeltaPayload(parameters),
             "error" => BuildErrorPayload(parameters),
             _ => null
@@ -1014,14 +1090,14 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             ["text"] = delta
         };
 
-        if (TryGetString(parameters, "threadId", out var threadId))
-        {
-            item["thread_id"] = threadId;
-        }
-
         if (TryGetString(parameters, "itemId", out var itemId))
         {
             item["id"] = itemId;
+        }
+
+        if (TryGetString(parameters, "phase", out var phase))
+        {
+            item["phase"] = phase;
         }
 
         return new Dictionary<string, object?>
@@ -1211,6 +1287,11 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             item["text"] = text;
         }
 
+        if (TryGetString(itemElement, "phase", out var phase))
+        {
+            item["phase"] = phase;
+        }
+
         return item;
     }
 
@@ -1227,11 +1308,6 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         if (TryGetString(itemElement, "id", out var id))
         {
             item["id"] = id;
-        }
-
-        if (TryGetString(parameters, "threadId", out var threadId))
-        {
-            item["thread_id"] = threadId;
         }
 
         return item;
@@ -1261,10 +1337,32 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             ?? GetString(parameters, "message");
     }
 
+    private static bool ShouldSuppressTransientErrorNotification(
+        string method,
+        JsonElement parameters,
+        string? errorMessage)
+    {
+        if (!string.Equals(method, "error", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (parameters.ValueKind == JsonValueKind.Object
+            && parameters.TryGetProperty("willRetry", out var willRetryElement)
+            && (willRetryElement.ValueKind == JsonValueKind.True || willRetryElement.ValueKind == JsonValueKind.False))
+        {
+            if (willRetryElement.GetBoolean())
+            {
+                return true;
+            }
+        }
+
+        return IsTransientAppServerErrorMessage(errorMessage);
+    }
+
     private static bool ShouldSuppressTransientErrorNotification(string method, string? errorMessage)
     {
-        return string.Equals(method, "error", StringComparison.Ordinal)
-               && IsTransientAppServerErrorMessage(errorMessage);
+        return ShouldSuppressTransientErrorNotification(method, default, errorMessage);
     }
 
     private static bool IsTransientAppServerErrorMessage(string? errorMessage)
@@ -1278,6 +1376,43 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         return normalized.StartsWith("Reconnecting...", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "Current interaction failed.", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "An unknown error occurred.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryResolveReplacementActiveTurnIdForInterruptMismatch(
+        string? currentTurnId,
+        string? errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(currentTurnId) || string.IsNullOrWhiteSpace(errorMessage))
+        {
+            return null;
+        }
+
+        var match = InterruptActiveTurnMismatchRegex.Match(errorMessage);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var expectedTurnId = match.Groups["expected"].Value;
+        var foundTurnId = match.Groups["found"].Value;
+        if (string.IsNullOrWhiteSpace(expectedTurnId)
+            || string.IsNullOrWhiteSpace(foundTurnId)
+            || string.Equals(expectedTurnId, foundTurnId, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (string.Equals(currentTurnId, expectedTurnId, StringComparison.OrdinalIgnoreCase))
+        {
+            return foundTurnId;
+        }
+
+        if (string.Equals(currentTurnId, foundTurnId, StringComparison.OrdinalIgnoreCase))
+        {
+            return expectedTurnId;
+        }
+
+        return null;
     }
 
     private static string? NormalizeAppServerItemType(string? itemType)
@@ -1374,8 +1509,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
 
         if (parameters.TryGetProperty(propertyName, out var element))
         {
-            value = element.GetString();
-            return !string.IsNullOrWhiteSpace(value);
+            return TryGetScalarString(element, out value);
         }
 
         value = null;
@@ -1399,8 +1533,25 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             return false;
         }
 
-        value = element.GetString();
-        return !string.IsNullOrWhiteSpace(value);
+        return TryGetScalarString(element, out value);
+    }
+
+    private static bool TryGetScalarString(JsonElement element, out string? value)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                value = element.GetString();
+                return !string.IsNullOrWhiteSpace(value);
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                value = element.ToString();
+                return !string.IsNullOrWhiteSpace(value);
+            default:
+                value = null;
+                return false;
+        }
     }
 
     private void FailPendingRequests(AppServerSession session, Exception exception)
@@ -1456,6 +1607,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
 
         public string SessionId { get; }
         public Process Process { get; }
+        public CancellationTokenSource SessionCancellationTokenSource { get; } = new();
         public ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> PendingResponses { get; } = new(StringComparer.Ordinal);
         public SemaphoreSlim WriteLock { get; } = new(1, 1);
         public Task? OutputReaderTask { get; set; }
@@ -1465,9 +1617,21 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
         public ChannelWriter<StreamOutputChunk>? ActiveOutputWriter { get; set; }
 
         public bool IsRunning => !Process.HasExited;
+        public bool HasLiveTransport =>
+            OutputReaderTask is { IsCompleted: false }
+            && ErrorReaderTask is { IsCompleted: false };
+        public bool IsHealthy => IsRunning && HasLiveTransport;
 
         public void Dispose()
         {
+            try
+            {
+                SessionCancellationTokenSource.Cancel();
+            }
+            catch
+            {
+            }
+
             try
             {
                 ActiveOutputWriter?.TryComplete();
@@ -1489,6 +1653,7 @@ internal sealed class CodexAppServerSessionManager : ICodexAppServerSessionManag
             }
             finally
             {
+                SessionCancellationTokenSource.Dispose();
                 Process.Dispose();
                 WriteLock.Dispose();
             }
